@@ -1,0 +1,17 @@
+# Binaries
+smara
+smara.exe
+dist/
+
+# Configuration & Data (Local only)
+.smara/
+memory.db
+config.yaml
+
+# Dependencies
+vendor/
+go.sum
+
+# Temporary files
+*.tmp
+temp/

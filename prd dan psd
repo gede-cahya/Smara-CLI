@@ -1,0 +1,121 @@
+🌀 Smara CLI: Autonomous Multi-Agent Terminal
+
+    Smara (Sanskerta: स्मृति) - Berarti "Ingatan" atau "Memori". Sebuah terminal pintar berbasis Go yang mengorkestrasi agen AI otonom dengan memori tim yang tersinkronisasi.
+
+📄 I. Product Requirement Document (PRD)
+1. Konteks & Masalah
+
+Pengembangan perangkat lunak otonom membutuhkan alat yang tidak hanya menulis kode, tetapi juga berinteraksi dengan lingkungan (3D engine, sistem file, cloud). Developer saat ini terhambat oleh ketergantungan pada UI web, latensi tinggi, dan kurangnya integrasi antar alat yang standar (MCP).
+2. Tujuan (Goals)
+
+    Otonomi Penuh: Eksekusi tugas kompleks dengan intervensi minimal.
+
+    Integrasi MCP: Menghubungkan AI dengan ekosistem tool pihak ketiga secara standar.
+
+    Memori Kolektif: Berbagi solusi masalah antar tim secara otomatis (Local-first, Cloud-synced).
+
+    Performa Tinggi: Startup instan dan penggunaan resource rendah menggunakan Golang.
+
+3. User Stories
+
+    [P0] As a developer, saya ingin menjalankan agen AI lokal via Ollama agar data kode tetap privat.
+
+    [P0] As a user, saya ingin menghubungkan Smara ke MCP Blender agar agen bisa membuat aset 3D otomatis.
+
+    [P1] As a team lead, saya ingin pengetahuan agen rekan saya otomatis tersedia untuk agen saya via Background Sync.
+
+4. Metrik Keberhasilan
+
+    Autonomy Rate: >70% tugas selesai tanpa intervensi manusia.
+
+    Startup Time: <50ms.
+
+    Sync Latency: Pengetahuan tim terupdate dalam <15 menit.
+
+🛠️ II. Product Specification Document (PSD)
+1. Arsitektur Sistem (Go Concurrency)
+
+Smara memanfaatkan Goroutines dan Channels untuk mengelola banyak agen dan proses latar belakang secara simultan.
+Struktur Proyek
+Plaintext
+
+smara/
+├── cmd/smara/          # Entry point (Main)
+├── internal/
+│   ├── agent/          # Supervisor & Worker Logic
+│   ├── mcp/            # JSON-RPC Client for MCP Servers
+│   ├── memory/         # SQLite + sqlite-vec (RAG)
+│   └── sync/           # Background Auto-Sync Daemon
+└── go.mod
+
+2. Tech Stack Utama
+
+    Bahasa: Go (Golang) 1.21+
+
+    CLI Engine: spf13/cobra
+
+    Local DB: SQLite dengan ekstensi sqlite-vec
+
+    LLM Ops: Dukungan OpenAI, Anthropic, dan Ollama.
+
+3. Logika Integrasi MCP
+
+Setiap kali tugas melibatkan tool eksternal (contoh: Blender), Smara akan:
+
+    Memulai server MCP via JSON-RPC.
+
+    Mengirim tools/call.
+
+    Menangkap output (file/log) dan meneruskannya sebagai konteks ke agen berikutnya.
+
+📊 III. Diagram Alur (Flowcharts)
+1. Alur Eksekusi Utama
+Cuplikan kode
+
+graph TD
+    A[User Run: 'smara start'] --> B(CLI Parser - Cobra)
+    B --> C{Cek Config & Provider}
+    C -->|Valid| E[Init SQLite & Vector DB]
+    E --> F[Start Background Sync Daemon]
+    F --> G[Launch Supervisor Agent]
+    G --> H[Wait for User Prompt]
+
+2. Orkestrasi Multi-Agent & MCP (Contoh Kasus 3D)
+Cuplikan kode
+
+sequenceDiagram
+    participant User
+    participant Supervisor
+    participant Agent3D
+    participant AgentCoder
+    participant MCPBlender
+
+    User->>Supervisor: "Buat kubus 3D & tulis scriptnya"
+    Supervisor->>Agent3D: Delegasikan: "Buat Objek 3D"
+    Agent3D->>MCPBlender: call_tool: generate_cube()
+    MCPBlender-->>Agent3D: return: /tmp/cube.obj
+    Agent3D-->>Supervisor: Selesai di /tmp/cube.obj
+    Supervisor->>AgentCoder: Delegasikan: "Tulis Three.js script"
+    AgentCoder-->>User: Output Hasil Akhir (Kode + Aset)
+
+3. Self-Improving & Sync
+Cuplikan kode
+
+graph TD
+    A[Agent Error/Bug] --> B[Analisis Error via LLM]
+    B --> C{Usulkan Perbaikan}
+    C --> D[Eksekusi Ulang via MCP]
+    D -->|Sukses| E[Simpan Memori di SQLite]
+    E --> F[Daemon Push Delta ke Cloud]
+    F --> G[Tim Lain Mendapat Pengetahuan Baru]
+
+🔐 IV. Keamanan & Penanganan Error
+
+    Sandbox: Eksekusi perintah sistem dibatasi oleh context.WithTimeout.
+
+    Kredensial: API Key dibaca dari Environment Variables atau OS Keyring, tidak disimpan dalam plaintext.
+
+    Offline Mode: Jika internet mati, sinkronisasi akan masuk ke antrean buffer lokal dan mencoba lagi saat online (exponential backoff).
+
+Status: Ready for Implementation
+Version: 1.0.0 (MVP)
