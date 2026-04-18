@@ -1,12 +1,12 @@
 # Smara CLI Installer for Windows (PowerShell)
-# Usage: irm https://raw.githubusercontent.com/cahya/smara/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$REPO = "cahya/smara"
+$REPO = "gede-cahya/Smara-CLI"
 $BINARY_NAME = "smara"
-$VERSION = "1.0.0"
+$VERSION = "1.1.0"
 $INSTALL_DIR = "$env:LOCALAPPDATA\Programs\smara"
 $GITHUB_BASE = "https://github.com/$REPO"
 

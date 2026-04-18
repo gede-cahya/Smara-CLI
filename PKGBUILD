@@ -1,10 +1,10 @@
-# Maintainer: Cahya <cahya@smara.dev>
+# Maintainer: Gede Cahya <cahya@smara.dev>
 pkgname=smara
 pkgver=1.1.0
 pkgrel=1
 pkgdesc="Autonomous Multi-Agent Terminal — Terminal pintar yang mengorkestrasi agen AI otonom dengan memori tim tersinkronisasi"
 arch=('x86_64' 'aarch64')
-url="https://github.com/cahya/smara"
+url="https://github.com/gede-cahya/Smara-CLI"
 license=('MIT')
 depends=('sqlite')
 makedepends=('go>=1.21' 'git' 'gcc')
@@ -13,7 +13,7 @@ optdepends=(
     'nodejs: Required for some MCP servers'
     'python: Required for some MCP servers (uvx)'
 )
-source=("${pkgname}-${pkgver}.tar.gz::https://github.com/cahya/${pkgname}/archive/refs/tags/v${pkgver}.tar.gz")
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/gede-cahya/Smara-CLI/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {

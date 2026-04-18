@@ -21,26 +21,26 @@ Smara adalah terminal pintar berbasis Go yang mengorkestrasi agen AI otonom deng
 
 ### Linux / macOS (via curl)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cahya/smara/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.sh | sh
 ```
 
 ### Windows (PowerShell)
 ```powershell
-irm https://raw.githubusercontent.com/cahya/smara/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.ps1 | iex
 ```
 
 ### Arch Linux (AUR/Pacman)
 ```bash
-git clone https://github.com/cahya/smara.git
-cd smara
+git clone https://github.com/gede-cahya/Smara-CLI.git
+cd Smara-CLI
 makepkg -si
 ```
 
 ### Build dari Source
 ```bash
 # Clone repository
-git clone https://github.com/cahya/smara.git
-cd smara
+git clone https://github.com/gede-cahya/Smara-CLI.git
+cd Smara-CLI
 
 # Build menggunakan Makefile
 make
@@ -109,4 +109,4 @@ Gunakan flag `--mode` untuk memulai dengan mode tertentu (misal: `smara start --
 Konfigurasi disimpan di `~/.smara/config.yaml`. Smara secara otomatis mengimpor MCP server yang terdaftar di OpenCode (`~/.config/opencode/opencode.json`).
 
 ## 📄 Lisensi
-MIT License - © 2026 Cahya.
+MIT License - © 2026 Gede Cahya.

@@ -1,16 +1,16 @@
 #!/bin/sh
 # Smara CLI Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/cahya/smara/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.sh | sh
 #
 # Supports: Linux (amd64, arm64), macOS (amd64, arm64)
 
 set -e
 
 # Configuration
-REPO="cahya/smara"
+REPO="gede-cahya/Smara-CLI"
 BINARY_NAME="smara"
 INSTALL_DIR="/usr/local/bin"
-VERSION="1.0.0"
+VERSION="1.1.0"
 GITHUB_BASE="https://github.com/${REPO}"
 
 # Colors
