@@ -1,6 +1,6 @@
 # Binaries
-smara
-smara.exe
+/smara
+/smara.exe
 dist/
 
 # Configuration & Data (Local only)
