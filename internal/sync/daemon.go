@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cahya/smara/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/memory"
 )
 
 // Daemon is the background sync process that exports/imports memory deltas.

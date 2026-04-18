@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cahya/smara/internal/llm"
-	"github.com/cahya/smara/internal/mcp"
-	"github.com/cahya/smara/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
+	"github.com/gede-cahya/Smara-CLI/internal/memory"
 )
 
 // MCPServerInfo holds detailed MCP server information.

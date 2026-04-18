@@ -4,7 +4,7 @@ package session
 import (
 	"time"
 
-	"github.com/cahya/smara/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
 
 // State represents the current state of a session.

@@ -2,7 +2,7 @@
 package agent
 
 import (
-	"github.com/cahya/smara/internal/session"
+	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
 // SessionState is an alias for session.State for backwards compatibility.

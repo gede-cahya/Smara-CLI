@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cahya/smara/internal/config"
+	"github.com/gede-cahya/Smara-CLI/internal/config"
 )
 
 var configCmd = &cobra.Command{

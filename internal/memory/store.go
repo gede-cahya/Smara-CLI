@@ -10,8 +10,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/cahya/smara/internal/llm"
-	"github.com/cahya/smara/internal/session"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
 // SQLiteStore implements MemoryStore using SQLite.

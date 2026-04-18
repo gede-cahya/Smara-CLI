@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/cahya/smara/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
 
 // Memory represents a single piece of stored knowledge.

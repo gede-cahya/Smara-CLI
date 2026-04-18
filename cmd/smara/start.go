@@ -11,13 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cahya/smara/internal/agent"
-	"github.com/cahya/smara/internal/config"
-	"github.com/cahya/smara/internal/llm"
-	"github.com/cahya/smara/internal/mcp"
-	"github.com/cahya/smara/internal/memory"
-	"github.com/cahya/smara/internal/sync"
-	"github.com/cahya/smara/internal/ui"
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/config"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
+	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/sync"
+	"github.com/gede-cahya/Smara-CLI/internal/ui"
 )
 
 var (

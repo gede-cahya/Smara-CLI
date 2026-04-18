@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cahya/smara/internal/llm"
-	"github.com/cahya/smara/internal/mcp"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 )
 
 // Worker executes individual tasks as delegated by the Supervisor.

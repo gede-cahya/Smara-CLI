@@ -150,7 +150,7 @@ func (o *OpenRouterProvider) doChat(req openAIChatRequest) ([]byte, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
-	httpReq.Header.Set("HTTP-Referer", "https://github.com/cahya/smara")
+	httpReq.Header.Set("HTTP-Referer", "https://github.com/gede-cahya/Smara-CLI")
 	httpReq.Header.Set("X-Title", "Smara CLI")
 
 	resp, err := o.client.Do(httpReq)
