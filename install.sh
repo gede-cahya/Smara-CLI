@@ -66,8 +66,11 @@ detect_arch() {
 
 # Check for required tools
 check_deps() {
-    for cmd in curl tar; do
+    for cmd in curl tar git; do
         if ! command -v "$cmd" > /dev/null 2>&1; then
+            if [ "$cmd" = "git" ] && [ -n "$TERMUX_VERSION" ]; then
+                error "Dibutuhkan: git. Jalankan: pkg install git"
+            fi
             error "Dibutuhkan: ${cmd}. Install dulu lalu coba lagi."
         fi
     done
@@ -133,7 +136,11 @@ install() {
 install_from_source() {
     # Check for Go
     if ! command -v go > /dev/null 2>&1; then
-        error "Go tidak ditemukan. Install Go 1.21+ terlebih dahulu: https://go.dev/dl/"
+        if [ -n "$TERMUX_VERSION" ]; then
+            error "Go tidak ditemukan. Jalankan: pkg install golang"
+        else
+            error "Go tidak ditemukan. Install Go 1.21+ terlebih dahulu: https://go.dev/dl/"
+        fi
     fi
 
     GO_VERSION=$(go version | sed -n 's/.*go\([0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p')
