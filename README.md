@@ -1,6 +1,6 @@
 # Smara CLI 🌀
 
-**Autonomous Multi-Agent Terminal v1.0.0**
+**Autonomous Multi-Agent Terminal v1.1.0**
 
 Smara adalah terminal pintar berbasis Go yang mengorkestrasi agen AI otonom dengan memori tim yang tersinkronisasi dan integrasi MCP (Model Context Protocol).
 
@@ -10,7 +10,9 @@ Smara adalah terminal pintar berbasis Go yang mengorkestrasi agen AI otonom deng
   - `ask` (💬): Tanya-jawab cepat tanpa tools.
   - `rush` (⚡): Eksekusi cepat, langsung bertindak menggunakan tools.
   - `plan` (📋): Membuat rencana dan meminta persetujuan sebelum eksekusi.
+- **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
 - **Tab-to-Cycle Mode**: Ganti mode agen secara instan dengan menekan tombol **Tab** di terminal.
+- **Session Management**: Simpan dan kelola riwayat percakapan dalam sesi yang terpisah.
 - **Smart Memory**: Menggunakan SQLite & Vector Search untuk menyimpan konteks percakapan.
 - **MCP Integration**: Secara otomatis mendeteksi dan menghubungkan ke server MCP dari OpenCode.
 - **Cross-Platform**: Berjalan di Linux, macOS, dan Windows.
@@ -47,18 +49,30 @@ sudo make install
 
 ## 🛠️ Cara Penggunaan
 
+### Memulai Sesi
 Cukup jalankan perintah berikut untuk memulai sesi interaktif:
 ```bash
 smara start
 ```
+Gunakan flag `--mode` untuk memulai dengan mode tertentu (misal: `smara start --mode plan`).
 
-### Perintah di dalam REPL:
-- **Tab**: Ganti mode (ask → rush → plan)
-- **/mode [name]**: Pindah ke mode spesifik
-- **/mcp**: Lihat daftar MCP server yang terhubung
-- **/memory**: Lihat riwayat memori agen
-- **/clear**: Bersihkan layar terminal
-- **exit**: Keluar
+### Perintah CLI Utama:
+- `smara provider list`: Lihat provider dan model yang tersedia.
+- `smara provider select`: Pilih provider/model secara interaktif (TUI).
+- `smara config list`: Lihat semua konfigurasi saat ini.
+- `smara version`: Cek versi yang terinstall.
+
+### Perintah di dalam REPL (Interactive Mode):
+- **Tab**: Ganti mode agen (cycle: ask → rush → plan).
+- **?**: Tampilkan bantuan keyboard shortcut.
+- **/help**: Tampilkan daftar perintah REPL.
+- **/mode [ask|rush|plan]**: Pindah ke mode agen spesifik.
+- **/model [provider] [model]**: Ganti LLM provider/model saat runtime.
+- **/session [list|new|switch|end]**: Kelola sesi percakapan.
+- **/mcp**: Lihat daftar MCP server dan tools yang terhubung.
+- **/memory**: Lihat riwayat memori agen.
+- **/clear**: Bersihkan layar terminal.
+- **exit / keluar**: Keluar dari aplikasi.
 
 ## ⚙️ Konfigurasi
 Konfigurasi disimpan di `~/.smara/config.yaml`. Smara secara otomatis mengimpor MCP server yang terdaftar di OpenCode (`~/.config/opencode/opencode.json`).
