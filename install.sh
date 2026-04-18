@@ -136,7 +136,7 @@ install_from_source() {
         error "Go tidak ditemukan. Install Go 1.21+ terlebih dahulu: https://go.dev/dl/"
     fi
 
-    GO_VERSION=$(go version | sed -n 's/.*go\([0-9]\+\.[0-9]\+\).*/\1/p')
+    GO_VERSION=$(go version | sed -n 's/.*go\([0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p')
     info "Go ${GO_VERSION} ditemukan"
 
     # Clone and build
@@ -167,7 +167,7 @@ install_from_source() {
 
 # Check if already installed
 if command -v smara > /dev/null 2>&1; then
-    CURRENT=$(smara version 2>/dev/null | sed -n 's/.*v\([0-9.]\+\).*/\1/p' || echo "unknown")
+    CURRENT=$(smara version 2>/dev/null | sed -n 's/.*v\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' || echo "unknown")
     warn "Smara v${CURRENT} sudah terinstall. Mengupdate ke v${VERSION}..."
 fi
 
