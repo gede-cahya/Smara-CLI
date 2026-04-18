@@ -1,7 +1,12 @@
 // Package memory provides SQLite-backed memory storage with vector search for Smara.
 package memory
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/cahya/smara/internal/llm"
+)
 
 // Memory represents a single piece of stored knowledge.
 type Memory struct {
@@ -35,6 +40,19 @@ const (
 type SearchResult struct {
 	Memory     Memory  `json:"memory"`
 	Similarity float64 `json:"similarity"`
+}
+
+// MessageToJSON serializes an llm.Message to JSON string for storage.
+func MessageToJSON(m llm.Message) string {
+	data, _ := json.Marshal(m)
+	return string(data)
+}
+
+// MessageFromJSON deserializes an llm.Message from JSON string.
+func MessageFromJSON(s string) (llm.Message, error) {
+	var m llm.Message
+	err := json.Unmarshal([]byte(s), &m)
+	return m, err
 }
 
 // MemoryStore defines the interface for memory operations.

@@ -54,6 +54,9 @@ Dalam mode RUSH, kamu:
 - Minimal penjelasan, maksimal aksi
 - Jika error, langsung perbaiki dan coba lagi (max 3x retry)
 - Output singkat: apa yang dilakukan dan hasilnya
+- Tool call: ответь HANYA JSON (tanpa markdown): {"tool": "nama_tool", "args": {...}}
+- Multi-tool: JSON array [{"tool": "t1", "args": {...}}, {"tool": "t2", "args": {...}}]
+- Setelah tool result, berikan ringkasan singkat
 - Jawab dalam bahasa yang sama dengan pertanyaan user`,
 		},
 		{
@@ -75,6 +78,8 @@ Dalam mode PLAN, kamu WAJIB:
    
 3. TANYA user: "Lanjutkan eksekusi? (ya/tidak)"
 4. JANGAN eksekusi apapun sampai user menyetujui
+- Tool call (setelah approval): ответь HANYA JSON: {"tool": "nama_tool", "args": {...}}
+- Multi-tool: JSON array [{"tool": "t1", "args": {...}}, {"tool": "t2", "args": {...}}]
 - Jawab dalam bahasa yang sama dengan pertanyaan user`,
 		},
 	}

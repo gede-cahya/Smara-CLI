@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -9,20 +10,23 @@ import (
 	"golang.org/x/term"
 )
 
+// ErrInterrupted is returned when the user interrupts input with Ctrl+C
+var ErrInterrupted = fmt.Errorf("interrupted")
+
 // ANSI color codes
 const (
-	Reset     = "\033[0m"
-	Bold      = "\033[1m"
-	Dim       = "\033[2m"
-	Italic    = "\033[3m"
+	Reset  = "\033[0m"
+	Bold   = "\033[1m"
+	Dim    = "\033[2m"
+	Italic = "\033[3m"
 
-	Cyan      = "\033[36m"
-	Green     = "\033[32m"
-	Yellow    = "\033[33m"
-	Red       = "\033[31m"
-	Magenta   = "\033[35m"
-	Blue      = "\033[34m"
-	White     = "\033[37m"
+	Cyan    = "\033[36m"
+	Green   = "\033[32m"
+	Yellow  = "\033[33m"
+	Red     = "\033[31m"
+	Magenta = "\033[35m"
+	Blue    = "\033[34m"
+	White   = "\033[37m"
 
 	BgCyan    = "\033[46m"
 	BgBlue    = "\033[44m"
@@ -50,8 +54,8 @@ var ModeOrder = []string{"ask", "rush", "plan"}
 
 // Prompt manages the interactive REPL loop with raw terminal input.
 type Prompt struct {
-	history     []string
-	currentMode string
+	history      []string
+	currentMode  string
 	onModeChange func(newMode string) // callback when mode changes via Tab
 }
 
@@ -82,7 +86,7 @@ func PrintBanner() {
   ╚════██║██║╚██╔╝██║██╔══██║██╔══██╗██╔══██║
   ███████║██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝` + Reset + `
-` + Dim + `  स्मृति — Autonomous Multi-Agent Terminal v1.0.0` + Reset + `
+` + Dim + `  स्मृति — Autonomous Multi-Agent Terminal v1.1.0` + Reset + `
 `
 	fmt.Println(banner)
 }
@@ -304,7 +308,39 @@ func (p *Prompt) ReadLine() (string, error) {
 					i += 2 // Skip the escape sequence bytes
 				}
 
+				// Handle Ctrl+Shift+C (copy) and Ctrl+Shift+V (paste)
+				// These are escape sequences in raw terminal mode
+				if i+1 < n {
+					// Ctrl+Shift+C = \e + C (0x1B 0x43)
+					// Ctrl+Shift+V = \e + V (0x1B 0x56)
+					if buf[i+1] == 'C' || buf[i+1] == 'V' {
+						// Notify user about copy/paste in raw mode
+						if buf[i+1] == 'C' {
+							fmt.Printf("\r\n  %s💡%s Copy — select text in terminal%s\r\n", Yellow, Reset, Dim)
+						} else {
+							fmt.Printf("\r\n  %s💡%s Paste — press %sCtrl+Shift+V%s again after restoring terminal%s\r\n",
+								Yellow, Reset, Bold, Reset, Dim)
+						}
+						// Redraw prompt
+						clearLine()
+						p.printPromptPrefix()
+						fmt.Printf("%s", string(input))
+						if cursorPos < len(input) {
+							fmt.Printf("\033[%dD", len(input)-cursorPos)
+						}
+						i++ // Skip the extra byte
+						continue
+					}
+				}
+
 			case b >= 0x20 && b < 0x7F: // Printable ASCII
+				// Check for '?' to show keyboard shortcuts
+				if b == '?' && len(input) == 0 {
+					PrintKeyboardShortcuts()
+					clearLine()
+					p.printPromptPrefix()
+					continue
+				}
 				// Insert character at cursor position
 				if cursorPos == len(input) {
 					input = append(input, b)
@@ -368,6 +404,37 @@ func (p *Prompt) readLineFallback() (string, error) {
 	return line, nil
 }
 
+// ReadLineWithCancel reads a line of input with context cancellation support.
+// When context is cancelled, returns ErrInterrupted.
+func (p *Prompt) ReadLineWithCancel(ctx context.Context) (string, error) {
+	// Create a channel to receive result from ReadLine
+	resultCh := make(chan struct {
+		line string
+		err  error
+	}, 1)
+
+	// Run ReadLine in a goroutine
+	go func() {
+		line, err := p.ReadLine()
+		resultCh <- struct {
+			line string
+			err  error
+		}{line, err}
+	}()
+
+	// Wait for either completion or cancellation
+	select {
+	case <-ctx.Done():
+		return "", ErrInterrupted
+	case result := <-resultCh:
+		// Convert "interrupt" error from ReadLine to our ErrInterrupted
+		if result.err != nil && result.err.Error() == "interrupt" {
+			return "", ErrInterrupted
+		}
+		return result.line, result.err
+	}
+}
+
 // IsExitCommand checks if the input is an exit command.
 func IsExitCommand(input string) bool {
 	lower := strings.ToLower(input)
@@ -395,9 +462,11 @@ func PrintHelp() {
 	fmt.Printf("  %s%sPerintah tersedia:%s\n", Bold, White, Reset)
 	fmt.Printf("  %s[Tab]%s              — Ganti mode agen (cycle: ask → rush → plan)\n", Yellow, Reset)
 	fmt.Printf("  %s/mode [ask|rush|plan]%s — Ganti mode agen\n", Yellow, Reset)
+	fmt.Printf("  %s/model [provider] [model]%s — Ganti LLM provider/model\n", Yellow, Reset)
 	fmt.Printf("  %s/help%s              — Tampilkan bantuan ini\n", Yellow, Reset)
 	fmt.Printf("  %s/memory%s            — Lihat memori tersimpan\n", Yellow, Reset)
-	fmt.Printf("  %s/mcp%s               — Lihat MCP servers yang terhubung\n", Yellow, Reset)
+	fmt.Printf("  %s/mcp%s               — Lihat MCP servers dan tools\n", Yellow, Reset)
+	fmt.Printf("  %s/session [list|new|info|switch|end]%s — Kelola sessions\n", Yellow, Reset)
 	fmt.Printf("  %s/clear%s             — Bersihkan layar\n", Yellow, Reset)
 	fmt.Printf("  %sexit%s               — Keluar dari Smara\n", Yellow, Reset)
 	fmt.Println()
@@ -405,5 +474,75 @@ func PrintHelp() {
 	fmt.Printf("  %s💬 ask%s   — Tanya-jawab langsung\n", Cyan, Reset)
 	fmt.Printf("  %s⚡ rush%s  — Eksekusi cepat, langsung bertindak\n", Yellow, Reset)
 	fmt.Printf("  %s📋 plan%s  — Buat rencana dulu, lalu eksekusi\n", Magenta, Reset)
+	fmt.Println()
+}
+
+// PrintUsageStats displays usage statistics after each prompt.
+// Accepts agent.Stats but displays it in a user-friendly format.
+func PrintUsageStats(promptCount int, totalTokens int, avgTokens int, totalCost float64, totalDuration string) {
+	if promptCount == 0 {
+		return
+	}
+	fmt.Printf("  %s📊 Stats:%s prompts=%d tokens=%d avg=%d cost=$%.4f duration=%s\n",
+		Dim, Reset,
+		promptCount,
+		totalTokens,
+		avgTokens,
+		totalCost,
+		totalDuration,
+	)
+}
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var spinIdx = 0
+
+// SpinnerStart begins a spinner animation (call in goroutine).
+func SpinnerStart(msg string) {
+	fmt.Printf("\r  %s%s%s", Cyan, spinnerFrames[0], Reset)
+	fmt.Printf(" %s...", msg)
+}
+
+// SpinnerTick updates the spinner animation.
+func SpinnerTick() {
+	spinIdx = (spinIdx + 1) % len(spinnerFrames)
+	fmt.Printf("\r  %s%s%s", Cyan, spinnerFrames[spinIdx], Reset)
+}
+
+// SpinnerStop ends the spinner animation.
+func SpinnerStop(success bool) {
+	clearLine()
+	if success {
+		fmt.Printf("\r  %s✓%s %s\n", Green, Reset, "Done")
+	} else {
+		fmt.Printf("\r  %s✗%s %s\n", Red, Reset, "Failed")
+	}
+}
+
+// PrintStatusBar displays a status bar at the bottom of the terminal.
+func PrintStatusBar(mode string, promptCount int, totalTokens int) {
+	emoji := ModeEmojis[mode]
+	if emoji == "" {
+		emoji = "🌀"
+	}
+	color := ModeColors[mode]
+	if color == "" {
+		color = Cyan
+	}
+	fmt.Printf("\r  %s%s[%s]%s prompts=%d tokens=%d", Bold, color, emoji, Reset, promptCount, totalTokens)
+}
+
+// PrintKeyboardShortcuts displays keyboard shortcuts overlay.
+func PrintKeyboardShortcuts() {
+	fmt.Println()
+	fmt.Printf("  %s%s⌨️ Keyboard Shortcuts:%s\n", Bold, Yellow, Reset)
+	fmt.Printf("  %s[Tab]%s        — Cycle mode (ask → rush → plan)\n", Yellow, Reset)
+	fmt.Printf("  %s[↑/↓]%s       — Command history\n", Yellow, Reset)
+	fmt.Printf("  %s[Ctrl+U]%s     — Clear current line\n", Yellow, Reset)
+	fmt.Printf("  %s[Ctrl+W]%s     — Delete last word\n", Yellow, Reset)
+	fmt.Printf("  %s[Ctrl+Shift+C]%s — Copy selection\n", Yellow, Reset)
+	fmt.Printf("  %s[Ctrl+Shift+V]%s — Paste from clipboard\n", Yellow, Reset)
+	fmt.Printf("  %s[Ctrl+C]%s     — Interrupt/Cancel\n", Yellow, Reset)
+	fmt.Printf("  %s[Ctrl+D]%s     — Exit\n", Yellow, Reset)
+	fmt.Printf("  %s[?]%s          — Show this help\n", Yellow, Reset)
 	fmt.Println()
 }

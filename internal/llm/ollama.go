@@ -21,17 +21,43 @@ type ollamaChatRequest struct {
 	Model    string          `json:"model"`
 	Messages []ollamaMessage `json:"messages"`
 	Stream   bool            `json:"stream"`
+	Tools    []ollamaTool    `json:"tools,omitempty"`
 }
 
 type ollamaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string                    `json:"role"`
+	Content    string                    `json:"content,omitempty"`
+	ToolCalls  []ollamaToolCall          `json:"tool_calls,omitempty"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+}
+
+// ollamaTool represents a tool definition sent to Ollama.
+type ollamaTool struct {
+	Type     string          `json:"type"`
+	Function ollamaToolFunc  `json:"function"`
+}
+
+type ollamaToolFunc struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+// ollamaToolCall represents a tool call requested by the assistant.
+type ollamaToolCall struct {
+	Function ollamaToolCallFunc `json:"function"`
+}
+
+type ollamaToolCallFunc struct {
+	Name      string                 `json:"name"`
+	Arguments map[string]interface{} `json:"arguments"`
 }
 
 type ollamaChatResponse struct {
 	Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role      string             `json:"role"`
+		Content   string             `json:"content"`
+		ToolCalls []ollamaToolCall   `json:"tool_calls,omitempty"`
 	} `json:"message"`
 	Done           bool   `json:"done"`
 	Model          string `json:"model"`
@@ -74,10 +100,21 @@ func (o *OllamaProvider) Chat(messages []Message) (*ChatResponse, error) {
 	// Convert to Ollama format
 	ollamaMessages := make([]ollamaMessage, len(messages))
 	for i, m := range messages {
-		ollamaMessages[i] = ollamaMessage{
-			Role:    string(m.Role),
-			Content: m.Content,
+		om := ollamaMessage{
+			Role:       string(m.Role),
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
 		}
+		// Convert tool calls to Ollama format
+		for _, tc := range m.ToolCalls {
+			om.ToolCalls = append(om.ToolCalls, ollamaToolCall{
+				Function: ollamaToolCallFunc{
+					Name:      tc.Function,
+					Arguments: tc.Args,
+				},
+			})
+		}
+		ollamaMessages[i] = om
 	}
 
 	reqBody := ollamaChatRequest{
@@ -118,47 +155,87 @@ func (o *OllamaProvider) Chat(messages []Message) (*ChatResponse, error) {
 	}, nil
 }
 
-// ChatWithTools is not fully supported by Ollama in MVP.
-// Falls back to regular chat with tool descriptions in the system prompt.
+// ChatWithTools sends messages with tool definitions for function calling.
 func (o *OllamaProvider) ChatWithTools(messages []Message, tools []ToolFunction) (*ChatResponse, []ToolCall, error) {
-	// For MVP: inject tool descriptions into system prompt
-	if len(tools) > 0 {
-		toolDesc := "Kamu memiliki akses ke tools berikut:\n"
-		for _, t := range tools {
-			toolDesc += fmt.Sprintf("- %s: %s\n", t.Name, t.Description)
+	// Convert to Ollama format
+	ollamaMessages := make([]ollamaMessage, len(messages))
+	for i, m := range messages {
+		om := ollamaMessage{
+			Role:       string(m.Role),
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
 		}
-		toolDesc += "\nUntuk menggunakan tool, jawab dengan format JSON: {\"tool\": \"nama_tool\", \"args\": {...}}"
-
-		// Prepend tool description to messages
-		enhanced := make([]Message, 0, len(messages)+1)
-		enhanced = append(enhanced, Message{
-			Role:    RoleSystem,
-			Content: toolDesc,
-		})
-		enhanced = append(enhanced, messages...)
-		messages = enhanced
+		for _, tc := range m.ToolCalls {
+			om.ToolCalls = append(om.ToolCalls, ollamaToolCall{
+				Function: ollamaToolCallFunc{
+					Name:      tc.Function,
+					Arguments: tc.Args,
+				},
+			})
+		}
+		ollamaMessages[i] = om
 	}
 
-	resp, err := o.Chat(messages)
+	// Convert tools to Ollama format
+	ollamaTools := make([]ollamaTool, len(tools))
+	for i, t := range tools {
+		ollamaTools[i] = ollamaTool{
+			Type: "function",
+			Function: ollamaToolFunc{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			},
+		}
+	}
+
+	reqBody := ollamaChatRequest{
+		Model:    o.model,
+		Messages: ollamaMessages,
+		Stream:   false,
+		Tools:    ollamaTools,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("gagal marshal request: %w", err)
 	}
 
-	// Try to parse tool calls from the response
-	var toolCalls []ToolCall
-	var rawCall struct {
-		Tool string                 `json:"tool"`
-		Args map[string]interface{} `json:"args"`
+	resp, err := o.client.Post(
+		o.host+"/api/chat",
+		"application/json",
+		bytes.NewBuffer(jsonData),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gagal menghubungi Ollama di %s: %w", o.host, err)
 	}
-	if err := json.Unmarshal([]byte(resp.Content), &rawCall); err == nil && rawCall.Tool != "" {
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, nil, fmt.Errorf("ollama error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var ollamaResp ollamaChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return nil, nil, fmt.Errorf("gagal decode response: %w", err)
+	}
+
+	// Parse tool calls from response
+	var toolCalls []ToolCall
+	for i, tc := range ollamaResp.Message.ToolCalls {
 		toolCalls = append(toolCalls, ToolCall{
-			ID:       fmt.Sprintf("call_%d", time.Now().UnixNano()),
-			Function: rawCall.Tool,
-			Args:     rawCall.Args,
+			ID:       fmt.Sprintf("call_%d_%d", time.Now().UnixNano(), i),
+			Function: tc.Function.Name,
+			Args:     tc.Function.Arguments,
 		})
 	}
 
-	return resp, toolCalls, nil
+	return &ChatResponse{
+		Content:     ollamaResp.Message.Content,
+		Model:       ollamaResp.Model,
+		TotalTokens: ollamaResp.EvalCount,
+	}, toolCalls, nil
 }
 
 // GenerateEmbedding creates a vector embedding using Ollama's embed API.

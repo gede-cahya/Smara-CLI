@@ -3,11 +3,15 @@ package memory
 import (
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/cahya/smara/internal/llm"
+	"github.com/cahya/smara/internal/session"
 )
 
 // SQLiteStore implements MemoryStore using SQLite.
@@ -53,9 +57,22 @@ func (s *SQLiteStore) Init() error {
 		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		name TEXT DEFAULT '',
+		state TEXT DEFAULT 'active',
+		mode TEXT DEFAULT 'ask',
+		mcp_servers TEXT DEFAULT '[]',
+		history TEXT DEFAULT '[]',
+		tasks TEXT DEFAULT '[]',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 	CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
 	CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_log(status);
+	CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -165,6 +182,109 @@ func (s *SQLiteStore) MarkSynced(memoryID int64, deltaHash string) error {
 		memoryID, deltaHash,
 	)
 	return err
+}
+
+// --- Session Operations ---
+
+// CreateSession stores a new session.
+func (s *SQLiteStore) CreateSession(session *session.Session) error {
+	mcpServersJSON, _ := json.Marshal(session.MCPServers)
+	historyJSON, _ := json.Marshal(session.History)
+	tasksJSON, _ := json.Marshal(session.Tasks)
+
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.Name, string(session.State), string(session.Mode),
+		string(mcpServersJSON), string(historyJSON), string(tasksJSON),
+		session.CreatedAt, session.UpdatedAt,
+	)
+	return err
+}
+
+// GetSession retrieves a session by ID.
+func (s *SQLiteStore) GetSession(id string) (*session.Session, error) {
+	row := s.db.QueryRow(
+		`SELECT id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
+		 FROM sessions WHERE id = ?`, id,
+	)
+
+	var sess session.Session
+	var mcpServersJSON, historyJSON, tasksJSON string
+
+	err := row.Scan(&sess.ID, &sess.Name, &sess.State, &sess.Mode,
+		&mcpServersJSON, &historyJSON, &tasksJSON, &sess.CreatedAt, &sess.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("gagal scan session: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(mcpServersJSON), &sess.MCPServers); err != nil {
+		sess.MCPServers = []string{}
+	}
+	if err := json.Unmarshal([]byte(historyJSON), &sess.History); err != nil {
+		sess.History = []llm.Message{}
+	}
+	if err := json.Unmarshal([]byte(tasksJSON), &sess.Tasks); err != nil {
+		sess.Tasks = []session.Task{}
+	}
+
+	return &sess, nil
+}
+
+// UpdateSession updates an existing session.
+func (s *SQLiteStore) UpdateSession(session *session.Session) error {
+	mcpServersJSON, _ := json.Marshal(session.MCPServers)
+	historyJSON, _ := json.Marshal(session.History)
+	tasksJSON, _ := json.Marshal(session.Tasks)
+
+	_, err := s.db.Exec(
+		`UPDATE sessions SET name=?, state=?, mode=?, mcp_servers=?, history=?, tasks=?, updated_at=?
+		 WHERE id=?`,
+		session.Name, string(session.State), string(session.Mode),
+		string(mcpServersJSON), string(historyJSON), string(tasksJSON),
+		time.Now(), session.ID,
+	)
+	return err
+}
+
+// DeleteSession removes a session by ID.
+func (s *SQLiteStore) DeleteSession(id string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", id)
+	return err
+}
+
+// ListSessions returns all sessions ordered by updated_at DESC.
+func (s *SQLiteStore) ListSessions() ([]session.Session, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
+		 FROM sessions ORDER BY updated_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gagal query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []session.Session
+	for rows.Next() {
+		var session session.Session
+		var mcpServersJSON, historyJSON, tasksJSON string
+
+		if err := rows.Scan(&session.ID, &session.Name, &session.State, &session.Mode,
+			&mcpServersJSON, &historyJSON, &tasksJSON, &session.CreatedAt, &session.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("gagal scan session: %w", err)
+		}
+
+		json.Unmarshal([]byte(mcpServersJSON), &session.MCPServers)
+		json.Unmarshal([]byte(historyJSON), &session.History)
+		json.Unmarshal([]byte(tasksJSON), &session.Tasks)
+
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
 }
 
 // Search is implemented in search.go

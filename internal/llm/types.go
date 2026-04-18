@@ -8,12 +8,15 @@ const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool" // for tool call results in agentic loop
 )
 
 // Message represents a single message in a conversation.
 type Message struct {
-	Role    Role   `json:"role"`
-	Content string `json:"content"`
+	Role       Role       `json:"role"`
+	Content    string     `json:"content"`
+	ToolCallID string     `json:"tool_call_id,omitempty"` // ID of the tool call this message responds to
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`   // Tool calls requested by the assistant
 }
 
 // ChatRequest represents a request to generate a chat completion.
