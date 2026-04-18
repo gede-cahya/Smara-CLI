@@ -47,6 +47,37 @@ make
 sudo make install
 ```
 
+## 🔑 Setup & Login
+
+Smara membutuhkan akses ke LLM (Large Language Model) untuk berfungsi. Secara default, Smara akan mencari **Ollama** di `localhost:11434`. Jika Anda ingin menggunakan provider cloud (OpenAI, Anthropic, OpenRouter), ikuti langkah berikut:
+
+### 1. Simpan API Key
+Jalankan perintah login untuk menyimpan API key secara aman di konfigurasi lokal:
+```bash
+smara login
+```
+Anda akan dipandu melalui wizard interaktif untuk memilih provider dan memasukkan API key. Atau gunakan flag untuk provider spesifik:
+```bash
+smara login --provider openai --key "sk-..."
+```
+
+### 2. Pilih Provider Aktif
+Setelah login, Anda bisa memilih provider dan model mana yang ingin digunakan:
+```bash
+# Secara interaktif (direkomendasikan)
+smara provider select
+
+# Atau secara manual
+smara provider set anthropic
+smara provider set-model claude-3-5-sonnet-latest
+```
+
+### 3. Cek Koneksi
+Pastikan Smara bisa terhubung ke LLM yang dipilih:
+```bash
+smara provider test
+```
+
 ## 🛠️ Cara Penggunaan
 
 ### Memulai Sesi
