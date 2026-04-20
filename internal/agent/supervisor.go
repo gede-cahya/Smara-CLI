@@ -657,7 +657,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 	resp, err := s.provider.Chat(messages)
 	if err != nil {
-		return "", fmt.Errorf("gagal mendapatkan response final: %w", err)
+		return "", "", fmt.Errorf("gagal mendapatkan response final: %w", err)
 	}
 
 	s.history = append(s.history,

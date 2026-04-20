@@ -8,7 +8,7 @@ import (
 	"math"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
@@ -22,7 +22,7 @@ type SQLiteStore struct {
 
 // NewSQLiteStore creates a new SQLite-backed memory store.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("gagal membuka database: %w", err)
 	}
