@@ -45,6 +45,14 @@ var (
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#767676"))
 
+	thinkingStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Italic(true).
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(lipgloss.Color("#444444")).
+			PaddingLeft(1).
+			MarginLeft(1)
+
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("#3C3C3C"))
@@ -55,14 +63,15 @@ var globalProgram *tea.Program
 
 // ChatMessage represents a single message in the UI
 type ChatMessage struct {
-	Role    string // "System", "User", "Agent"
-	Content string
-	Time    time.Time
+	Role     string // "System", "User", "Agent"
+	Content  string
+	Thinking string
+	Time     time.Time
 }
 
 // Supervisor interface to avoid circular dependency
 type AppSupervisor interface {
-	ProcessPrompt(ctx context.Context, prompt string) (string, error)
+	ProcessPrompt(ctx context.Context, prompt string) (string, string, error)
 	GetMode() agent.Mode
 	SetMode(mode agent.Mode)
 }
@@ -129,7 +138,7 @@ func bannerContent() string {
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 `
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render(banner) + 
-		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.2.0\n  Ketik /help untuk daftar perintah.\n")
+		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.3.0\n  Ketik /help untuk daftar perintah.\n")
 }
 
 // Init initializes the app
@@ -140,6 +149,7 @@ func (m AppModel) Init() tea.Cmd {
 // ProcessMsg is sent when the supervisor finishes processing
 type ProcessMsg struct {
 	Response string
+	Thinking string
 	Err      error
 }
 
@@ -242,8 +252,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ctx := m.ctx
 				
 				cmds = append(cmds, func() tea.Msg {
-					resp, err := sup.ProcessPrompt(ctx, v)
-					return ProcessMsg{Response: resp, Err: err}
+					resp, thinking, err := sup.ProcessPrompt(ctx, v)
+					return ProcessMsg{Response: resp, Thinking: thinking, Err: err}
 				})
 			}
 		}
@@ -257,7 +267,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addMessage("System", fmt.Sprintf("Error: %v", msg.Err))
 			}
 		} else {
-			m.addMessage("Agent", msg.Response)
+			m.addMessageWithThinking("Agent", msg.Response, msg.Thinking)
 		}
 
 	case tea.WindowSizeMsg:
@@ -283,10 +293,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AppModel) addMessage(role, content string) {
+	m.addMessageWithThinking(role, content, "")
+}
+
+func (m *AppModel) addMessageWithThinking(role, content, thinking string) {
 	m.messages = append(m.messages, ChatMessage{
-		Role:    role,
-		Content: content,
-		Time:    time.Now(),
+		Role:     role,
+		Content:  content,
+		Thinking: thinking,
+		Time:     time.Now(),
 	})
 	m.renderMessages()
 }
@@ -322,7 +337,12 @@ func (m *AppModel) renderMessages() {
 			}
 		}
 
-		sb.WriteString(fmt.Sprintf("%s %s\n%s\n\n", timeStr, prefix, renderedContent))
+		var thinkingContent string
+		if msg.Thinking != "" {
+			thinkingContent = thinkingStyle.Render(msg.Thinking) + "\n"
+		}
+
+		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent))
 	}
 	
 	m.viewport.SetContent(sb.String())

@@ -28,9 +28,10 @@ type ChatRequest struct {
 
 // ChatResponse represents the response from a chat completion.
 type ChatResponse struct {
-	Content    string `json:"content"`
-	Model      string `json:"model"`
-	TotalTokens int   `json:"total_tokens,omitempty"`
+	Content     string `json:"content"`
+	Thinking    string `json:"thinking,omitempty"` // reasoning/thinking content from thinking models (qwen3, deepseek-r1, etc.)
+	Model       string `json:"model"`
+	TotalTokens int    `json:"total_tokens,omitempty"`
 }
 
 // ToolFunction describes a function that an LLM can call.

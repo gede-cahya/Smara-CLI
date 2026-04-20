@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 # Configuration
 $REPO = "gede-cahya/Smara-CLI"
 $BINARY_NAME = "smara"
-$VERSION = "1.2.0"
+$VERSION = "1.3.0"
 $INSTALL_DIR = "$env:LOCALAPPDATA\Programs\smara"
 $GITHUB_BASE = "https://github.com/$REPO"
 

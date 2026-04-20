@@ -375,7 +375,7 @@ func (s *Supervisor) IsCurrentSession(id string) bool {
 }
 
 // ProcessPrompt handles a user prompt using the current agent mode.
-func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (string, error) {
+func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (string, string, error) {
 	startTime := time.Now()
 	modeInfo := GetModeInfo(s.mode)
 
@@ -447,10 +447,14 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 		Content: userPrompt,
 	})
 
-	// 3. Call LLM
+	// 3. Call LLM (branch based on mode)
+	if s.mode == ModeRush || s.mode == ModePlan {
+		return s.RunAgenticLoop(ctx, userPrompt)
+	}
+
 	resp, err := s.provider.Chat(messages)
 	if err != nil {
-		return "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+		return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
 	}
 
 	// 4. Update conversation history
@@ -474,12 +478,12 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 		s.memStore.Save(content, tag, "supervisor", embedding)
 	}
 
-	return resp.Content, nil
+	return resp.Content, resp.Thinking, nil
 }
 
 // RunAgenticLoop executes the agentic loop: LLM → tool calls → execute → feed back → repeat.
 // Returns the final text response when the LLM stops calling tools.
-func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (string, error) {
+func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (string, string, error) {
 	modeInfo := GetModeInfo(s.mode)
 
 	// 1. Search memory for relevant context
@@ -553,6 +557,8 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	// 3. Get available tools
 	tools := s.ConvertMCPToolsToToolFunctions()
 
+	var allThinking []string
+
 	// 4. Agentic loop
 	for iteration := 0; iteration < s.maxIterations; iteration++ {
 		// Callback: report iteration
@@ -572,7 +578,12 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		}
 
 		if err != nil {
-			return "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+			return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+		}
+
+		// Accumulate thinking
+		if resp.Thinking != "" {
+			allThinking = append(allThinking, resp.Thinking)
 		}
 
 		// Check if LLM wants to call tools
@@ -591,7 +602,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				s.memStore.Save(content, tag, "supervisor", embedding)
 			}
 
-			return resp.Content, nil
+			return resp.Content, strings.Join(allThinking, "\n\n"), nil
 		}
 
 		// LLM requested tool calls — execute them
@@ -654,7 +665,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
 	)
 
-	return resp.Content, nil
+	return resp.Content, strings.Join(allThinking, "\n\n"), nil
 }
 
 // SetMaxIterations sets the maximum number of agentic loop iterations.

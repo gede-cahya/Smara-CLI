@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	stdsync "sync"
 	"syscall"
 	"time"
 
@@ -153,36 +154,71 @@ func runStart(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	// Connect to each MCP server
-	for _, mcpCfg := range mcpConfigs {
-		if !mcpCfg.Enabled {
-			continue
+	// Connect to all MCP servers in parallel
+	type mcpConnResult struct {
+		Name   string
+		Client *mcp.Client
+		Tools  []mcp.Tool
+		Err    error
+	}
+
+	var enabledConfigs []mcp.MCPServerConfig
+	for _, cfg := range mcpConfigs {
+		if cfg.Enabled {
+			enabledConfigs = append(enabledConfigs, cfg)
 		}
-		ui.PrintInfo("Menghubungkan MCP: %s (%s)...", mcpCfg.Name, mcpCfg.Type)
+	}
 
-		var client *mcp.Client
-		var err error
+	if len(enabledConfigs) > 0 {
+		ui.PrintInfo("Menghubungkan %d MCP server secara paralel...", len(enabledConfigs))
 
-		switch mcpCfg.Type {
-		case "remote":
-			client, err = mcp.NewRemoteClient(mcpCfg)
-		default: // "local"
-			client, err = mcp.NewClient(mcpCfg)
+		results := make(chan mcpConnResult, len(enabledConfigs))
+		var wg stdsync.WaitGroup
+
+		for _, mcpCfg := range enabledConfigs {
+			wg.Add(1)
+			go func(cfg mcp.MCPServerConfig) {
+				defer wg.Done()
+				var client *mcp.Client
+				var err error
+
+				switch cfg.Type {
+				case "remote":
+					client, err = mcp.NewRemoteClient(cfg)
+				default:
+					client, err = mcp.NewClient(cfg)
+				}
+
+				if err != nil {
+					results <- mcpConnResult{Name: cfg.Name, Err: err}
+					return
+				}
+
+				// List available tools
+				tools, _ := client.ListTools()
+				results <- mcpConnResult{Name: cfg.Name, Client: client, Tools: tools}
+			}(mcpCfg)
 		}
 
-		if err != nil {
-			ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", mcpCfg.Name, err)
-			continue
-		}
-		supervisor.RegisterMCPClient(mcpCfg.Name, client)
+		// Close channel when all goroutines finish
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
 
-		// List available tools
-		tools, err := client.ListTools()
-		if err == nil {
-			supervisor.UpdateMCPInfo(mcpCfg.Name, tools)
-			ui.PrintSuccess("MCP '%s' terhubung (%d tools)", mcpCfg.Name, len(tools))
-		} else {
-			ui.PrintSuccess("MCP '%s' terhubung", mcpCfg.Name)
+		// Collect results and register to supervisor
+		for res := range results {
+			if res.Err != nil {
+				ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", res.Name, res.Err)
+				continue
+			}
+			supervisor.RegisterMCPClient(res.Name, res.Client)
+			if len(res.Tools) > 0 {
+				supervisor.UpdateMCPInfo(res.Name, res.Tools)
+				ui.PrintSuccess("MCP '%s' terhubung (%d tools)", res.Name, len(res.Tools))
+			} else {
+				ui.PrintSuccess("MCP '%s' terhubung", res.Name)
+			}
 		}
 	}
 
@@ -417,29 +453,27 @@ func handleModelCommand(args []string, supervisor *agent.Supervisor) {
 		providers := llm.AvailableProviders()
 		currentProvider := supervisor.GetProviderName()
 
-		fmt.Println()
-		fmt.Printf("  %sModel saat ini:%s %s\n", ui.Dim, ui.Reset, currentProvider)
-		fmt.Println()
-		fmt.Printf("  %sGunakan: /model <provider> [model]%s\n", ui.Dim, ui.Reset)
-		fmt.Println()
-		fmt.Printf("  %sProvider tersedia:%s\n", ui.Dim, ui.Reset)
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Model saat ini: %s\n", currentProvider))
+		sb.WriteString(fmt.Sprintf("Gunakan: /model <provider> [model]\n\n"))
+		sb.WriteString("Provider tersedia:\n")
 		for name, info := range providers {
 			marker := "  "
 			if name == currentProvider {
-				marker = fmt.Sprintf("%s▸%s", ui.Green, ui.Reset)
+				marker = "▸ "
 			}
 			keyIndicator := ""
 			if info.NeedsAPIKey {
-				keyIndicator = fmt.Sprintf(" %s🔑%s", ui.Yellow, ui.Reset)
+				keyIndicator = " 🔑"
 			}
-			fmt.Printf("  %s %s%s — %s%s\n", marker, ui.Cyan, name, info.Description, keyIndicator)
+			sb.WriteString(fmt.Sprintf("  %s%s — %s%s\n", marker, name, info.Description, keyIndicator))
 			if len(info.Models) > 0 && name == currentProvider {
 				for _, m := range info.Models {
-					fmt.Printf("    %s├──%s %s\n", ui.Dim, ui.Reset, m)
+					sb.WriteString(fmt.Sprintf("    ├── %s\n", m))
 				}
 			}
 		}
-		fmt.Println()
+		ui.PrintInfo("%s", sb.String())
 		return
 	}
 
@@ -452,12 +486,11 @@ func handleModelCommand(args []string, supervisor *agent.Supervisor) {
 	// Validate provider
 	providers := llm.AvailableProviders()
 	if _, ok := providers[provider]; !ok {
-		ui.PrintError("Provider tidak valid: %s", provider)
-		fmt.Printf("  Provider tersedia: ")
+		var names []string
 		for name := range providers {
-			fmt.Printf("%s ", name)
+			names = append(names, name)
 		}
-		fmt.Println()
+		ui.PrintError("Provider tidak valid: %s (tersedia: %s)", provider, strings.Join(names, ", "))
 		return
 	}
 
@@ -489,11 +522,12 @@ func handleModelCommand(args []string, supervisor *agent.Supervisor) {
 		return
 	}
 
-	ui.PrintSuccess("Model switched ke: %s", provider)
 	if model != "" {
-		fmt.Printf("  Model: %s\n", model)
+		ui.PrintSuccess("Model switched ke: %s — %s", provider, model)
 	} else if info, ok := providers[provider]; ok && len(info.Models) > 0 {
-		fmt.Printf("  Model default: %s\n", info.Models[0])
+		ui.PrintSuccess("Model switched ke: %s — %s (default)", provider, info.Models[0])
+	} else {
+		ui.PrintSuccess("Model switched ke: %s", provider)
 	}
 }
 

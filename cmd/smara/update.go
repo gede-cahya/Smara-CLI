@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -38,7 +37,15 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Printf("📦 Ditemukan versi: %s\n", releaseInfo.TagName)
+		remoteVersion := strings.TrimPrefix(releaseInfo.TagName, "v")
+
+		// Check if already on latest version (only when no specific version requested)
+		if targetVersion == "" && remoteVersion == version {
+			fmt.Printf("✅ Anda sudah menggunakan versi terbaru: v%s\n", version)
+			return
+		}
+
+		fmt.Printf("📦 Versi saat ini: v%s → Versi target: v%s\n", version, remoteVersion)
 
 		asset, err := findMatchingAsset(releaseInfo)
 		if err != nil {
@@ -64,12 +71,12 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Println("✅ Pembaruan berhasil! Smara sekarang berada pada versi", releaseInfo.TagName)
+		fmt.Printf("✅ Pembaruan berhasil! Smara diperbarui dari v%s ke v%s\n", version, remoteVersion)
 	},
 }
 
 func init() {
-	updateCmd.Flags().StringVarP(&updateVersion, "version", "V", "", "Versi spesifik yang ingin diinstal (contoh: 1.2.0)")
+	updateCmd.Flags().StringVarP(&updateVersion, "version", "V", "", "Versi spesifik yang ingin diinstal (contoh: 1.3.0)")
 }
 
 type Release struct {
@@ -117,30 +124,23 @@ func findMatchingAsset(release *Release) (*Asset, error) {
 	osName := runtime.GOOS
 	archName := runtime.GOARCH
 
-	// Map architectures based on install.sh
-	if archName == "amd64" {
-		// x86_64 or amd64 is usually just amd64 in GOARCH
-	} else if archName == "arm64" {
-		// arm64/aarch64 is arm64 in GOARCH
-	}
-
 	ext := ".tar.gz"
 	if osName == "windows" {
 		ext = ".zip"
 	}
 
+	// Try exact match: smara-VERSION-OS-ARCH.ext
 	expectedPrefix := fmt.Sprintf("smara-%s-%s-%s", strings.TrimPrefix(release.TagName, "v"), osName, archName)
-	// fallback matching
 	for _, a := range release.Assets {
 		if strings.HasPrefix(a.Name, expectedPrefix) && strings.HasSuffix(a.Name, ext) {
 			return &a, nil
 		}
 	}
 
-	// Another fallback: try without version in case format varies
-	expectedPattern := fmt.Sprintf("smara-%s-%s%s", osName, archName, ext)
+	// Fallback: any asset containing OS-ARCH
+	osArch := fmt.Sprintf("%s-%s", osName, archName)
 	for _, a := range release.Assets {
-		if strings.Contains(a.Name, expectedPattern) || strings.Contains(a.Name, fmt.Sprintf("%s-%s", osName, archName)) && strings.HasSuffix(a.Name, ext) {
+		if strings.Contains(a.Name, osArch) && strings.HasSuffix(a.Name, ext) {
 			return &a, nil
 		}
 	}
@@ -182,13 +182,13 @@ func extractAndApply(archivePath, filename string) error {
 	}
 
 	tmpExtractPath := exePath + ".new"
-	
+
 	if strings.HasSuffix(filename, ".zip") {
-		if err := extractZip(archivePath, tmpExtractPath); err != nil {
+		if err := extractFirstFileFromZip(archivePath, tmpExtractPath); err != nil {
 			return err
 		}
 	} else if strings.HasSuffix(filename, ".tar.gz") {
-		if err := extractTarGz(archivePath, tmpExtractPath); err != nil {
+		if err := extractFirstFileFromTarGz(archivePath, tmpExtractPath); err != nil {
 			return err
 		}
 	} else {
@@ -210,7 +210,10 @@ func extractAndApply(archivePath, filename string) error {
 	return nil
 }
 
-func extractTarGz(tarGzPath, outPath string) error {
+// extractFirstFileFromTarGz extracts the first regular file from a .tar.gz archive.
+// This is simpler and more robust than trying to match filenames, since our
+// release archives contain exactly one binary file.
+func extractFirstFileFromTarGz(tarGzPath, outPath string) error {
 	f, err := os.Open(tarGzPath)
 	if err != nil {
 		return err
@@ -233,27 +236,26 @@ func extractTarGz(tarGzPath, outPath string) error {
 			return err
 		}
 
-		if header.Typeflag == tar.TypeReg {
-			// Find the binary file (usually named "smara" or "smara.exe" inside the archive)
-			if filepath.Base(header.Name) == "smara" || filepath.Base(header.Name) == "smara.exe" {
-				outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(header.Mode))
-				if err != nil {
-					return err
-				}
-				if _, err := io.Copy(outFile, tr); err != nil {
-					outFile.Close()
-					return err
-				}
-				outFile.Close()
-				return nil
+		// Accept any regular file (TypeReg='0' or TypeRegA='\x00')
+		if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
+			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
+			if err != nil {
+				return err
 			}
+			if _, err := io.Copy(outFile, tr); err != nil {
+				outFile.Close()
+				return err
+			}
+			outFile.Close()
+			return nil
 		}
 	}
 
-	return fmt.Errorf("file binary smara tidak ditemukan di dalam arsip tar.gz")
+	return fmt.Errorf("tidak ada file ditemukan di dalam arsip tar.gz")
 }
 
-func extractZip(zipPath, outPath string) error {
+// extractFirstFileFromZip extracts the first regular file from a .zip archive.
+func extractFirstFileFromZip(zipPath, outPath string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
@@ -261,13 +263,13 @@ func extractZip(zipPath, outPath string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if filepath.Base(f.Name) == "smara" || filepath.Base(f.Name) == "smara.exe" {
+		if !f.FileInfo().IsDir() && f.FileInfo().Size() > 0 {
 			rc, err := f.Open()
 			if err != nil {
 				return err
 			}
 
-			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, f.Mode())
+			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
 			if err != nil {
 				rc.Close()
 				return err
@@ -284,5 +286,5 @@ func extractZip(zipPath, outPath string) error {
 		}
 	}
 
-	return fmt.Errorf("file binary smara.exe tidak ditemukan di dalam arsip zip")
+	return fmt.Errorf("tidak ada file ditemukan di dalam arsip zip")
 }

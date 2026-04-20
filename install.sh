@@ -10,7 +10,7 @@ set -e
 REPO="gede-cahya/Smara-CLI"
 BINARY_NAME="smara"
 INSTALL_DIR="/usr/local/bin"
-VERSION="1.2.0"
+VERSION="1.3.0"
 GITHUB_BASE="https://github.com/${REPO}"
 
 # Colors

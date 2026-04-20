@@ -86,7 +86,7 @@ func PrintBanner() {
   ╚════██║██║╚██╔╝██║██╔══██║██╔══██╗██╔══██║
   ███████║██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝` + Reset + `
-` + Dim + `  स्मृति — Autonomous Multi-Agent Terminal v1.2.0` + Reset + `
+` + Dim + `  स्मृति — Autonomous Multi-Agent Terminal v1.3.0` + Reset + `
 `
 	fmt.Println(banner)
 }

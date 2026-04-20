@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -22,6 +24,7 @@ type ollamaChatRequest struct {
 	Messages []ollamaMessage `json:"messages"`
 	Stream   bool            `json:"stream"`
 	Tools    []ollamaTool    `json:"tools,omitempty"`
+	Think    bool            `json:"think,omitempty"` // enable thinking/reasoning for thinking models
 }
 
 type ollamaMessage struct {
@@ -57,6 +60,7 @@ type ollamaChatResponse struct {
 	Message struct {
 		Role      string             `json:"role"`
 		Content   string             `json:"content"`
+		Thinking  string             `json:"thinking,omitempty"` // thinking/reasoning content from thinking models
 		ToolCalls []ollamaToolCall   `json:"tool_calls,omitempty"`
 	} `json:"message"`
 	Done           bool   `json:"done"`
@@ -72,6 +76,49 @@ type ollamaEmbedRequest struct {
 
 type ollamaEmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
+}
+
+// thinkingModelPrefixes — model prefixes that support thinking/reasoning mode.
+var thinkingModelPrefixes = []string{
+	"qwen3",       // qwen3, qwen3.5, qwen3.6
+	"deepseek-r1", // deepseek-r1
+	"qwq",         // qwq
+	"phi4-reasoning",
+}
+
+// thinkTagRegex strips <think>...</think> tags from content (fallback parsing).
+var thinkTagRegex = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
+
+// isThinkingModel checks if the model supports thinking/reasoning mode.
+func isThinkingModel(model string) bool {
+	lower := strings.ToLower(model)
+	for _, prefix := range thinkingModelPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripThinkingTags removes <think>...</think> tags from content.
+// This is a fallback for models that embed thinking in content instead of a separate field.
+func stripThinkingTags(content string) (cleaned string, thinking string) {
+	matches := thinkTagRegex.FindAllString(content, -1)
+	if len(matches) > 0 {
+		var thinkParts []string
+		for _, m := range matches {
+			// Extract content between <think> and </think>
+			inner := strings.TrimPrefix(m, "<think>")
+			inner = strings.TrimSuffix(strings.TrimSpace(inner), "</think>")
+			inner = strings.TrimSpace(inner)
+			if inner != "" {
+				thinkParts = append(thinkParts, inner)
+			}
+		}
+		thinking = strings.Join(thinkParts, "\n")
+	}
+	cleaned = strings.TrimSpace(thinkTagRegex.ReplaceAllString(content, ""))
+	return cleaned, thinking
 }
 
 // NewOllamaProvider creates a new Ollama provider instance.
@@ -121,6 +168,7 @@ func (o *OllamaProvider) Chat(messages []Message) (*ChatResponse, error) {
 		Model:    o.model,
 		Messages: ollamaMessages,
 		Stream:   false,
+		Think:    isThinkingModel(o.model),
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -148,8 +196,18 @@ func (o *OllamaProvider) Chat(messages []Message) (*ChatResponse, error) {
 		return nil, fmt.Errorf("gagal decode response: %w", err)
 	}
 
+	// Process thinking content
+	content := ollamaResp.Message.Content
+	thinking := ollamaResp.Message.Thinking
+
+	// Fallback: strip <think> tags from content if thinking field is empty
+	if thinking == "" && strings.Contains(content, "<think>") {
+		content, thinking = stripThinkingTags(content)
+	}
+
 	return &ChatResponse{
-		Content:     ollamaResp.Message.Content,
+		Content:     content,
+		Thinking:    thinking,
 		Model:       ollamaResp.Model,
 		TotalTokens: ollamaResp.EvalCount,
 	}, nil
@@ -194,6 +252,7 @@ func (o *OllamaProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 		Messages: ollamaMessages,
 		Stream:   false,
 		Tools:    ollamaTools,
+		Think:    isThinkingModel(o.model),
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -231,8 +290,18 @@ func (o *OllamaProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 		})
 	}
 
+	// Process thinking content
+	content := ollamaResp.Message.Content
+	thinking := ollamaResp.Message.Thinking
+
+	// Fallback: strip <think> tags from content if thinking field is empty
+	if thinking == "" && strings.Contains(content, "<think>") {
+		content, thinking = stripThinkingTags(content)
+	}
+
 	return &ChatResponse{
-		Content:     ollamaResp.Message.Content,
+		Content:     content,
+		Thinking:    thinking,
 		Model:       ollamaResp.Model,
 		TotalTokens: ollamaResp.EvalCount,
 	}, toolCalls, nil

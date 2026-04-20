@@ -33,7 +33,7 @@ func AvailableProviders() map[string]ProviderInfo {
 		"ollama": {
 			Name:        "ollama",
 			Description: "Local LLM via Ollama (no API key needed)",
-			Models:      []string{"minimax-m2.5:cloud", "llama3.1:latest", "mistral:latest"},
+			Models:      []string{"minimax-m2.5:cloud", "qwen3.6:latest", "llama3.1:latest", "deepseek-r1:latest", "qwq:latest", "mistral:latest"},
 			NeedsAPIKey: false,
 		},
 		"openai": {
