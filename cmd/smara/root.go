@@ -48,6 +48,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(providerCmd)
+	rootCmd.AddCommand(updateCmd)
 }
 
 func initConfig() {

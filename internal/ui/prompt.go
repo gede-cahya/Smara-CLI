@@ -86,7 +86,7 @@ func PrintBanner() {
   ╚════██║██║╚██╔╝██║██╔══██║██╔══██╗██╔══██║
   ███████║██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝` + Reset + `
-` + Dim + `  स्मृति — Autonomous Multi-Agent Terminal v1.1.0` + Reset + `
+` + Dim + `  स्मृति — Autonomous Multi-Agent Terminal v1.2.0` + Reset + `
 `
 	fmt.Println(banner)
 }
@@ -94,29 +94,49 @@ func PrintBanner() {
 // PrintInfo displays an info message.
 func PrintInfo(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("  %s▸%s %s\n", Cyan, Reset, msg)
+	if globalProgram != nil {
+		InjectLog("System", msg)
+	} else {
+		fmt.Printf("  %s▸%s %s\n", Cyan, Reset, msg)
+	}
 }
 
 // PrintSuccess displays a success message.
 func PrintSuccess(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("  %s✓%s %s\n", Green, Reset, msg)
+	if globalProgram != nil {
+		InjectLog("System", "✓ "+msg)
+	} else {
+		fmt.Printf("  %s✓%s %s\n", Green, Reset, msg)
+	}
 }
 
 // PrintWarning displays a warning message.
 func PrintWarning(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("  %s⚠%s %s\n", Yellow, Reset, msg)
+	if globalProgram != nil {
+		InjectLog("System", "⚠ "+msg)
+	} else {
+		fmt.Printf("  %s⚠%s %s\n", Yellow, Reset, msg)
+	}
 }
 
 // PrintError displays an error message.
 func PrintError(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Printf("  %s✗%s %s\n", Red, Reset, msg)
+	if globalProgram != nil {
+		InjectLog("System", "Error: "+msg)
+	} else {
+		fmt.Printf("  %s✗%s %s\n", Red, Reset, msg)
+	}
 }
 
 // PrintAgent displays agent output with mode indicator.
 func PrintAgent(content string, mode string) {
+	if globalProgram != nil {
+		InjectLog("Agent", content)
+		return
+	}
 	emoji := ModeEmojis[mode]
 	if emoji == "" {
 		emoji = "🌀"
@@ -137,6 +157,10 @@ func PrintAgent(content string, mode string) {
 
 // PrintModeChange displays a mode change notification.
 func PrintModeChange(mode, emoji, description string) {
+	if globalProgram != nil {
+		InjectLog("System", fmt.Sprintf("Mode changed to %s: %s", strings.ToUpper(mode), description))
+		return
+	}
 	color := ModeColors[mode]
 	if color == "" {
 		color = Cyan
@@ -459,21 +483,21 @@ func ParseCommand(input string) (string, []string) {
 // PrintHelp displays available REPL commands.
 func PrintHelp() {
 	fmt.Println()
-	fmt.Printf("  %s%sPerintah tersedia:%s\n", Bold, White, Reset)
-	fmt.Printf("  %s[Tab]%s              — Ganti mode agen (cycle: ask → rush → plan)\n", Yellow, Reset)
-	fmt.Printf("  %s/mode [ask|rush|plan]%s — Ganti mode agen\n", Yellow, Reset)
-	fmt.Printf("  %s/model [provider] [model]%s — Ganti LLM provider/model\n", Yellow, Reset)
-	fmt.Printf("  %s/help%s              — Tampilkan bantuan ini\n", Yellow, Reset)
-	fmt.Printf("  %s/memory%s            — Lihat memori tersimpan\n", Yellow, Reset)
-	fmt.Printf("  %s/mcp%s               — Lihat MCP servers dan tools\n", Yellow, Reset)
-	fmt.Printf("  %s/session [list|new|info|switch|end]%s — Kelola sessions\n", Yellow, Reset)
-	fmt.Printf("  %s/clear%s             — Bersihkan layar\n", Yellow, Reset)
-	fmt.Printf("  %sexit%s               — Keluar dari Smara\n", Yellow, Reset)
+	fmt.Print("  " + Bold + White + "Perintah tersedia:" + Reset + "\n")
+	fmt.Print("  " + Yellow + "[Tab]" + Reset + "              — Ganti mode agen (cycle: ask → rush → plan)\n")
+	fmt.Print("  " + Yellow + "/mode [ask|rush|plan]" + Reset + " — Ganti mode agen\n")
+	fmt.Print("  " + Yellow + "/model [provider] [model]" + Reset + " — Ganti LLM provider/model\n")
+	fmt.Print("  " + Yellow + "/help" + Reset + "              — Tampilkan bantuan ini\n")
+	fmt.Print("  " + Yellow + "/memory" + Reset + "            — Lihat memori tersimpan\n")
+	fmt.Print("  " + Yellow + "/mcp" + Reset + "               — Lihat MCP servers dan tools\n")
+	fmt.Print("  " + Yellow + "/session [list|new|info|switch|end]" + Reset + " — Kelola sessions\n")
+	fmt.Print("  " + Yellow + "/clear" + Reset + "             — Bersihkan layar\n")
+	fmt.Print("  " + Yellow + "exit" + Reset + "               — Keluar dari Smara\n")
 	fmt.Println()
-	fmt.Printf("  %sMode agen:%s\n", Bold, Reset)
-	fmt.Printf("  %s💬 ask%s   — Tanya-jawab langsung\n", Cyan, Reset)
-	fmt.Printf("  %s⚡ rush%s  — Eksekusi cepat, langsung bertindak\n", Yellow, Reset)
-	fmt.Printf("  %s📋 plan%s  — Buat rencana dulu, lalu eksekusi\n", Magenta, Reset)
+	fmt.Print("  " + Bold + "Mode agen:" + Reset + "\n")
+	fmt.Print("  " + Cyan + "💬 ask" + Reset + "   — Tanya-jawab langsung\n")
+	fmt.Print("  " + Yellow + "⚡ rush" + Reset + "  — Eksekusi cepat, langsung bertindak\n")
+	fmt.Print("  " + Magenta + "📋 plan" + Reset + "  — Buat rencana dulu, lalu eksekusi\n")
 	fmt.Println()
 }
 
@@ -534,15 +558,15 @@ func PrintStatusBar(mode string, promptCount int, totalTokens int) {
 // PrintKeyboardShortcuts displays keyboard shortcuts overlay.
 func PrintKeyboardShortcuts() {
 	fmt.Println()
-	fmt.Printf("  %s%s⌨️ Keyboard Shortcuts:%s\n", Bold, Yellow, Reset)
-	fmt.Printf("  %s[Tab]%s        — Cycle mode (ask → rush → plan)\n", Yellow, Reset)
-	fmt.Printf("  %s[↑/↓]%s       — Command history\n", Yellow, Reset)
-	fmt.Printf("  %s[Ctrl+U]%s     — Clear current line\n", Yellow, Reset)
-	fmt.Printf("  %s[Ctrl+W]%s     — Delete last word\n", Yellow, Reset)
-	fmt.Printf("  %s[Ctrl+Shift+C]%s — Copy selection\n", Yellow, Reset)
-	fmt.Printf("  %s[Ctrl+Shift+V]%s — Paste from clipboard\n", Yellow, Reset)
-	fmt.Printf("  %s[Ctrl+C]%s     — Interrupt/Cancel\n", Yellow, Reset)
-	fmt.Printf("  %s[Ctrl+D]%s     — Exit\n", Yellow, Reset)
-	fmt.Printf("  %s[?]%s          — Show this help\n", Yellow, Reset)
+	fmt.Print("  " + Bold + Yellow + "⌨️ Keyboard Shortcuts:" + Reset + "\n")
+	fmt.Print("  " + Yellow + "[Tab]" + Reset + "        — Cycle mode (ask → rush → plan)\n")
+	fmt.Print("  " + Yellow + "[↑/↓]" + Reset + "       — Command history\n")
+	fmt.Print("  " + Yellow + "[Ctrl+U]" + Reset + "     — Clear current line\n")
+	fmt.Print("  " + Yellow + "[Ctrl+W]" + Reset + "     — Delete last word\n")
+	fmt.Print("  " + Yellow + "[Ctrl+Shift+C]" + Reset + " — Copy selection\n")
+	fmt.Print("  " + Yellow + "[Ctrl+Shift+V]" + Reset + " — Paste from clipboard\n")
+	fmt.Print("  " + Yellow + "[Ctrl+C]" + Reset + "     — Interrupt/Cancel\n")
+	fmt.Print("  " + Yellow + "[Ctrl+D]" + Reset + "     — Exit\n")
+	fmt.Print("  " + Yellow + "[?]" + Reset + "          — Show this help\n")
 	fmt.Println()
 }

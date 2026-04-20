@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gede-cahya/Smara-CLI/internal/config"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 )
 
@@ -77,9 +78,10 @@ var memoryClearCmd = &cobra.Command{
 
 var memorySearchCmd = &cobra.Command{
 	Use:   "search [query]",
-	Short: "Cari memori berdasarkan query",
+	Short: "Cari memori berdasarkan query secara semantik",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		query := args[0]
 		cfg := config.Get()
 		store, err := memory.NewSQLiteStore(cfg.DBPath)
 		if err != nil {
@@ -87,8 +89,39 @@ var memorySearchCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		// For search, we need an LLM to generate embeddings
-		fmt.Println("  ℹ Pencarian semantik memerlukan Ollama. Gunakan 'smara memory list' untuk listing biasa.")
+		// Use ollama with qwen3.6 model for embeddings
+		fmt.Printf("  Membuat embedding untuk query: '%s'...\n", query)
+		ollamaProvider := llm.NewOllamaProvider("qwen3.6", cfg.OllamaHost)
+		embedding, err := ollamaProvider.GenerateEmbedding(query)
+		if err != nil {
+			return fmt.Errorf("gagal membuat embedding (pastikan Ollama berjalan dan model qwen3.6 tersedia): %w", err)
+		}
+
+		limit, _ := cmd.Flags().GetInt("limit")
+		results, err := store.Search(embedding, limit)
+		if err != nil {
+			return fmt.Errorf("gagal mencari memori: %w", err)
+		}
+
+		if len(results) == 0 {
+			fmt.Println("  Tidak ditemukan memori yang relevan.")
+			return nil
+		}
+
+		fmt.Println()
+		for _, r := range results {
+			content := r.Memory.Content
+			if len(content) > 100 {
+				content = content[:100] + "..."
+			}
+			// Use ui colors if needed, but since ui package is not imported here, we use plain or basic terminal codes.
+			fmt.Printf("  [%d] %s\n", r.Memory.ID, content)
+			fmt.Printf("       relevansi: %.2f | tags=%s | source=%s | %s\n",
+				r.Similarity, r.Memory.Tags, r.Memory.Source,
+				r.Memory.CreatedAt.Format("2006-01-02 15:04"),
+			)
+		}
+		fmt.Println()
 		return nil
 	},
 }

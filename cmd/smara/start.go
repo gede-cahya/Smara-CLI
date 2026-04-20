@@ -195,112 +195,41 @@ func runStart(cmd *cobra.Command, args []string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Create a cancelable context for the main loop
-	mainCtx, mainCancel := context.WithCancel(context.Background())
-
 	go func() {
 		<-sigCh
 		fmt.Println()
 		ui.PrintInfo("Menutup Smara...")
-		mainCancel()
 		cancel()
 		os.Exit(0)
 	}()
 
-	// 7. Start REPL
-	ui.PrintHelp()
-	prompt := ui.NewPrompt()
-	prompt.SetMode(string(supervisor.GetMode()))
+	// 6.5 Inject Project Context
+	projectContext := loadProjectContext()
+	if projectContext != "" {
+		ui.PrintInfo("Memuat konteks proyek lokal...")
+		supervisor.AddContext(projectContext)
+	}
 
-	// Wire up Tab key → mode cycling
-	prompt.OnModeChange(func(newMode string) {
-		supervisor.SetMode(agent.Mode(newMode))
+	// 7. Start TUI
+	appModel := ui.InitialModel(supervisor, func(cmd string, args []string) {
+		handleCommand(cmd, args, supervisor, memStore, nil)
 	})
-
-	for {
-		// Check if we should continue
-		select {
-		case <-mainCtx.Done():
-			ui.PrintInfo("Sampai jumpa! 👋")
-			return nil
-		default:
+	
+	// Pre-load chat history into the UI if there is an active session
+	if session := supervisor.GetCurrentSession(); session != nil && len(session.History) > 0 {
+		var hist []struct{ Role, Content string }
+		for _, msg := range session.History {
+			hist = append(hist, struct{ Role, Content string }{Role: string(msg.Role), Content: msg.Content})
 		}
+		appModel.LoadHistory(hist)
+	}
 
-		// Create new context for this iteration
-		iterCtx, iterCancel := context.WithCancel(mainCtx)
-
-		input, err := prompt.ReadLineWithCancel(iterCtx)
-		if err != nil {
-			// Check if cancelled
-			if mainCtx.Err() != nil {
-				ui.PrintInfo("Sampai jumpa! 👋")
-				return nil
-			}
-			// If it's an interrupt (Ctrl+C during input), continue to next prompt
-			if err == ui.ErrInterrupted {
-				iterCancel()
-				continue
-			}
-			// EOF or other error
-			iterCancel()
-			break
-		}
-
-		iterCancel() // Cancel function no longer needed after getting input
-
-		if input == "" {
-			continue
-		}
-
-		if ui.IsExitCommand(input) {
-			ui.PrintInfo("Sampai jumpa! 👋")
-			break
-		}
-
-		// Handle slash commands
-		if ui.IsCommand(input) {
-			cmdName, cmdArgs := ui.ParseCommand(input)
-			handleCommand(cmdName, cmdArgs, supervisor, memStore, prompt)
-			continue
-		}
-
-		// Process as prompt to supervisor
-		currentMode := string(supervisor.GetMode())
-		ui.PrintInfo("Memproses [%s]...", currentMode)
-
-		// Create a display-only cancel indicator
-		respCh := make(chan struct {
-			response string
-			err      error
-		})
-
-		go func() {
-			response, err := supervisor.ProcessPrompt(mainCtx, input)
-			respCh <- struct {
-				response string
-				err      error
-			}{response, err}
-		}()
-
-		// Wait for response or cancellation
-		select {
-		case <-mainCtx.Done():
-			ui.PrintWarning("Proses dibatalkan")
-			continue
-		case result := <-respCh:
-			if result.err != nil {
-				// Check if it was a cancel
-				if mainCtx.Err() != nil {
-					ui.PrintWarning("Proses dibatalkan")
-				} else {
-					ui.PrintError("Error: %v", result.err)
-				}
-				continue
-			}
-			ui.PrintAgent(result.response, currentMode)
-			stats := supervisor.GetStats()
-			ui.PrintUsageStats(stats.PromptCount, stats.TotalTokens, stats.AvgTokensPerReq, stats.TotalCost, stats.TotalDuration.String())
-		}
+	p := ui.NewProgram(appModel)
+	ui.SetGlobalProgram(p)
+	
+	// Pass mainCtx to UI if needed, but Tea program manages its own lifecycle mostly.
+	if _, err := p.Run(); err != nil {
+		ui.PrintError("Error starting TUI: %v", err)
 	}
 
 	return nil
@@ -314,16 +243,15 @@ func handleCommand(cmd string, args []string, supervisor *agent.Supervisor, memS
 		if len(args) == 0 {
 			// Show current mode and all available modes
 			current := supervisor.GetMode()
-			fmt.Println()
+			var msgParts []string
 			for _, m := range agent.AllModes() {
 				marker := "  "
 				if m.Name == current {
-					marker = fmt.Sprintf("%s▸%s", ui.Green, ui.Reset)
+					marker = "▸"
 				}
-				color := ui.ModeColors[string(m.Name)]
-				fmt.Printf("  %s %s%s %s%s — %s\n", marker, color, m.Emoji, m.Label, ui.Reset, m.Description)
+				msgParts = append(msgParts, fmt.Sprintf("%s %s %s — %s", marker, m.Emoji, m.Label, m.Description))
 			}
-			fmt.Println()
+			ui.PrintInfo("Mode tersedia:\n%s", strings.Join(msgParts, "\n"))
 			return
 		}
 		newMode := args[0]
@@ -332,7 +260,6 @@ func handleCommand(cmd string, args []string, supervisor *agent.Supervisor, memS
 			return
 		}
 		supervisor.SetMode(agent.Mode(newMode))
-		prompt.SetMode(newMode)
 		info := agent.GetModeInfo(agent.Mode(newMode))
 		ui.PrintModeChange(newMode, info.Emoji, info.Description)
 	case "model":
@@ -347,49 +274,43 @@ func handleCommand(cmd string, args []string, supervisor *agent.Supervisor, memS
 			ui.PrintInfo("Belum ada memori tersimpan.")
 			return
 		}
-		fmt.Println()
+		var msgParts []string
 		for _, m := range memories {
-			fmt.Printf("  %s[%d]%s %s%s%s — %s\n",
-				ui.Dim, m.ID, ui.Reset,
-				ui.Cyan, truncateStr(m.Content, 80), ui.Reset,
-				m.CreatedAt.Format("02 Jan 15:04"),
-			)
+			msgParts = append(msgParts, fmt.Sprintf("[%d] %s — %s", m.ID, truncateStr(m.Content, 80), m.CreatedAt.Format("02 Jan 15:04")))
 		}
-		fmt.Println()
+		ui.PrintInfo("Memori tersimpan:\n%s", strings.Join(msgParts, "\n"))
 	case "mcp":
 		mcpInfo := supervisor.GetMCPInfo()
 		if len(mcpInfo) == 0 {
 			ui.PrintInfo("Belum ada MCP server yang terhubung.")
-			ui.PrintInfo("Tambahkan di ~/.smara/config.yaml pada bagian 'mcp_servers'")
 			return
 		}
-		fmt.Println()
+		var msgParts []string
 		for name, info := range mcpInfo {
-			status := fmt.Sprintf("%s●%s connected", ui.Green, ui.Reset)
+			status := "connected"
 			if !info.Connected {
-				status = fmt.Sprintf("%s✗%s error", ui.Red, ui.Reset)
+				status = "error"
 			}
-			fmt.Printf("  %s%s — %s\n", ui.Cyan, name, status)
+			msgParts = append(msgParts, fmt.Sprintf("%s — %s", name, status))
 			if len(info.Tools) > 0 {
 				for _, tool := range info.Tools {
 					desc := tool.Description
 					if len(desc) > 60 {
 						desc = desc[:60] + "..."
 					}
-					fmt.Printf("    %s├──%s %s %s%s%s\n", ui.Dim, ui.Reset, ui.Yellow, tool.Name, ui.Dim, desc)
+					msgParts = append(msgParts, fmt.Sprintf("  ├── %s: %s", tool.Name, desc))
 				}
 			} else if info.Error != "" {
-				fmt.Printf("    %s└──%s %s%s%s\n", ui.Dim, ui.Reset, ui.Red, info.Error, ui.Reset)
+				msgParts = append(msgParts, fmt.Sprintf("  └── Error: %s", info.Error))
 			}
 		}
-		fmt.Println()
+		ui.PrintInfo("MCP Servers:\n%s", strings.Join(msgParts, "\n"))
 	case "clear":
-		fmt.Print("\033[2J\033[H")
+		// handled by app.go
 	case "session":
-		handleSessionCommand(args, supervisor, prompt)
+		handleSessionCommand(args, supervisor)
 	default:
 		ui.PrintWarning("Perintah tidak dikenali: /%s", cmd)
-		ui.PrintHelp()
 	}
 }
 
@@ -400,7 +321,7 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-func handleSessionCommand(args []string, supervisor *agent.Supervisor, prompt *ui.Prompt) {
+func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 	if len(args) == 0 {
 		ui.PrintError("Gunakan: /session [list|info|switch|new|end]")
 		return
@@ -412,15 +333,14 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor, prompt *u
 	case "list":
 		sessions := supervisor.ListSessions()
 		if len(sessions) == 0 {
-			ui.PrintInfo("Belum ada session aktif.")
-			ui.PrintInfo("Gunakan /session new untuk membuat session baru.")
+			ui.PrintInfo("Belum ada session aktif. Gunakan /session new")
 			return
 		}
-		fmt.Println()
+		var msgParts []string
 		for _, s := range sessions {
 			marker := "  "
 			if supervisor.IsCurrentSession(s.ID) {
-				marker = fmt.Sprintf("%s▸%s", ui.Green, ui.Reset)
+				marker = "▸"
 			}
 			stateIcon := "🟢"
 			if s.State == agent.SessionEnded {
@@ -428,11 +348,9 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor, prompt *u
 			} else if s.State == agent.SessionPaused {
 				stateIcon = "🟡"
 			}
-			fmt.Printf("  %s %s%s%s %s — %s, %d tasks\n",
-				marker, ui.Cyan, s.ID[:8], ui.Reset,
-				stateIcon, s.Name, len(s.Tasks))
+			msgParts = append(msgParts, fmt.Sprintf("%s %s %s [%s] — %d tasks", marker, stateIcon, s.Name, s.ID[:8], len(s.Tasks)))
 		}
-		fmt.Println()
+		ui.PrintInfo("Daftar Session:\n%s", strings.Join(msgParts, "\n"))
 
 	case "info":
 		if len(args) < 2 {
@@ -444,34 +362,14 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor, prompt *u
 			ui.PrintError("Session tidak ditemukan: %s", args[1])
 			return
 		}
-		fmt.Printf("\n  Session: %s %s[%s]%s\n", session.Name, ui.Cyan, session.ID[:8], ui.Reset)
-		fmt.Printf("  State: %s\n", session.State)
-		fmt.Printf("  Mode: %s\n", session.Mode)
-		fmt.Printf("  Created: %s\n", session.CreatedAt.Format("02 Jan 2006 15:04"))
-		fmt.Printf("  Updated: %s\n", session.UpdatedAt.Format("02 Jan 2006 15:04"))
-		fmt.Printf("  History: %d messages\n", len(session.History))
-		fmt.Printf("  Tasks: %d\n", len(session.Tasks))
-		fmt.Printf("  MCP Servers: %s\n", strings.Join(session.MCPServers, ", "))
-		if len(session.History) > 0 {
-			fmt.Println()
-			fmt.Printf("  %sRiwayat percakapan:%s\n", ui.Dim, ui.Reset)
-			for i, msg := range session.History {
-				if i >= 6 { // Show last 3 exchanges
-					fmt.Printf("  %s... (%d more)%s\n", ui.Dim, len(session.History)-6, ui.Reset)
-					break
-				}
-				role := "User"
-				if msg.Role == llm.RoleAssistant {
-					role = "Agent"
-				}
-				content := msg.Content
-				if len(content) > 60 {
-					content = content[:60] + "..."
-				}
-				fmt.Printf("  %s[%s]%s %s\n", ui.Dim, role, ui.Reset, content)
-			}
-		}
-		fmt.Println()
+		var msgParts []string
+		msgParts = append(msgParts, fmt.Sprintf("Session: %s [%s]", session.Name, session.ID[:8]))
+		msgParts = append(msgParts, fmt.Sprintf("State: %s", session.State))
+		msgParts = append(msgParts, fmt.Sprintf("Mode: %s", session.Mode))
+		msgParts = append(msgParts, fmt.Sprintf("History: %d messages", len(session.History)))
+		msgParts = append(msgParts, fmt.Sprintf("Tasks: %d", len(session.Tasks)))
+		msgParts = append(msgParts, fmt.Sprintf("MCP: %s", strings.Join(session.MCPServers, ", ")))
+		ui.PrintInfo(strings.Join(msgParts, "\n"))
 
 	case "switch":
 		if len(args) < 2 {
@@ -499,8 +397,7 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor, prompt *u
 			ui.PrintError("Gagal membuat session: %v", err)
 			return
 		}
-		ui.PrintSuccess("Session baru dibuat: %s %s[%s]%s", session.Name, ui.Cyan, session.ID[:8], ui.Reset)
-		fmt.Printf("  Mode: %s | MCP: %d servers\n", session.Mode, len(session.MCPServers))
+		ui.PrintSuccess("Session baru dibuat: %s [%s]\nMode: %s | MCP: %d servers", session.Name, session.ID[:8], session.Mode, len(session.MCPServers))
 
 	case "end":
 		if err := supervisor.EndCurrentSession(); err != nil {
@@ -598,4 +495,37 @@ func handleModelCommand(args []string, supervisor *agent.Supervisor) {
 	} else if info, ok := providers[provider]; ok && len(info.Models) > 0 {
 		fmt.Printf("  Model default: %s\n", info.Models[0])
 	}
+}
+
+// loadProjectContext reads project files to provide initial context.
+func loadProjectContext() string {
+	var contextParts []string
+	
+	// Read README.md
+	if content, err := os.ReadFile("README.md"); err == nil {
+		contentStr := string(content)
+		if len(contentStr) > 2000 {
+			contentStr = contentStr[:2000] + "\n... (dipotong)"
+		}
+		contextParts = append(contextParts, "Isi README.md:\n```\n"+contentStr+"\n```")
+	}
+	
+	// Basic folder structure
+	if entries, err := os.ReadDir("."); err == nil {
+		var dirs, files []string
+		for _, e := range entries {
+			if e.IsDir() {
+				dirs = append(dirs, e.Name()+"/")
+			} else {
+				files = append(files, e.Name())
+			}
+		}
+		contextParts = append(contextParts, "Struktur root direktori proyek:\nFolder: "+strings.Join(dirs, ", ")+"\nFile: "+strings.Join(files, ", "))
+	}
+	
+	if len(contextParts) > 0 {
+		return "Kamu sedang berada dalam sebuah direktori proyek lokal. Berikut adalah informasi konteks dari proyek ini:\n\n" + strings.Join(contextParts, "\n\n")
+	}
+	
+	return ""
 }

@@ -146,6 +146,16 @@ func (s *Supervisor) GetProviderName() string {
 	return "unknown"
 }
 
+// AddContext adds system context to the current session history.
+func (s *Supervisor) AddContext(context string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.history = append(s.history, llm.Message{
+		Role:    llm.RoleSystem,
+		Content: context,
+	})
+}
+
 // GetModel returns the current model name.
 func (s *Supervisor) GetModel() string {
 	// Could be extended to track current model
@@ -327,6 +337,11 @@ func (s *Supervisor) SwitchSession(id string) error {
 // GetSession retrieves a session by ID.
 func (s *Supervisor) GetSession(id string) (*Session, bool) {
 	return s.sessionRegistry.Get(id)
+}
+
+// GetCurrentSession returns the currently active session.
+func (s *Supervisor) GetCurrentSession() *Session {
+	return s.sessionRegistry.Current()
 }
 
 // ListSessions returns all sessions.

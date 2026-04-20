@@ -1,6 +1,6 @@
 # Smara CLI 🌀
 
-**Autonomous Multi-Agent Terminal v1.1.0**
+**Autonomous Multi-Agent Terminal v1.2.0**
 
 Smara adalah terminal pintar berbasis Go yang mengorkestrasi agen AI otonom dengan memori tim yang tersinkronisasi dan integrasi MCP (Model Context Protocol).
 
@@ -15,6 +15,8 @@ Smara adalah terminal pintar berbasis Go yang mengorkestrasi agen AI otonom deng
 - **Session Management**: Simpan dan kelola riwayat percakapan dalam sesi yang terpisah.
 - **Smart Memory**: Menggunakan SQLite & Vector Search untuk menyimpan konteks percakapan.
 - **MCP Integration**: Secara otomatis mendeteksi dan menghubungkan ke server MCP dari OpenCode.
+- **Interactive TUI**: Antarmuka terminal modern yang interaktif berbasis Bubble Tea.
+- **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 - **Cross-Platform**: Berjalan di Linux, macOS, dan Windows.
 
 ## 🚀 Instalasi
@@ -92,6 +94,7 @@ Gunakan flag `--mode` untuk memulai dengan mode tertentu (misal: `smara start --
 - `smara provider select`: Pilih provider/model secara interaktif (TUI).
 - `smara config list`: Lihat semua konfigurasi saat ini.
 - `smara version`: Cek versi yang terinstall.
+- `smara update [versi]`: Perbarui Smara CLI ke versi terbaru atau versi spesifik.
 
 ### Perintah di dalam REPL (Interactive Mode):
 - **Tab**: Ganti mode agen (cycle: ask → rush → plan).
