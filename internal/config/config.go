@@ -30,10 +30,20 @@ type PlatformBotConfig struct {
 	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`     // burst size
 }
 
+// WhatsAppConfig holds config specifically for WhatsApp.
+type WhatsAppConfig struct {
+	Enabled        bool     `mapstructure:"enabled" yaml:"enabled"`
+	SessionDir     string   `mapstructure:"session_dir" yaml:"session_dir"`
+	AllowedNumbers []string `mapstructure:"allowed_numbers" yaml:"allowed_numbers"`
+	RateLimit      int      `mapstructure:"rate_limit" yaml:"rate_limit"`
+	RateBurst      int      `mapstructure:"rate_burst" yaml:"rate_burst"`
+}
+
 // PlatformConfig holds configuration for all platform bots.
 type PlatformConfig struct {
 	Telegram         PlatformBotConfig `mapstructure:"telegram" yaml:"telegram"`
 	Discord          PlatformBotConfig `mapstructure:"discord" yaml:"discord"`
+	WhatsApp         WhatsAppConfig    `mapstructure:"whatsapp" yaml:"whatsapp"`
 	MaxResponseLen   int               `mapstructure:"max_response_length" yaml:"max_response_length"`
 	TypingIndicator  bool              `mapstructure:"typing_indicator" yaml:"typing_indicator"`
 	LogConversations bool              `mapstructure:"log_conversations" yaml:"log_conversations"`
@@ -95,6 +105,16 @@ func DefaultConfig() *SmaraConfig {
 		MCPServers:         []MCPServer{},
 		Verbose:            false,
 		DBPath:             filepath.Join(smaraDir, "memory.db"),
+		Platforms: PlatformConfig{
+			WhatsApp: WhatsAppConfig{
+				Enabled:    false,
+				SessionDir: filepath.Join(smaraDir, "wa-session"),
+				RateLimit:  10,
+				RateBurst:  3,
+			},
+			MaxResponseLen:  4000,
+			TypingIndicator: true,
+		},
 	}
 }
 

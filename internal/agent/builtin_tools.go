@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -201,6 +204,20 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"properties": map[string]interface{}{},
 			},
 		},
+		{
+			Name:        "web_search",
+			Description: "Mencari informasi di internet secara anonim (menggunakan DuckDuckGo). Gunakan ini jika anda membutuhkan data terbaru atau informasi di luar workspace.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Kata kunci pencarian",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
 	}
 }
 
@@ -268,8 +285,6 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			result = result[:maxOutputLen] + "\n... (output dipotong karena terlalu panjang)"
 		}
 		
-		return result, nil
-
 		return result, nil
 	
 	case "view_file":
@@ -371,7 +386,7 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 		
 		if result == "" {
-			return "Direktori kosong.", nil
+			return fmt.Sprintf("Direktori '%s' kosong.", path), nil
 		}
 		return result, nil
 
@@ -525,9 +540,16 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	case "get_cwd":
 		cwd, err := os.Getwd()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("gagal mendapatkan working directory: %w", err)
+		}
+		if cwd == "" {
+			return "Gagal mendapatkan path (kosong).", nil
 		}
 		return cwd, nil
+
+	case "web_search":
+		query, _ := args["query"].(string)
+		return searchWeb(query)
 
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)
@@ -574,4 +596,77 @@ func searchPath(query, root string, logFn func(string, string)) (string, error) 
 	}
 
 	return fmt.Sprintf("Hasil pencarian untuk '%s':\n- %s", query, strings.Join(results, "\n- ")), nil
+}
+
+func searchWeb(query string) (string, error) {
+	searchURL := fmt.Sprintf("https://duckduckgo.com/html/?q=%s", url.QueryEscape(query))
+	
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+	
+	// Gunakan User-Agent stealth untuk menghindari blokir
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gagal menghubungi search engine: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("search engine mengembalikan status: %d", resp.StatusCode)
+	}
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	
+	html := string(body)
+	
+	// Regex sederhana untuk mengekstrak hasil (title, link, snippet)
+	// Struktur: <a class="result__a" href="URL">TITLE</a> ... <a class="result__snippet">SNIPPET</a>
+	re := regexp.MustCompile(`(?s)<div class="result__body">.*?<a class="result__a" href="(.*?)">(.*?)</a>.*?<a class="result__snippet".*?>(.*?)</a>`)
+	matches := re.FindAllStringSubmatch(html, 10)
+	
+	if len(matches) == 0 {
+		return "Tidak ada hasil pencarian yang ditemukan atau format halaman berubah.", nil
+	}
+	
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Hasil Pencarian Internet untuk: '%s'\n\n", query))
+	
+	for i, m := range matches {
+		link := m[1]
+		// Bersihkan link jika melalui proxy DDG
+		if strings.Contains(link, "uddg=") {
+			parts := strings.Split(link, "uddg=")
+			if len(parts) > 1 {
+				decoded, _ := url.QueryUnescape(strings.Split(parts[1], "&")[0])
+				link = decoded
+			}
+		}
+		
+		title := cleanHTML(m[2])
+		snippet := cleanHTML(m[3])
+		
+		sb.WriteString(fmt.Sprintf("%d. **%s**\n   - Link: %s\n   - %s\n\n", i+1, title, link, snippet))
+	}
+	
+	return sb.String(), nil
+}
+
+func cleanHTML(s string) string {
+	// Hapus tag HTML dasar dan decode entitas umum
+	s = regexp.MustCompile(`<.*?>`).ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	return strings.TrimSpace(s)
 }

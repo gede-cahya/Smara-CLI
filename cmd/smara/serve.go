@@ -20,6 +20,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/platform"
 	"github.com/gede-cahya/Smara-CLI/internal/platform/discord"
 	"github.com/gede-cahya/Smara-CLI/internal/platform/telegram"
+	"github.com/gede-cahya/Smara-CLI/internal/platform/whatsapp"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
 )
 
@@ -37,7 +38,7 @@ messaging seperti Telegram dan Discord.
 Contoh:
   smara serve                           # jalankan semua platform yang enabled
   smara serve --platform telegram       # hanya Telegram
-  smara serve --platform telegram,discord  # Telegram dan Discord
+  smara serve --platform telegram,discord,whatsapp  # Telegram, Discord, dan WhatsApp
 
 Token bot diatur via config atau environment variable:
   SMARA_TELEGRAM_TOKEN=bot123:AAH...
@@ -46,7 +47,7 @@ Token bot diatur via config atau environment variable:
 }
 
 func init() {
-	serveCmd.Flags().StringVar(&servePlatforms, "platform", "", "platform yang dijalankan (comma-separated: telegram,discord)")
+	serveCmd.Flags().StringVar(&servePlatforms, "platform", "", "platform yang dijalankan (comma-separated: telegram,discord,whatsapp)")
 	serveCmd.Flags().StringVar(&serveMode, "mode", "ask", "mode agen default: ask, rush, plan")
 }
 
@@ -226,6 +227,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 			auth.SetAllowedUsers("discord", cfg.Platforms.Discord.AllowedUsers)
 			auth.SetBlockedUsers("discord", cfg.Platforms.Discord.BlockedUsers)
 			ui.PrintSuccess("✅ Discord adapter aktif")
+
+		case "whatsapp":
+			wa := whatsapp.New()
+			adapterCfg := platform.AdapterConfig{
+				AllowedUsers: cfg.Platforms.WhatsApp.AllowedNumbers,
+				RateLimit: platform.RateLimitConfig{
+					RequestsPerMinute: cfg.Platforms.WhatsApp.RateLimit,
+					BurstSize:         cfg.Platforms.WhatsApp.RateBurst,
+				},
+				Extra: map[string]string{
+					"session_dir": cfg.Platforms.WhatsApp.SessionDir,
+				},
+			}
+			if err := wa.Connect(ctx, adapterCfg); err != nil {
+				ui.PrintError("WhatsApp: gagal terhubung: %v", err)
+				continue
+			}
+			gateway.RegisterAdapter(wa)
+			auth.SetAllowedUsers("whatsapp", cfg.Platforms.WhatsApp.AllowedNumbers)
+			ui.PrintSuccess("✅ WhatsApp adapter aktif")
 		}
 	}
 
@@ -293,6 +314,9 @@ func determinePlatforms(cfg *config.SmaraConfig, flagPlatforms string) []string 
 	}
 	if cfg.Platforms.Discord.Enabled {
 		platforms = append(platforms, "discord")
+	}
+	if cfg.Platforms.WhatsApp.Enabled {
+		platforms = append(platforms, "whatsapp")
 	}
 
 	return platforms

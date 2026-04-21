@@ -362,7 +362,7 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 	// Check if confirmation is needed for critical tools
-	if s.isCriticalTool(tc.Function) && s.callback.OnConfirm != nil {
+	if s.isCriticalCall(s.mode, tc.Function, tc.Args) && s.callback.OnConfirm != nil {
 		if !s.callback.OnConfirm(fmt.Sprintf("Tool: %s\nArgs: %v", tc.Function, tc.Args)) {
 			return "User membatalkan eksekusi tool ini.", nil
 		}
@@ -909,16 +909,54 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// isCriticalTool returns true if the tool requires user confirmation.
-func (s *Supervisor) isCriticalTool(name string) bool {
+// isCriticalCall returns true if the tool call requires user confirmation.
+func (s *Supervisor) isCriticalCall(mode Mode, name string, args map[string]interface{}) bool {
+	// Sensitive paths check (regardless of tool or mode)
+	if path, ok := args["path"].(string); ok {
+		if isSensitivePath(path) {
+			return true
+		}
+	}
+
+	// Mode RUSH bypasses non-sensitive critical tools for speed
+	if mode == ModeRush {
+		return false
+	}
+
+	// Standard critical tools list
 	critical := []string{
 		"run_command",
 		"write_file",
 		"delete_file",
-		"apply_edit", // for future use
+		"edit_file",
 	}
 	for _, c := range critical {
 		if name == c {
+			return true
+		}
+	}
+	return false
+}
+
+// isSensitivePath checks if the given path contains sensitive information.
+func isSensitivePath(path string) bool {
+	sensitivePatterns := []string{
+		".env",
+		".pem",
+		".key",
+		"id_rsa",
+		"id_ed25519",
+		"shadow",
+		"passwd",
+		"credential",
+		"secret",
+		"token",
+		"config.json", // can be sensitive
+	}
+	
+	lowerPath := strings.ToLower(path)
+	for _, p := range sensitivePatterns {
+		if strings.Contains(lowerPath, p) {
 			return true
 		}
 	}
