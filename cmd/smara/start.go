@@ -251,6 +251,39 @@ func runStart(cmd *cobra.Command, args []string) error {
 		handleCommand(cmd, args, supervisor, memStore, nil)
 	})
 	
+	// Setup callback for streaming
+	supervisor.SetCallback(agent.AgenticCallback{
+		OnStream: func(chunk string, isThinking bool) {
+			p := ui.GetGlobalProgram()
+			if p != nil {
+				p.Send(ui.StreamMsg{Chunk: chunk, IsThinking: isThinking})
+			}
+		},
+		OnLog: func(role, content string) {
+			p := ui.GetGlobalProgram()
+			if p != nil {
+				p.Send(ui.LogMsg{
+					Message: ui.ChatMessage{
+						Role:    role,
+						Content: content,
+					},
+				})
+			}
+		},
+		OnConfirm: func(message string) bool {
+			p := ui.GetGlobalProgram()
+			if p == nil {
+				return true // Auto-confirm if no TUI
+			}
+			respCh := make(chan bool)
+			p.Send(ui.ConfirmRequestMsg{
+				Message:    message,
+				ResponseCh: respCh,
+			})
+			return <-respCh
+		},
+	})
+	
 	// Pre-load chat history into the UI if there is an active session
 	if session := supervisor.GetCurrentSession(); session != nil && len(session.History) > 0 {
 		var hist []struct{ Role, Content string }

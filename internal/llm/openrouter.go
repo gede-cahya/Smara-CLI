@@ -41,7 +41,7 @@ func (o *OpenRouterProvider) Name() string {
 func (o *OpenRouterProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
 		Model:    o.model,
-		Messages: o.convertMessages(messages),
+		Messages: convertMessagesToOpenAI(messages),
 		Stream:   false,
 	}
 
@@ -68,7 +68,7 @@ func (o *OpenRouterProvider) ChatWithTools(messages []Message, tools []ToolFunct
 
 	req := openAIChatRequest{
 		Model:    o.model,
-		Messages: o.convertMessages(messages),
+		Messages: convertMessagesToOpenAI(messages),
 		Tools:    openAITools,
 		Stream:   false,
 	}
@@ -108,34 +108,41 @@ func (o *OpenRouterProvider) ChatWithTools(messages []Message, tools []ToolFunct
 	}, toolCalls, nil
 }
 
+// ChatStream implements the Streamer interface.
+func (o *OpenRouterProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	req := openAIChatRequest{
+		Model:    o.model,
+		Messages: convertMessagesToOpenAI(messages),
+	}
+	resp, _, err := streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+	return resp, err
+}
+
+// ChatStreamWithTools implements the Streamer interface.
+func (o *OpenRouterProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	openAITools := make([]openAITool, len(tools))
+	for i, t := range tools {
+		openAITools[i] = openAITool{
+			Type: "function",
+			Function: openAIFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			},
+		}
+	}
+
+	req := openAIChatRequest{
+		Model:    o.model,
+		Messages: convertMessagesToOpenAI(messages),
+		Tools:    openAITools,
+	}
+	return streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+}
+
 // OpenRouter doesn't have native embeddings.
 func (o *OpenRouterProvider) GenerateEmbedding(text string) ([]float32, error) {
 	return nil, fmt.Errorf("OpenRouter tidak mendukung embeddings — gunakan Ollama atau OpenAI untuk embeddings")
-}
-
-// convertMessages converts internal messages to OpenAI format.
-func (o *OpenRouterProvider) convertMessages(messages []Message) []openAIMessage {
-	om := make([]openAIMessage, len(messages))
-	for i, m := range messages {
-		msg := openAIMessage{
-			Role:       string(m.Role),
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
-		}
-		for _, tc := range m.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Args)
-			msg.ToolCalls = append(msg.ToolCalls, openAIToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: openAIToolCallFunc{
-					Name:      tc.Function,
-					Arguments: string(argsJSON),
-				},
-			})
-		}
-		om[i] = msg
-	}
-	return om
 }
 
 func (o *OpenRouterProvider) doChat(req openAIChatRequest) ([]byte, error) {

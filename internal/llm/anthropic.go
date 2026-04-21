@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,25 +13,25 @@ import (
 
 // AnthropicProvider implements the Provider interface for Anthropic API.
 type AnthropicProvider struct {
-	apiKey     string
-	model      string
-	host       string // default: https://api.anthropic.com
-	client     *http.Client
+	apiKey string
+	model  string
+	host   string // default: https://api.anthropic.com
+	client *http.Client
 }
 
 // Anthropic API request/response structures
 type anthropicChatRequest struct {
-	Model       string               `json:"model"`
-	Messages    []anthropicMessage   `json:"messages"`
-	System      string               `json:"system,omitempty"`
-	MaxTokens   int                  `json:"max_tokens"`
-	Tools       []anthropicTool      `json:"tools,omitempty"`
-	Stream      bool                 `json:"stream"`
+	Model     string             `json:"model"`
+	Messages  []anthropicMessage `json:"messages"`
+	System    string             `json:"system,omitempty"`
+	MaxTokens int                `json:"max_tokens"`
+	Tools     []anthropicTool    `json:"tools,omitempty"`
+	Stream    bool               `json:"stream"`
 }
 
 type anthropicMessage struct {
-	Role    string                 `json:"role"`
-	Content interface{}            `json:"content"` // string or array of content blocks
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"` // string or array of content blocks
 }
 
 type anthropicTextBlock struct {
@@ -39,9 +40,9 @@ type anthropicTextBlock struct {
 }
 
 type anthropicToolUseBlock struct {
-	Type string                 `json:"type"`
-	ID   string                 `json:"id"`
-	Name string                 `json:"name"`
+	Type  string                 `json:"type"`
+	ID    string                 `json:"id"`
+	Name  string                 `json:"name"`
 	Input map[string]interface{} `json:"input"`
 }
 
@@ -69,6 +70,31 @@ type anthropicChatResponse struct {
 	} `json:"usage"`
 }
 
+// Anthropic streaming structures
+type anthropicStreamEvent struct {
+	Type  string                `json:"type"`
+	Index int                   `json:"index,omitempty"`
+	Delta *anthropicStreamDelta `json:"delta,omitempty"`
+	Block *anthropicStreamBlock `json:"content_block,omitempty"`
+	Usage *anthropicStreamUsage `json:"usage,omitempty"`
+}
+
+type anthropicStreamDelta struct {
+	Type        string `json:"type"`
+	Text        string `json:"text,omitempty"`
+	PartialJSON string `json:"partial_json,omitempty"`
+}
+
+type anthropicStreamBlock struct {
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type anthropicStreamUsage struct {
+	OutputTokens int `json:"output_tokens"`
+}
+
 // NewAnthropicProvider creates a new Anthropic provider.
 func NewAnthropicProvider(apiKey, model, host string) *AnthropicProvider {
 	if model == "" {
@@ -78,10 +104,10 @@ func NewAnthropicProvider(apiKey, model, host string) *AnthropicProvider {
 		host = "https://api.anthropic.com"
 	}
 	return &AnthropicProvider{
-		apiKey:   apiKey,
-		model:    model,
-		host:     host,
-		client:   &http.Client{Timeout: 5 * time.Minute},
+		apiKey: apiKey,
+		model:  model,
+		host:   host,
+		client: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -100,7 +126,7 @@ func (a *AnthropicProvider) ChatWithTools(messages []Message, tools []ToolFuncti
 		schema := t.Parameters
 		if schema == nil {
 			schema = map[string]interface{}{
-				"type": "object",
+				"type":       "object",
 				"properties": map[string]interface{}{},
 			}
 		}
@@ -115,8 +141,133 @@ func (a *AnthropicProvider) ChatWithTools(messages []Message, tools []ToolFuncti
 	return a.doChatWithTools(req, systemMsg)
 }
 
+// ChatStream implements the Streamer interface.
+func (a *AnthropicProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	req, _ := a.buildChatRequest(messages, nil)
+	req.Stream = true
+	resp, _, err := a.doStream(req, callback)
+	return resp, err
+}
+
+// ChatStreamWithTools implements the Streamer interface.
+func (a *AnthropicProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	anthropicTools := make([]anthropicTool, len(tools))
+	for i, t := range tools {
+		schema := t.Parameters
+		if schema == nil {
+			schema = map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			}
+		}
+		anthropicTools[i] = anthropicTool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: schema,
+		}
+	}
+
+	req, _ := a.buildChatRequest(messages, anthropicTools)
+	req.Stream = true
+	return a.doStream(req, callback)
+}
+
+func (a *AnthropicProvider) doStream(req anthropicChatRequest, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gagal marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", a.host+"/v1/messages", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", a.apiKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := a.client.Do(httpReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gagal menghubungi Anthropic: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, nil, fmt.Errorf("Anthropic error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var fullContent strings.Builder
+	var toolCallsMap = make(map[int]*ToolCall)
+	var toolCallsRawArgs = make(map[int]*strings.Builder)
+	var totalOutputTokens int
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+
+		var event anthropicStreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "content_block_start":
+			if event.Block != nil && event.Block.Type == "tool_use" {
+				toolCallsMap[event.Index] = &ToolCall{
+					ID:       event.Block.ID,
+					Function: event.Block.Name,
+				}
+				toolCallsRawArgs[event.Index] = &strings.Builder{}
+			}
+		case "content_block_delta":
+			if event.Delta != nil {
+				if event.Delta.Type == "text_delta" {
+					fullContent.WriteString(event.Delta.Text)
+					if callback != nil {
+						callback(event.Delta.Text, false)
+					}
+				} else if event.Delta.Type == "input_json_delta" {
+					toolCallsRawArgs[event.Index].WriteString(event.Delta.PartialJSON)
+				}
+			}
+		case "message_delta":
+			if event.Usage != nil {
+				totalOutputTokens = event.Usage.OutputTokens
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error saat membaca stream: %w", err)
+	}
+
+	var toolCalls []ToolCall
+	for i := 0; i < len(toolCallsMap); i++ {
+		if tc, ok := toolCallsMap[i]; ok {
+			raw := toolCallsRawArgs[i].String()
+			if raw != "" {
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(raw), &args); err == nil {
+					tc.Args = args
+				}
+			}
+			toolCalls = append(toolCalls, *tc)
+		}
+	}
+
+	return &ChatResponse{
+		Content:     fullContent.String(),
+		Model:       a.model,
+		TotalTokens: totalOutputTokens, // Simplified token counting for stream
+	}, toolCalls, nil
+}
+
 // Anthropic doesn't have a native embeddings API accessible via the main API key.
-// GenerateEmbedding returns nil — use Ollama or OpenAI for embeddings when using Anthropic.
 func (a *AnthropicProvider) GenerateEmbedding(text string) ([]float32, error) {
 	return nil, fmt.Errorf("Anthropic tidak mendukung embeddings — gunakan Ollama atau OpenAI untuk embeddings")
 }
@@ -143,9 +294,9 @@ func (a *AnthropicProvider) buildChatRequest(messages []Message, tools []anthrop
 				Role: "user",
 				Content: []map[string]interface{}{
 					{
-						"type":       "tool_result",
+						"type":        "tool_result",
 						"tool_use_id": m.ToolCallID,
-						"content":    m.Content,
+						"content":     m.Content,
 					},
 				},
 			})

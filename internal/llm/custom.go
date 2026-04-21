@@ -42,7 +42,7 @@ func (c *CustomProvider) Name() string {
 func (c *CustomProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
 		Model:    c.model,
-		Messages: c.convertMessages(messages),
+		Messages: convertMessagesToOpenAI(messages),
 		Stream:   false,
 	}
 
@@ -69,7 +69,7 @@ func (c *CustomProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 
 	req := openAIChatRequest{
 		Model:    c.model,
-		Messages: c.convertMessages(messages),
+		Messages: convertMessagesToOpenAI(messages),
 		Tools:    openAITools,
 		Stream:   false,
 	}
@@ -107,6 +107,38 @@ func (c *CustomProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 		Model:       chatResp.Model,
 		TotalTokens: chatResp.Usage.TotalTokens,
 	}, toolCalls, nil
+}
+
+// ChatStream implements the Streamer interface.
+func (c *CustomProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	req := openAIChatRequest{
+		Model:    c.model,
+		Messages: convertMessagesToOpenAI(messages),
+	}
+	resp, _, err := streamOpenAI(c.client, c.baseURL, c.apiKey, req, callback)
+	return resp, err
+}
+
+// ChatStreamWithTools implements the Streamer interface.
+func (c *CustomProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	openAITools := make([]openAITool, len(tools))
+	for i, t := range tools {
+		openAITools[i] = openAITool{
+			Type: "function",
+			Function: openAIFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			},
+		}
+	}
+
+	req := openAIChatRequest{
+		Model:    c.model,
+		Messages: convertMessagesToOpenAI(messages),
+		Tools:    openAITools,
+	}
+	return streamOpenAI(c.client, c.baseURL, c.apiKey, req, callback)
 }
 
 func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
@@ -148,31 +180,6 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 	}
 
 	return embedResp.Data[0].Embedding, nil
-}
-
-func (c *CustomProvider) convertMessages(messages []Message) []openAIMessage {
-	om := make([]openAIMessage, len(messages))
-	for i, m := range messages {
-		msg := openAIMessage{
-			Role:       string(m.Role),
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
-		}
-		for j, tc := range m.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Args)
-			msg.ToolCalls = append(msg.ToolCalls, openAIToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: openAIToolCallFunc{
-					Name:      tc.Function,
-					Arguments: string(argsJSON),
-				},
-			})
-			_ = j
-		}
-		om[i] = msg
-	}
-	return om
 }
 
 func (c *CustomProvider) doChat(req openAIChatRequest) ([]byte, error) {

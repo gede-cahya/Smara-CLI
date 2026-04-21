@@ -19,6 +19,20 @@ type Provider interface {
 	GenerateEmbedding(text string) ([]float32, error)
 }
 
+// StreamCallback is a function called for each streamed chunk.
+// If isThinking is true, the chunk is from the reasoning process (e.g., inside <think> tags).
+type StreamCallback func(chunk string, isThinking bool)
+
+// Streamer is an optional interface for providers that support real-time streaming.
+type Streamer interface {
+	// ChatStream sends messages and streams the response via callback.
+	ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error)
+
+	// ChatStreamWithTools sends messages with tools and streams the text response.
+	// Tool calls are generally collected and returned at the end.
+	ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error)
+}
+
 // ProviderInfo describes an available provider.
 type ProviderInfo struct {
 	Name        string

@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.4.0**
+**Autonomous Multi-Agent Terminal v1.5.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -75,6 +75,13 @@ smara serve --platform telegram --mode plan
 - `/mode <ask|rush|plan>` — Ganti mode agen.
 - `/mcp` — Lihat daftar tool yang tersedia.
 - `/clear` — Reset sesi percakapan.
+
+---
+
+## 📝 Changelog v1.5.0
+- **Full Streaming Support**: Implementasi real-time streaming untuk OpenAI, OpenRouter, Anthropic, dan Custom Provider.
+- **Thinking Blocks**: Dukungan visual untuk fase penalaran (thinking) pada model yang mendukung.
+- **Optimized Performance**: Refactor logika streaming untuk efisiensi memory dan latensi yang lebih rendah.
 
 ---
 

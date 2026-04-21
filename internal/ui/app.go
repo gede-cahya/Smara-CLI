@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -57,6 +59,10 @@ var (
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("#3C3C3C"))
+
+	terminalStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#A6E22E")).
+			Bold(true)
 )
 
 // Global reference for programmatic messaging
@@ -90,10 +96,18 @@ type AppModel struct {
 	cancel      context.CancelFunc
 	processing  bool
 	
+	// Streaming state
+	currentStream    string
+	currentThinking  string
+
+	// Confirmation state
+	awaitingConfirmation bool
+	confirmMessage       string
+	confirmResponseCh    chan bool
+	confirmSelection     int // 0: Ya, 1: Tidak
+
 	// Interactive TUI state
 	spinner              spinner.Model
-	awaitingConfirmation bool
-	confirmSelection     int // 0 = Ya, 1 = Tidak
 	statusText           string
 
 	// History management
@@ -101,7 +115,7 @@ type AppModel struct {
 	historyIdx  int
 
 	// Command handler callback
-	onCommand   func(cmd string, args []string)
+	onCommand func(string, []string)
 }
 
 // InitialModel creates a new model
@@ -165,9 +179,20 @@ type ProcessMsg struct {
 	Err      error
 }
 
+// StreamMsg is received when a chunk of text is streamed from LLM
+type StreamMsg struct {
+	Chunk      string
+	IsThinking bool
+}
+
 // LogMsg allows external systems to inject messages into the UI
 type LogMsg struct {
 	Message ChatMessage
+}
+
+type ConfirmRequestMsg struct {
+	Message    string
+	ResponseCh chan bool
 }
 
 // Update handles messages and state changes
@@ -183,44 +208,39 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, tiCmd, vpCmd)
 
 	switch msg := msg.(type) {
+	case ConfirmRequestMsg:
+		m.awaitingConfirmation = true
+		m.confirmMessage = msg.Message
+		m.confirmResponseCh = msg.ResponseCh
+		m.confirmSelection = 0
+		m.addMessage("System", m.confirmMessage)
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.awaitingConfirmation {
-			switch msg.Type {
-			case tea.KeyLeft, tea.KeyRight, tea.KeyTab:
+			switch msg.String() {
+			case "left", "right":
 				if m.confirmSelection == 0 {
 					m.confirmSelection = 1
 				} else {
 					m.confirmSelection = 0
 				}
 				return m, nil
-			case tea.KeyEnter:
+			case "enter":
 				m.awaitingConfirmation = false
+				m.confirmResponseCh <- (m.confirmSelection == 0)
 				
 				answer := "ya"
 				if m.confirmSelection == 1 {
 					answer = "tidak"
 				}
-				
 				m.addMessage("User", answer)
-				m.processing = true
-				
-				// Send the answer directly as if the user typed it
-				go func() {
-					resp, think, err := m.supervisor.ProcessPrompt(m.ctx, answer)
-					globalProgram.Send(ProcessMsg{Response: resp, Thinking: think, Err: err})
-				}()
-				return m, m.spinner.Tick
-			case tea.KeyCtrlC, tea.KeyEsc:
-				// Cancel confirmation = "tidak"
+				return m, nil
+			case "esc", "ctrl+c":
 				m.awaitingConfirmation = false
+				m.confirmResponseCh <- false
 				m.addMessage("User", "tidak")
-				m.processing = true
-				
-				go func() {
-					resp, think, err := m.supervisor.ProcessPrompt(m.ctx, "tidak")
-					globalProgram.Send(ProcessMsg{Response: resp, Thinking: think, Err: err})
-				}()
-				return m, m.spinner.Tick
+				return m, nil
 			}
 			// Block other keys while confirming
 			return m, nil
@@ -300,15 +320,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmdName, cmdArgs := ParseCommand(v)
 				m.handleCommand(cmdName, cmdArgs)
 			} else {
+				// Process @mentions
+				processedPrompt := m.processFileMentions(v)
+
 				// Send to supervisor
 				m.processing = true
 				m.statusText = "Memproses..."
+				m.currentStream = ""
+				m.currentThinking = ""
 				sup := m.supervisor
 				ctx := m.ctx
 				
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, func() tea.Msg {
-					resp, thinking, err := sup.ProcessPrompt(ctx, v)
+					resp, thinking, err := sup.ProcessPrompt(ctx, processedPrompt)
 					return ProcessMsg{Response: resp, Thinking: thinking, Err: err}
 				})
 			}
@@ -319,9 +344,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
+	case StreamMsg:
+		if msg.IsThinking {
+			m.currentThinking += msg.Chunk
+		} else {
+			m.currentStream += msg.Chunk
+		}
+		m.renderMessages()
+
 	case ProcessMsg:
 		m.processing = false
 		m.statusText = ""
+		m.currentStream = ""
+		m.currentThinking = ""
 		if msg.Err != nil {
 			if msg.Err.Error() == "context canceled" {
 				// Already handled in KeyCtrlC
@@ -413,6 +448,9 @@ func (m *AppModel) renderMessages() {
 				prefix = infoStyle.Render("System:")
 				renderedContent = dimStyle.Render(msg.Content)
 			}
+		case "Terminal":
+			prefix = terminalStyle.Render("Terminal:")
+			renderedContent = dimStyle.Render(msg.Content)
 		}
 
 		var thinkingContent string
@@ -421,6 +459,23 @@ func (m *AppModel) renderMessages() {
 		}
 
 		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent))
+	}
+	
+	// Append current stream if any
+	if m.currentStream != "" || m.currentThinking != "" {
+		mode := "Agent"
+		if m.supervisor != nil {
+			mode = strings.ToUpper(string(m.supervisor.GetMode()))
+		}
+		prefix := agentStyle.Render(fmt.Sprintf("Smara [%s]:", mode))
+		
+		var thinkingContent string
+		if m.currentThinking != "" {
+			thinkingContent = thinkingStyle.Render(m.currentThinking) + "\n"
+		}
+		
+		renderedContent := messageStyle.Render(m.currentStream)
+		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, renderedContent))
 	}
 	
 	m.viewport.SetContent(sb.String())
@@ -548,9 +603,62 @@ func TUIPrintError(format string, args ...interface{}) {
 	InjectLog("System", "Error: "+msg)
 }
 
+// processFileMentions searches for @filename in the prompt and injects file content
+func (m *AppModel) processFileMentions(prompt string) string {
+	// Simple regex for @path/to/file.ext
+	re := regexp.MustCompile(`@([\w\.\/\-]+)`)
+	matches := re.FindAllStringSubmatch(prompt, -1)
+	if len(matches) == 0 {
+		return prompt
+	}
+
+	var contextBuilder strings.Builder
+	hasAddedFiles := false
+
+	for _, match := range matches {
+		filePath := match[1]
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			m.messages = append(m.messages, ChatMessage{
+				Role:    "System",
+				Content: fmt.Sprintf("⚠ Gagal membaca file @%s: %v", filePath, err),
+				Time:    time.Now(),
+			})
+			continue
+		}
+
+		if !hasAddedFiles {
+			contextBuilder.WriteString("Konteks dari file yang direferensikan:\n\n")
+			hasAddedFiles = true
+		}
+
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "System",
+			Content: fmt.Sprintf("📎 Menyertakan isi file @%s (%d bytes)", filePath, len(content)),
+			Time:    time.Now(),
+		})
+
+		contextBuilder.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filePath))
+		contextBuilder.WriteString(string(content))
+		contextBuilder.WriteString("\n\n")
+	}
+
+	if !hasAddedFiles {
+		return prompt
+	}
+
+	m.renderMessages()
+	return contextBuilder.String() + "\nPrompt User:\n" + prompt
+}
+
 // SetGlobalProgram sets the global program for log injection
 func SetGlobalProgram(p *tea.Program) {
 	globalProgram = p
+}
+
+// GetGlobalProgram returns the global program
+func GetGlobalProgram() *tea.Program {
+	return globalProgram
 }
 
 // NewProgram creates a new bubbletea program

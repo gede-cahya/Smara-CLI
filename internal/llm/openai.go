@@ -17,71 +17,6 @@ type OpenAIProvider struct {
 	client *http.Client
 }
 
-// OpenAI API request/response structures
-type openAIChatRequest struct {
-	Model       string           `json:"model"`
-	Messages    []openAIMessage  `json:"messages"`
-	Tools       []openAITool     `json:"tools,omitempty"`
-	Stream      bool             `json:"stream"`
-}
-
-type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-}
-
-type openAITool struct {
-	Type     string          `json:"type"`
-	Function openAIFunction  `json:"function"`
-}
-
-type openAIFunction struct {
-	Name       string                 `json:"name"`
-	Description string                `json:"description"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
-}
-
-type openAIToolCall struct {
-	ID       string                `json:"id"`
-	Type     string                `json:"type"`
-	Function openAIToolCallFunc    `json:"function"`
-}
-
-type openAIToolCallFunc struct {
-	Name      string                 `json:"name"`
-	Arguments string                 `json:"arguments"`
-}
-
-type openAIChatResponse struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Index        int             `json:"index"`
-		Message      openAIMessage   `json:"message"`
-		FinishReason string          `json:"finish_reason"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
-}
-
-type openAIEmbedRequest struct {
-	Model string   `json:"model"`
-	Input string   `json:"input"`
-}
-
-type openAIEmbedResponse struct {
-	Data []struct {
-		Embedding []float32 `json:"embedding"`
-	} `json:"data"`
-}
-
 // NewOpenAIProvider creates a new OpenAI provider.
 func NewOpenAIProvider(apiKey, model, host string) *OpenAIProvider {
 	if model == "" {
@@ -105,7 +40,7 @@ func (o *OpenAIProvider) Name() string {
 func (o *OpenAIProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
 		Model:    o.model,
-		Messages: o.convertMessages(messages),
+		Messages: convertMessagesToOpenAI(messages),
 		Stream:   false,
 	}
 
@@ -132,7 +67,7 @@ func (o *OpenAIProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 
 	req := openAIChatRequest{
 		Model:    o.model,
-		Messages: o.convertMessages(messages),
+		Messages: convertMessagesToOpenAI(messages),
 		Tools:    openAITools,
 		Stream:   false,
 	}
@@ -170,6 +105,38 @@ func (o *OpenAIProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 		Model:       chatResp.Model,
 		TotalTokens: chatResp.Usage.TotalTokens,
 	}, toolCalls, nil
+}
+
+// ChatStream implements the Streamer interface.
+func (o *OpenAIProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	req := openAIChatRequest{
+		Model:    o.model,
+		Messages: convertMessagesToOpenAI(messages),
+	}
+	resp, _, err := streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+	return resp, err
+}
+
+// ChatStreamWithTools implements the Streamer interface.
+func (o *OpenAIProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	openAITools := make([]openAITool, len(tools))
+	for i, t := range tools {
+		openAITools[i] = openAITool{
+			Type: "function",
+			Function: openAIFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			},
+		}
+	}
+
+	req := openAIChatRequest{
+		Model:    o.model,
+		Messages: convertMessagesToOpenAI(messages),
+		Tools:    openAITools,
+	}
+	return streamOpenAI(o.client, o.host, o.apiKey, req, callback)
 }
 
 func (o *OpenAIProvider) GenerateEmbedding(text string) ([]float32, error) {
@@ -211,32 +178,6 @@ func (o *OpenAIProvider) GenerateEmbedding(text string) ([]float32, error) {
 	}
 
 	return embedResp.Data[0].Embedding, nil
-}
-
-// convertMessages converts internal messages to OpenAI format.
-func (o *OpenAIProvider) convertMessages(messages []Message) []openAIMessage {
-	om := make([]openAIMessage, len(messages))
-	for i, m := range messages {
-		msg := openAIMessage{
-			Role:       string(m.Role),
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
-		}
-		for j, tc := range m.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Args)
-			msg.ToolCalls = append(msg.ToolCalls, openAIToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: openAIToolCallFunc{
-					Name:      tc.Function,
-					Arguments: string(argsJSON),
-				},
-			})
-			_ = j
-		}
-		om[i] = msg
-	}
-	return om
 }
 
 func (o *OpenAIProvider) doChat(req openAIChatRequest) ([]byte, error) {

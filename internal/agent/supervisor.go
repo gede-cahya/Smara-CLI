@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,9 @@ type AgenticCallback struct {
 	OnToolCall   func(server, tool string, args map[string]interface{})
 	OnToolResult func(output string)
 	OnIteration  func(current, max int)
+	OnStream     func(chunk string, isThinking bool)
+	OnLog        func(role, content string)
+	OnConfirm    func(message string) bool
 }
 
 // Supervisor orchestrates multi-agent task execution.
@@ -57,6 +61,7 @@ type Supervisor struct {
 	mode            Mode
 	history         []llm.Message // conversation history for context
 	callback        AgenticCallback
+	autoDiscovered  bool
 	stats           Stats // usage statistics
 }
 
@@ -154,6 +159,38 @@ func (s *Supervisor) AddContext(context string) {
 		Role:    llm.RoleSystem,
 		Content: context,
 	})
+}
+
+// discoverProjectContext mencari file penting di direktori saat ini dan menambahkannya sebagai konteks.
+func (s *Supervisor) discoverProjectContext() {
+	if s.autoDiscovered {
+		return
+	}
+	s.autoDiscovered = true
+
+	importantFiles := []string{"go.mod", "package.json", "README.md", "Makefile", ".gitignore"}
+	foundContext := ""
+
+	for _, file := range importantFiles {
+		if _, err := os.Stat(file); err == nil {
+			data, err := os.ReadFile(file)
+			if err == nil {
+				// Ambil 1000 karakter pertama saja agar tidak memenuhi konteks
+				content := string(data)
+				if len(content) > 1000 {
+					content = content[:1000] + "..."
+				}
+				foundContext += fmt.Sprintf("\n--- File: %s ---\n%s\n", file, content)
+			}
+		}
+	}
+
+	if foundContext != "" {
+		s.AddContext("Informasi Proyek Terdeteksi Otomatis:" + foundContext)
+		if s.callback.OnLog != nil {
+			s.callback.OnLog("system", "Otomatis memuat konteks proyek dari file metadata terdeteksi.")
+		}
+	}
 }
 
 // GetModel returns the current model name.
@@ -271,10 +308,21 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
+	// Check if confirmation is needed for critical tools
+	if s.isCriticalTool(tc.Function) && s.callback.OnConfirm != nil {
+		if !s.callback.OnConfirm(fmt.Sprintf("Tool: %s\nArgs: %v", tc.Function, tc.Args)) {
+			return "User membatalkan eksekusi tool ini.", nil
+		}
+	}
+
 	// Check if it is a built-in tool first
 	for _, bt := range GetBuiltinTools() {
 		if bt.Name == tc.Function {
-			return executeBuiltinTool(tc.Function, tc.Args)
+			var logFn func(string, string)
+			if s.callback.OnLog != nil {
+				logFn = s.callback.OnLog
+			}
+			return executeBuiltinTool(tc.Function, tc.Args, logFn)
 		}
 	}
 
@@ -388,6 +436,7 @@ func (s *Supervisor) IsCurrentSession(id string) bool {
 
 // ProcessPrompt handles a user prompt using the current agent mode.
 func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (string, string, error) {
+	s.discoverProjectContext()
 	startTime := time.Now()
 	modeInfo := GetModeInfo(s.mode)
 
@@ -464,7 +513,14 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 		return s.RunAgenticLoop(ctx, userPrompt)
 	}
 
-	resp, err := s.provider.Chat(messages)
+	var resp *llm.ChatResponse
+	var err error
+	if streamer, ok := s.provider.(llm.Streamer); ok {
+		resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+	} else {
+		resp, err = s.provider.Chat(messages)
+	}
+
 	if err != nil {
 		return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
 	}
@@ -583,10 +639,18 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		var toolCalls []llm.ToolCall
 		var err error
 
-		if len(tools) > 0 {
-			resp, toolCalls, err = s.provider.ChatWithTools(messages, tools)
+		if streamer, ok := s.provider.(llm.Streamer); ok {
+			if len(tools) > 0 {
+				resp, toolCalls, err = streamer.ChatStreamWithTools(messages, tools, s.callback.OnStream)
+			} else {
+				resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+			}
 		} else {
-			resp, err = s.provider.Chat(messages)
+			if len(tools) > 0 {
+				resp, toolCalls, err = s.provider.ChatWithTools(messages, tools)
+			} else {
+				resp, err = s.provider.Chat(messages)
+			}
 		}
 
 		if err != nil {
@@ -709,6 +773,22 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// isCriticalTool returns true if the tool requires user confirmation.
+func (s *Supervisor) isCriticalTool(name string) bool {
+	critical := []string{
+		"run_command",
+		"write_file",
+		"delete_file",
+		"apply_edit", // for future use
+	}
+	for _, c := range critical {
+		if name == c {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecuteTask runs a single task with timeout.
