@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.7.0**
+**Autonomous Multi-Agent Terminal v1.8.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -76,6 +76,14 @@ smara serve --platform telegram --mode plan
 - `/mode <ask|rush|plan>` — Ganti mode agen.
 - `/mcp` — Lihat daftar tool yang tersedia.
 - `/clear` — Reset sesi percakapan.
+
+---
+
+## 📝 Changelog v1.8.0
+- **Bracketed Paste Support**: Perbaikan performa TUI yang mencegah freeze saat melakukan operasi paste teks atau path yang sangat panjang.
+- **Deep Workspace Discovery**: Pemindaian struktur proyek yang lebih mendalam secara otomatis saat startup untuk meningkatkan kesadaran konteks agen.
+- **Filsystem Awareness Tools**: Penambahan tool `search_path` (pencarian rekursif global) dan `get_cwd` untuk membantu agen bernavigasi di sistem file.
+- **Auto-Discovery Enhancements**: Peningkatan deteksi konten file penting (README, go.mod, package.json, dll) saat inisialisasi sesi.
 
 ---
 

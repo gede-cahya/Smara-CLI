@@ -145,6 +145,32 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"query"},
 			},
 		},
+		{
+			Name:        "search_path",
+			Description: "Mencari file atau direktori berdasarkan nama di seluruh workspace atau path tertentu. Gunakan ini jika anda kehilangan jejak file atau ingin mencari di folder parent.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama file atau folder yang dicari (bisa sebagian)",
+					},
+					"root": map[string]interface{}{
+						"type":        "string",
+						"description": "Path awal pencarian (default: current directory). Gunakan '..' untuk mencari di folder parent, atau '/' untuk pencarian sistem (hati-hati).",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "get_cwd",
+			Description: "Mendapatkan path absolut dari direktori kerja saat ini.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 	}
 }
 
@@ -371,13 +397,13 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 	case "grep_search":
 		query, _ := args["query"].(string)
-		searchPath := "."
+		searchPathStr := "."
 		if p, ok := args["path"].(string); ok {
-			searchPath = p
+			searchPathStr = p
 		}
 
 		// Gunakan grep -r -n untuk hasil rekursif dengan nomor baris
-		cmd := exec.Command("grep", "-r", "-n", "--exclude-dir=.git", "--exclude-dir=node_modules", query, searchPath)
+		cmd := exec.Command("grep", "-r", "-n", "--exclude-dir=.git", "--exclude-dir=node_modules", query, searchPathStr)
 		output, _ := cmd.CombinedOutput() // Grep returns exit code 1 if no matches
 		
 		res := string(output)
@@ -393,7 +419,61 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		
 		return res, nil
 
+	case "search_path":
+		query, _ := args["query"].(string)
+		root, _ := args["root"].(string)
+		return searchPath(query, root, logCallback)
+
+	case "get_cwd":
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		return cwd, nil
+
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)
 	}
+}
+
+func searchPath(query, root string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Mencari '%s' mulai dari '%s'...", query, root))
+	}
+
+	if root == "" {
+		root = "."
+	}
+
+	var results []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+		
+		// Skip hidden directories like .git
+		if info.IsDir() && strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != ".." {
+			return filepath.SkipDir
+		}
+
+		if strings.Contains(strings.ToLower(info.Name()), strings.ToLower(query)) {
+			results = append(results, path)
+		}
+
+		// Limit results to 50
+		if len(results) >= 50 {
+			return io.EOF
+		}
+		return nil
+	})
+
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+
+	if len(results) == 0 {
+		return fmt.Sprintf("Tidak ada hasil yang ditemukan untuk '%s' di '%s'.", query, root), nil
+	}
+
+	return fmt.Sprintf("Hasil pencarian untuk '%s':\n- %s", query, strings.Join(results, "\n- ")), nil
 }

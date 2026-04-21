@@ -1,4 +1,4 @@
-package main
+package scratch
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
-func main() {
+func mainTestSessionSQL() {
 	dbPath := "test_session.db"
 	defer os.Remove(dbPath)
 

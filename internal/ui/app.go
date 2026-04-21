@@ -168,12 +168,12 @@ func bannerContent() string {
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 `
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render(banner) + 
-		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.7.0\n  Ketik /help untuk daftar perintah.\n")
+		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.8.0\n  Ketik /help untuk daftar perintah.\n")
 }
 
 // Init initializes the app
 func (m AppModel) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.spinner.Tick)
+	return tea.Batch(textarea.Blink, m.spinner.Tick, tea.EnableBracketedPaste)
 }
 
 // ProcessMsg is sent when the supervisor finishes processing
@@ -220,6 +220,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if msg.Paste {
+			m.textarea.InsertString(string(msg.Runes))
+			return m, nil
+		}
 		if m.awaitingConfirmation {
 			switch msg.String() {
 			case "left", "right":
@@ -685,7 +689,10 @@ func GetGlobalProgram() *tea.Program {
 // NewProgram creates a new bubbletea program
 func NewProgram(m AppModel) *tea.Program {
 	// Use AltScreen so it feels like a full app
-	return tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	return tea.NewProgram(m, 
+		tea.WithAltScreen(), 
+		tea.WithMouseCellMotion(),
+	)
 }
 
 // LoadHistory injects previous history into the model

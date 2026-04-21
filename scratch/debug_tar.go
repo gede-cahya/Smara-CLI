@@ -1,4 +1,4 @@
-package main
+package scratch
 
 import (
 	"archive/tar"
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func main() {
+func mainDebugTar() {
 	f, err := os.Open("test.tar.gz")
 	if err != nil {
 		fmt.Printf("Error opening file: %v\n", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -182,27 +183,65 @@ func (s *Supervisor) discoverProjectContext() {
 	}
 	s.autoDiscovered = true
 
-	importantFiles := []string{"go.mod", "package.json", "README.md", "Makefile", ".gitignore"}
-	foundContext := ""
+	cwd, _ := os.Getwd()
+	foundContext := fmt.Sprintf("Current Working Directory (CWD): %s\n", cwd)
+
+	// List files in current directory (level 1 & 2)
+	foundContext += "Workspace Structure (Limited Depth):\n"
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if path == "." {
+			return nil
+		}
+
+		// Skip hidden directories and large folders
+		if d.IsDir() && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == "bin") {
+			return filepath.SkipDir
+		}
+
+		rel, _ := filepath.Rel(".", path)
+		depth := strings.Count(rel, string(os.PathSeparator))
+		if depth >= 2 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		indent := strings.Repeat("  ", depth)
+		name := d.Name()
+		if d.IsDir() {
+			name += "/"
+		}
+		foundContext += fmt.Sprintf("%s- %s\n", indent, name)
+		return nil
+	})
+	if err != nil {
+		foundContext += fmt.Sprintf("(Gagal memetakan struktur: %v)\n", err)
+	}
+
+	importantFiles := []string{"go.mod", "package.json", "README.md", "Makefile", ".gitignore", "docker-compose.yml", "requirements.txt"}
+	foundContext += "\nDetected Important File Contents (Preview):\n"
 
 	for _, file := range importantFiles {
 		if _, err := os.Stat(file); err == nil {
 			data, err := os.ReadFile(file)
 			if err == nil {
-				// Ambil 1000 karakter pertama saja agar tidak memenuhi konteks
 				content := string(data)
 				if len(content) > 1000 {
 					content = content[:1000] + "..."
 				}
-				foundContext += fmt.Sprintf("\n--- File: %s ---\n%s\n", file, content)
+				foundContext += fmt.Sprintf("\n--- %s ---\n%s\n", file, content)
 			}
 		}
 	}
 
 	if foundContext != "" {
-		s.AddContext("Informasi Proyek Terdeteksi Otomatis:" + foundContext)
+		s.AddContext("CONTEXT: Proyek Terdeteksi Otomatis\n" + foundContext)
 		if s.callback.OnLog != nil {
-			s.callback.OnLog("system", "Otomatis memuat konteks proyek dari file metadata terdeteksi.")
+			s.callback.OnLog("system", fmt.Sprintf("Berhasil memetakan workspace di %s", cwd))
 		}
 	}
 }
