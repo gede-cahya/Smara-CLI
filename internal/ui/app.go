@@ -70,17 +70,21 @@ var globalProgram *tea.Program
 
 // ChatMessage represents a single message in the UI
 type ChatMessage struct {
-	Role     string // "System", "User", "Agent"
-	Content  string
-	Thinking string
-	Time     time.Time
+	Role         string // "System", "User", "Agent"
+	Content      string
+	Thinking     string
+	Time         time.Time
+	InputTokens  int
+	OutputTokens int
+	Duration     time.Duration
 }
 
 // Supervisor interface to avoid circular dependency
 type AppSupervisor interface {
-	ProcessPrompt(ctx context.Context, prompt string) (string, string, error)
+	ProcessPrompt(ctx context.Context, prompt string) (*agent.PromptResult, error)
 	GetMode() agent.Mode
 	SetMode(mode agent.Mode)
+	GetModelInfo() (string, string)
 }
 
 // AppModel is the Bubbletea model for our TUI
@@ -164,7 +168,7 @@ func bannerContent() string {
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 `
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render(banner) + 
-		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.3.0\n  Ketik /help untuk daftar perintah.\n")
+		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.7.0\n  Ketik /help untuk daftar perintah.\n")
 }
 
 // Init initializes the app
@@ -174,9 +178,8 @@ func (m AppModel) Init() tea.Cmd {
 
 // ProcessMsg is sent when the supervisor finishes processing
 type ProcessMsg struct {
-	Response string
-	Thinking string
-	Err      error
+	Result *agent.PromptResult
+	Err    error
 }
 
 // StreamMsg is received when a chunk of text is streamed from LLM
@@ -272,7 +275,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				default: nextMode = "ask"
 				}
 				m.supervisor.SetMode(nextMode)
-				m.addMessage("System", fmt.Sprintf("Mode diubah menjadi: %s", nextMode))
+				// m.addMessage("System", fmt.Sprintf("Mode diubah menjadi: %s", nextMode)) // Removed to prevent viewport clutter
 			}
 
 		case tea.KeyUp:
@@ -333,8 +336,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, func() tea.Msg {
-					resp, thinking, err := sup.ProcessPrompt(ctx, processedPrompt)
-					return ProcessMsg{Response: resp, Thinking: thinking, Err: err}
+					result, err := sup.ProcessPrompt(ctx, processedPrompt)
+					return ProcessMsg{Result: result, Err: err}
 				})
 			}
 		}
@@ -365,21 +368,21 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			// Intercept the "Lanjutkan eksekusi? (ya/tidak)" message
-			if strings.Contains(msg.Response, "Lanjutkan eksekusi? (ya/tidak)") {
+			if strings.Contains(msg.Result.Response, "Lanjutkan eksekusi? (ya/tidak)") {
 				// Extract everything before the prompt, if any
-				cleanResp := strings.ReplaceAll(msg.Response, "Lanjutkan eksekusi? (ya/tidak)", "")
+				cleanResp := strings.ReplaceAll(msg.Result.Response, "Lanjutkan eksekusi? (ya/tidak)", "")
 				cleanResp = strings.TrimSpace(cleanResp)
 				
 				if cleanResp != "" {
-					m.addMessageWithThinking("Agent", cleanResp, msg.Thinking)
-				} else if msg.Thinking != "" {
-					m.addMessageWithThinking("Agent", "", msg.Thinking)
+					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+				} else if msg.Result.Thinking != "" {
+					m.addMessageFull("Agent", "", msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 				}
 				
 				m.awaitingConfirmation = true
 				m.confirmSelection = 0 // Default "Ya"
 			} else {
-				m.addMessageWithThinking("Agent", msg.Response, msg.Thinking)
+				m.addMessageFull("Agent", msg.Result.Response, msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 			}
 		}
 
@@ -406,15 +409,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AppModel) addMessage(role, content string) {
-	m.addMessageWithThinking(role, content, "")
+	m.addMessageFull(role, content, "", 0, 0, 0)
 }
 
 func (m *AppModel) addMessageWithThinking(role, content, thinking string) {
+	m.addMessageFull(role, content, thinking, 0, 0, 0)
+}
+
+func (m *AppModel) addMessageFull(role, content, thinking string, inTokens, outTokens int, duration time.Duration) {
 	m.messages = append(m.messages, ChatMessage{
-		Role:     role,
-		Content:  content,
-		Thinking: thinking,
-		Time:     time.Now(),
+		Role:         role,
+		Content:      content,
+		Thinking:     thinking,
+		Time:         time.Now(),
+		InputTokens:  inTokens,
+		OutputTokens: outTokens,
+		Duration:     duration,
 	})
 	m.renderMessages()
 }
@@ -458,7 +468,14 @@ func (m *AppModel) renderMessages() {
 			thinkingContent = thinkingStyle.Render(msg.Thinking) + "\n"
 		}
 
-		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent))
+		stats := ""
+		if msg.Role == "Agent" && msg.InputTokens > 0 {
+			stats = dimStyle.Render(fmt.Sprintf("\n(In: %d | Out: %d | Total: %d | %s)", 
+				msg.InputTokens, msg.OutputTokens, msg.InputTokens+msg.OutputTokens, 
+				msg.Duration.Round(time.Millisecond)))
+		}
+
+		sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent, stats))
 	}
 	
 	// Append current stream if any
@@ -519,6 +536,10 @@ func (m AppModel) View() string {
 	}
 	
 	header := titleStyle.Render(fmt.Sprintf(" Smara CLI - Mode: %s ", mode))
+	if m.supervisor != nil {
+		provider, modelName := m.supervisor.GetModelInfo()
+		header += " " + dimStyle.Render(fmt.Sprintf("[%s / %s]", provider, modelName))
+	}
 	if m.processing {
 		status := m.statusText
 		if status == "" {

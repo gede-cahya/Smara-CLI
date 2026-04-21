@@ -54,7 +54,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	cfg := config.Get()
 
-	ui.PrintBanner()
+	ui.PrintBanner(version)
 	ui.PrintInfo("🌐 Memulai Smara Platform Bot Server...")
 
 	// 1. Initialize LLM Provider

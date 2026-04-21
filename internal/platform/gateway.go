@@ -251,12 +251,12 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	}
 
 	// Process via supervisor
-	response, _, err := g.supervisor.ProcessPrompt(ctx, msg.Content)
+	result, err := g.supervisor.ProcessPrompt(ctx, msg.Content)
 	if err != nil {
 		return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
 	}
 
-	return g.sendReply(ctx, msg, response)
+	return g.sendReply(ctx, msg, result.Response)
 }
 
 // sendReply sends a response back to the platform where the message originated.

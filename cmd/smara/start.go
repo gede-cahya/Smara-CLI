@@ -48,7 +48,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	cfg := config.Get()
 
 	// Show banner
-	ui.PrintBanner()
+	ui.PrintBanner(version)
 
 	// Override model from flag if provided
 	if model != "" {

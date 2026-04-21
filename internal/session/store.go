@@ -58,6 +58,23 @@ func (s *SQLiteStore) init() error {
 		}
 	}
 
+	// Migrasi: Tambahkan kolom yang mungkin hilang di versi lama
+	columns := []struct {
+		name string
+		typ  string
+	}{
+		{"memory_ids", "TEXT"},
+		{"context", "TEXT"},
+		{"is_agentic", "INTEGER DEFAULT 0"},
+		{"auto_resume", "INTEGER DEFAULT 0"},
+	}
+
+	for _, col := range columns {
+		query := fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s %s", col.name, col.typ)
+		// Kita abaikan error "duplicate column name"
+		_, _ = s.db.Exec(query)
+	}
+
 	return nil
 }
 

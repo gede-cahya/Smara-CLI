@@ -30,7 +30,20 @@ type Stats struct {
 	TotalDuration   time.Duration // Total processing time
 	AvgTokensPerReq int           // Average tokens per request
 	SessionStart    time.Time     // Session start time
+	InputTokens     int           // Total input tokens
+	OutputTokens    int           // Total output tokens
+	LastDuration    time.Duration // Duration of the last request
 	mu              sync.RWMutex
+}
+
+// PromptResult contains the result and statistics of a prompt processing.
+type PromptResult struct {
+	Response     string
+	Thinking     string
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+	Duration     time.Duration
 }
 
 // AgenticCallback defines callbacks for agentic loop events.
@@ -467,7 +480,7 @@ func (s *Supervisor) IsCurrentSession(id string) bool {
 }
 
 // ProcessPrompt handles a user prompt using the current agent mode.
-func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (string, string, error) {
+func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*PromptResult, error) {
 	s.discoverProjectContext()
 	startTime := time.Now()
 	modeInfo := GetModeInfo(s.mode)
@@ -547,7 +560,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 	if s.mode == ModeRush || s.mode == ModePlan {
 		resp, thinking, err := s.RunAgenticLoop(ctx, userPrompt)
 		if err != nil {
-			return "", "", err
+			return nil, err
 		}
 		finalResp = resp
 		finalThinking = thinking
@@ -561,7 +574,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 		}
 
 		if err != nil {
-			return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+			return nil, fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
 		}
 		finalResp = resp.Content
 		finalThinking = resp.Thinking
@@ -586,7 +599,24 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 	outputTokens := len(finalResp) / 4
 	totalTokens := inputTokens + outputTokens
 	estimatedCost := float64(totalTokens) * 0.00001
-	s.updateStats(totalTokens, estimatedCost, time.Since(startTime))
+	
+	duration := time.Since(startTime)
+	s.updateStats(totalTokens, estimatedCost, duration)
+	
+	s.mu.Lock()
+	s.stats.InputTokens += inputTokens
+	s.stats.OutputTokens += outputTokens
+	s.stats.LastDuration = duration
+	s.mu.Unlock()
+
+	result := &PromptResult{
+		Response:     finalResp,
+		Thinking:     finalThinking,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  totalTokens,
+		Duration:     duration,
+	}
 
 	// 6. Save interaction to memory
 	if s.memStore != nil {
@@ -596,7 +626,14 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 		s.memStore.Save(content, tag, "supervisor", embedding)
 	}
 
-	return finalResp, finalThinking, nil
+	return result, nil
+}
+
+// GetModelInfo returns the current provider and model name.
+func (s *Supervisor) GetModelInfo() (string, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerConfig.Name, s.providerConfig.Model
 }
 
 // RunAgenticLoop executes the agentic loop: LLM → tool calls → execute → feed back → repeat.
