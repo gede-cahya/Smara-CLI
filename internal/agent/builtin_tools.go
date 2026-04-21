@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
@@ -156,37 +157,61 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("argumen 'command' tidak valid")
 		}
 
-		// Jalankan command menggunakan shell default bash/sh
 		cmd := exec.Command("sh", "-c", cmdStr)
 		
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
 		
 		var fullOutput strings.Builder
-		multiReader := io.MultiReader(stdout, stderr)
+		var mu sync.Mutex
 		
 		if err := cmd.Start(); err != nil {
 			return "", fmt.Errorf("gagal memulai perintah: %w", err)
 		}
 
-		// Stream output via logCallback
-		scanner := bufio.NewScanner(multiReader)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fullOutput.WriteString(line + "\n")
-			if logCallback != nil {
-				logCallback("Terminal", line)
+		// Baca stdout dan stderr secara konkuren
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		readPipe := func(pipe io.ReadCloser) {
+			defer wg.Done()
+			scanner := bufio.NewScanner(pipe)
+			for scanner.Scan() {
+				line := scanner.Text()
+				mu.Lock()
+				fullOutput.WriteString(line + "\n")
+				if logCallback != nil {
+					logCallback("Terminal", line)
+				}
+				mu.Unlock()
 			}
 		}
 
+		go readPipe(stdout)
+		go readPipe(stderr)
+
+		// Tunggu sampai kedua pipe ditutup (EOF)
+		wg.Wait()
+
 		if err := cmd.Wait(); err != nil {
-			return fullOutput.String(), fmt.Errorf("eksekusi gagal: %w\nOutput: %s", err, fullOutput.String())
+			output := fullOutput.String()
+			if output == "" {
+				output = "(tidak ada output)"
+			}
+			return output, fmt.Errorf("eksekusi gagal: %w\nOutput: %s", err, output)
 		}
 		
-		result := fullOutput.String()
+		result := strings.TrimSpace(fullOutput.String())
 		if result == "" {
-			result = "Perintah berhasil dieksekusi tanpa output."
+			result = "Perintah berhasil dieksekusi tanpa output (exit code 0)."
 		}
+
+		// Batasi output jika terlalu panjang (max 10,000 karakter)
+		maxOutputLen := 10000
+		if len(result) > maxOutputLen {
+			result = result[:maxOutputLen] + "\n... (output dipotong karena terlalu panjang)"
+		}
+		
 		return result, nil
 
 	case "read_file":

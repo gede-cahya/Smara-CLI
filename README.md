@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.6.0**
+**Autonomous Multi-Agent Terminal v1.6.1**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -76,6 +76,12 @@ smara serve --platform telegram --mode plan
 - `/mode <ask|rush|plan>` — Ganti mode agen.
 - `/mcp` — Lihat daftar tool yang tersedia.
 - `/clear` — Reset sesi percakapan.
+
+---
+
+## 📝 Changelog v1.6.1
+- **Fix Terminal Output Capture**: Perbaikan mekanisme pembacaan pipe stdout/stderr secara konkuren untuk memastikan LLM mendapatkan seluruh output terminal.
+- **Output Safety**: Pembatasan panjang output terminal untuk efisiensi konteks LLM.
 
 ---
 
