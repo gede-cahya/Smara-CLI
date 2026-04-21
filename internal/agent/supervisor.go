@@ -246,12 +246,17 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var tools []llm.ToolFunction
+	// 1. Add built-in agentic tools
+	tools := GetBuiltinTools()
+
+	// 2. Add MCP tools
 	for serverName, info := range s.mcpInfo {
 		if !info.Connected {
 			continue
 		}
 		for _, t := range info.Tools {
+			// Prefix MCP tools with their server name if there's a conflict
+			// but for now we just append them directly
 			tf := llm.ToolFunction{
 				Name:        t.Name,
 				Description: t.Description,
@@ -266,6 +271,13 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
+	// Check if it is a built-in tool first
+	for _, bt := range GetBuiltinTools() {
+		if bt.Name == tc.Function {
+			return executeBuiltinTool(tc.Function, tc.Args)
+		}
+	}
+
 	s.mu.RLock()
 	route, ok := s.toolRoute[tc.Function]
 	client := s.mcpClients[route.MCPServer]

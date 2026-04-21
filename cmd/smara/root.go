@@ -43,6 +43,7 @@ func init() {
 
 	// Add subcommands
 	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(memoryCmd)
 	rootCmd.AddCommand(versionCmd)

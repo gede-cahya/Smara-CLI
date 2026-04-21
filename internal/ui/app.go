@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,6 +90,12 @@ type AppModel struct {
 	cancel      context.CancelFunc
 	processing  bool
 	
+	// Interactive TUI state
+	spinner              spinner.Model
+	awaitingConfirmation bool
+	confirmSelection     int // 0 = Ya, 1 = Tidak
+	statusText           string
+
 	// History management
 	cmdHistory  []string
 	historyIdx  int
@@ -115,6 +122,10 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	s := spinner.New()
+	s.Spinner = spinner.MiniDot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
 	return AppModel{
 		textarea:   ta,
 		viewport:   vp,
@@ -122,6 +133,7 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 		supervisor: sup,
 		ctx:        ctx,
 		cancel:     cancel,
+		spinner:    s,
 		cmdHistory: []string{},
 		historyIdx: -1,
 		onCommand:  onCmd,
@@ -143,7 +155,7 @@ func bannerContent() string {
 
 // Init initializes the app
 func (m AppModel) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, m.spinner.Tick)
 }
 
 // ProcessMsg is sent when the supervisor finishes processing
@@ -172,6 +184,48 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.awaitingConfirmation {
+			switch msg.Type {
+			case tea.KeyLeft, tea.KeyRight, tea.KeyTab:
+				if m.confirmSelection == 0 {
+					m.confirmSelection = 1
+				} else {
+					m.confirmSelection = 0
+				}
+				return m, nil
+			case tea.KeyEnter:
+				m.awaitingConfirmation = false
+				
+				answer := "ya"
+				if m.confirmSelection == 1 {
+					answer = "tidak"
+				}
+				
+				m.addMessage("User", answer)
+				m.processing = true
+				
+				// Send the answer directly as if the user typed it
+				go func() {
+					resp, think, err := m.supervisor.ProcessPrompt(m.ctx, answer)
+					globalProgram.Send(ProcessMsg{Response: resp, Thinking: think, Err: err})
+				}()
+				return m, m.spinner.Tick
+			case tea.KeyCtrlC, tea.KeyEsc:
+				// Cancel confirmation = "tidak"
+				m.awaitingConfirmation = false
+				m.addMessage("User", "tidak")
+				m.processing = true
+				
+				go func() {
+					resp, think, err := m.supervisor.ProcessPrompt(m.ctx, "tidak")
+					globalProgram.Send(ProcessMsg{Response: resp, Thinking: think, Err: err})
+				}()
+				return m, m.spinner.Tick
+			}
+			// Block other keys while confirming
+			return m, nil
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.processing {
@@ -248,9 +302,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				// Send to supervisor
 				m.processing = true
+				m.statusText = "Memproses..."
 				sup := m.supervisor
 				ctx := m.ctx
 				
+				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, func() tea.Msg {
 					resp, thinking, err := sup.ProcessPrompt(ctx, v)
 					return ProcessMsg{Response: resp, Thinking: thinking, Err: err}
@@ -258,8 +314,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		cmds = append(cmds, cmd)
+
 	case ProcessMsg:
 		m.processing = false
+		m.statusText = ""
 		if msg.Err != nil {
 			if msg.Err.Error() == "context canceled" {
 				// Already handled in KeyCtrlC
@@ -267,7 +329,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addMessage("System", fmt.Sprintf("Error: %v", msg.Err))
 			}
 		} else {
-			m.addMessageWithThinking("Agent", msg.Response, msg.Thinking)
+			// Intercept the "Lanjutkan eksekusi? (ya/tidak)" message
+			if strings.Contains(msg.Response, "Lanjutkan eksekusi? (ya/tidak)") {
+				// Extract everything before the prompt, if any
+				cleanResp := strings.ReplaceAll(msg.Response, "Lanjutkan eksekusi? (ya/tidak)", "")
+				cleanResp = strings.TrimSpace(cleanResp)
+				
+				if cleanResp != "" {
+					m.addMessageWithThinking("Agent", cleanResp, msg.Thinking)
+				} else if msg.Thinking != "" {
+					m.addMessageWithThinking("Agent", "", msg.Thinking)
+				}
+				
+				m.awaitingConfirmation = true
+				m.confirmSelection = 0 // Default "Ya"
+			} else {
+				m.addMessageWithThinking("Agent", msg.Response, msg.Thinking)
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -387,15 +465,44 @@ func (m AppModel) View() string {
 	
 	header := titleStyle.Render(fmt.Sprintf(" Smara CLI - Mode: %s ", mode))
 	if m.processing {
-		header += " " + warnStyle.Render("Sedang memproses...")
+		status := m.statusText
+		if status == "" {
+			status = "Sedang memproses..."
+		}
+		header += " " + warnStyle.Render(fmt.Sprintf("%s %s", m.spinner.View(), status))
 	}
 	
+	// Confirmation UI
+	inputArea := ""
+	if m.awaitingConfirmation {
+		yaStyle := lipgloss.NewStyle().Padding(0, 1)
+		tidakStyle := lipgloss.NewStyle().Padding(0, 1)
+		
+		if m.confirmSelection == 0 {
+			yaStyle = yaStyle.Background(lipgloss.Color("#04B575")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
+			tidakStyle = tidakStyle.Foreground(lipgloss.Color("#767676"))
+		} else {
+			yaStyle = yaStyle.Foreground(lipgloss.Color("#767676"))
+			tidakStyle = tidakStyle.Background(lipgloss.Color("#FF3366")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
+		}
+		
+		confirmPrompt := warnStyle.Render("➤ Lanjutkan eksekusi?")
+		inputArea = fmt.Sprintf("\n  %s\n  %s    %s\n  %s", 
+			confirmPrompt, 
+			yaStyle.Render("[ Ya ]"), 
+			tidakStyle.Render("[ Tidak ]"),
+			dimStyle.Render("(Gunakan panah Kiri/Kanan dan tekan Enter)"),
+		)
+	} else {
+		inputArea = m.textarea.View()
+	}
+
 	// Create main layout
 	return fmt.Sprintf(
 		"%s\n%s\n%s",
 		header,
 		borderStyle.Render(m.viewport.View()),
-		m.textarea.View(),
+		inputArea,
 	)
 }
 

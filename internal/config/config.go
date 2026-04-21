@@ -18,30 +18,52 @@ type MCPServer struct {
 	Env     map[string]string `mapstructure:"env" yaml:"env"`
 }
 
+// PlatformBotConfig holds config for a single platform bot.
+type PlatformBotConfig struct {
+	Enabled      bool     `mapstructure:"enabled" yaml:"enabled"`
+	Token        string   `mapstructure:"token" yaml:"token"`
+	AllowedUsers []string `mapstructure:"allowed_users" yaml:"allowed_users"`
+	BlockedUsers []string `mapstructure:"blocked_users" yaml:"blocked_users"`
+	GuildIDs     []string `mapstructure:"guild_ids" yaml:"guild_ids"`       // Discord only
+	AllowedRoles []string `mapstructure:"allowed_roles" yaml:"allowed_roles"` // Discord only
+	RateLimit    int      `mapstructure:"rate_limit" yaml:"rate_limit"`     // requests per minute
+	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`     // burst size
+}
+
+// PlatformConfig holds configuration for all platform bots.
+type PlatformConfig struct {
+	Telegram         PlatformBotConfig `mapstructure:"telegram" yaml:"telegram"`
+	Discord          PlatformBotConfig `mapstructure:"discord" yaml:"discord"`
+	MaxResponseLen   int               `mapstructure:"max_response_length" yaml:"max_response_length"`
+	TypingIndicator  bool              `mapstructure:"typing_indicator" yaml:"typing_indicator"`
+	LogConversations bool              `mapstructure:"log_conversations" yaml:"log_conversations"`
+}
+
 // SmaraConfig holds all application configuration.
 type SmaraConfig struct {
-	Provider           string      `mapstructure:"provider" yaml:"provider"`
-	Model              string      `mapstructure:"model" yaml:"model"`
-	OllamaHost         string      `mapstructure:"ollama_host" yaml:"ollama_host"`
-	OpenAIAPIKey       string      `mapstructure:"openai_api_key" yaml:"openai_api_key"`
-	OpenAIModel        string      `mapstructure:"openai_model" yaml:"openai_model"`
-	OpenRouterAPIKey   string      `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
-	OpenRouterModel    string      `mapstructure:"openrouter_model" yaml:"openrouter_model"`
-	AnthropicAPIKey    string      `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
-	AnthropicModel     string      `mapstructure:"anthropic_model" yaml:"anthropic_model"`
-	CustomProviderName string      `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
-	CustomAPIKey       string      `mapstructure:"custom_api_key" yaml:"custom_api_key"`
-	CustomBaseURL      string      `mapstructure:"custom_base_url" yaml:"custom_base_url"`
-	CustomModel        string      `mapstructure:"custom_model" yaml:"custom_model"`
-	SyncDir            string      `mapstructure:"sync_dir" yaml:"sync_dir"`
-	SyncInterval       int         `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
-	MCPServers         []MCPServer `mapstructure:"mcp_servers" yaml:"mcp_servers"`
-	SmaraMCPEnabled    bool        `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
-	SmaraMCPCommand    string      `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
-	SmaraMCPArgs       []string    `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
-	SmaraMCPAPIKey     string      `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
-	Verbose            bool        `mapstructure:"verbose" yaml:"verbose"`
-	DBPath             string      `mapstructure:"db_path" yaml:"db_path"`
+	Provider           string         `mapstructure:"provider" yaml:"provider"`
+	Model              string         `mapstructure:"model" yaml:"model"`
+	OllamaHost         string         `mapstructure:"ollama_host" yaml:"ollama_host"`
+	OpenAIAPIKey       string         `mapstructure:"openai_api_key" yaml:"openai_api_key"`
+	OpenAIModel        string         `mapstructure:"openai_model" yaml:"openai_model"`
+	OpenRouterAPIKey   string         `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
+	OpenRouterModel    string         `mapstructure:"openrouter_model" yaml:"openrouter_model"`
+	AnthropicAPIKey    string         `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
+	AnthropicModel     string         `mapstructure:"anthropic_model" yaml:"anthropic_model"`
+	CustomProviderName string         `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
+	CustomAPIKey       string         `mapstructure:"custom_api_key" yaml:"custom_api_key"`
+	CustomBaseURL      string         `mapstructure:"custom_base_url" yaml:"custom_base_url"`
+	CustomModel        string         `mapstructure:"custom_model" yaml:"custom_model"`
+	SyncDir            string         `mapstructure:"sync_dir" yaml:"sync_dir"`
+	SyncInterval       int            `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
+	MCPServers         []MCPServer    `mapstructure:"mcp_servers" yaml:"mcp_servers"`
+	SmaraMCPEnabled    bool           `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
+	SmaraMCPCommand    string         `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
+	SmaraMCPArgs       []string       `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
+	SmaraMCPAPIKey     string         `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	Verbose            bool           `mapstructure:"verbose" yaml:"verbose"`
+	DBPath             string         `mapstructure:"db_path" yaml:"db_path"`
+	Platforms          PlatformConfig `mapstructure:"platforms" yaml:"platforms"`
 }
 
 var (

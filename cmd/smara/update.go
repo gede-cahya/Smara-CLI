@@ -76,7 +76,7 @@ var updateCmd = &cobra.Command{
 }
 
 func init() {
-	updateCmd.Flags().StringVarP(&updateVersion, "version", "V", "", "Versi spesifik yang ingin diinstal (contoh: 1.3.0)")
+	updateCmd.Flags().StringVarP(&updateVersion, "version", "V", "", "Versi spesifik yang ingin diinstal (contoh: 1.4.0)")
 }
 
 type Release struct {
