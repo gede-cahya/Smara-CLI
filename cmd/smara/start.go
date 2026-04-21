@@ -19,6 +19,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/sync"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
+	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
 var (
@@ -121,8 +122,40 @@ func runStart(cmd *cobra.Command, args []string) error {
 	supervisor := agent.NewSupervisorWithConfig(provider, providerCfg, memStore)
 	defer supervisor.Close()
 
-	// Set initial mode
-	if agent.ValidMode(startMode) {
+	// 4.0 Initialize Session Store
+	sessStore, err := session.NewSQLiteStore(cfg.DBPath)
+	if err != nil {
+		ui.PrintWarning("Gagal inisialisasi session store: %v", err)
+	} else {
+		supervisor.SetSessionStore(sessStore)
+	}
+
+	// 4.1 Initialize Sessions & Auto-Connection
+	ui.PrintInfo("Memuat session dari database...")
+	if err := supervisor.InitializeSessions(); err != nil {
+		ui.PrintWarning("Gagal memuat session: %v", err)
+	} else {
+		// Attempt to auto-connect to last active session
+		lastSess, err := supervisor.GetLastActiveSession()
+		if err == nil && lastSess != nil {
+			ui.PrintSuccess("Auto-connect ke session terakhir: %s (%s)", lastSess.Name, lastSess.ID[:8])
+			supervisor.SwitchSession(lastSess.ID)
+		} else {
+			// No active session found, create a new one automatically
+			ui.PrintInfo("Tidak ada session aktif, membuat session baru...")
+			newSess, err := supervisor.CreateSession(agent.SessionConfig{
+				Name:       "Auto Session",
+				Mode:       string(agent.ModeAsk),
+				MCPServers: supervisor.ListMCPServers(),
+			})
+			if err == nil {
+				ui.PrintSuccess("Session baru dibuat: %s (%s)", newSess.Name, newSess.ID[:8])
+			}
+		}
+	}
+
+	// Set initial mode (if override via flag)
+	if startMode != "ask" && agent.ValidMode(startMode) {
 		supervisor.SetMode(agent.Mode(startMode))
 	}
 	modeInfo := agent.GetModeInfo(supervisor.GetMode())

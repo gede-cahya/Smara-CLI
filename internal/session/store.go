@@ -213,6 +213,43 @@ func (s *SQLiteStore) ListActiveSessions() ([]Session, error) {
 	return sessions, nil
 }
 
+func (s *SQLiteStore) GetLastActiveSession() (*Session, error) {
+	var session Session
+	var mcpServers, history, tasks, memoryIDs []byte
+
+	err := s.db.QueryRow(
+		`SELECT id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, created_at, updated_at
+		 FROM sessions WHERE state = 'active' ORDER BY updated_at DESC LIMIT 1`,
+	).Scan(
+		&session.ID, &session.Name, &session.State, &session.Mode,
+		&mcpServers, &history, &tasks, &memoryIDs,
+		&session.Context, &session.IsAgentic, &session.AutoResume,
+		&session.CreatedAt, &session.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gagal membaca session terakhir: %w", err)
+	}
+
+	if len(mcpServers) > 0 {
+		json.Unmarshal(mcpServers, &session.MCPServers)
+	}
+	if len(history) > 0 {
+		json.Unmarshal(history, &session.History)
+	}
+	if len(tasks) > 0 {
+		json.Unmarshal(tasks, &session.Tasks)
+	}
+	if len(memoryIDs) > 0 {
+		json.Unmarshal(memoryIDs, &session.MemoryIDs)
+	}
+
+	return &session, nil
+}
+
 func (s *SQLiteStore) saveSession(session *Session) error {
 	mcpServers, _ := json.Marshal(session.MCPServers)
 	history, _ := json.Marshal(session.History)
@@ -222,7 +259,7 @@ func (s *SQLiteStore) saveSession(session *Session) error {
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO sessions 
 		 (id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID,
 		session.Name,
 		session.State,

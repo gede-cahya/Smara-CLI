@@ -11,6 +11,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
 // MCPServerInfo holds detailed MCP server information.
@@ -409,6 +410,37 @@ func (s *Supervisor) ListSessions() []*Session {
 	return s.sessionRegistry.List()
 }
 
+// InitializeSessions loads existing sessions from store into the registry.
+func (s *Supervisor) InitializeSessions() error {
+	if s.sessionStore == nil {
+		return nil
+	}
+
+	sessions, err := s.sessionStore.ListSessions()
+	if err != nil {
+		return err
+	}
+
+	for i := range sessions {
+		s.sessionRegistry.Register(&sessions[i])
+	}
+
+	return nil
+}
+
+// GetLastActiveSession returns the last active session from store.
+func (s *Supervisor) GetLastActiveSession() (*Session, error) {
+	if s.sessionStore == nil {
+		return nil, nil
+	}
+
+	// Just use store helper (needs to be added to session.Store interface if used here)
+	if store, ok := s.sessionStore.(*session.SQLiteStore); ok {
+		return store.GetLastActiveSession()
+	}
+	return nil, nil
+}
+
 // EndCurrentSession marks the current session as ended.
 func (s *Supervisor) EndCurrentSession() error {
 	sess := s.sessionRegistry.Current()
@@ -509,44 +541,62 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (stri
 	})
 
 	// 3. Call LLM (branch based on mode)
+	var finalResp string
+	var finalThinking string
+
 	if s.mode == ModeRush || s.mode == ModePlan {
-		return s.RunAgenticLoop(ctx, userPrompt)
-	}
-
-	var resp *llm.ChatResponse
-	var err error
-	if streamer, ok := s.provider.(llm.Streamer); ok {
-		resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+		resp, thinking, err := s.RunAgenticLoop(ctx, userPrompt)
+		if err != nil {
+			return "", "", err
+		}
+		finalResp = resp
+		finalThinking = thinking
 	} else {
-		resp, err = s.provider.Chat(messages)
+		var resp *llm.ChatResponse
+		var err error
+		if streamer, ok := s.provider.(llm.Streamer); ok {
+			resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+		} else {
+			resp, err = s.provider.Chat(messages)
+		}
+
+		if err != nil {
+			return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+		}
+		finalResp = resp.Content
+		finalThinking = resp.Thinking
 	}
 
-	if err != nil {
-		return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
-	}
+	// 4. Update conversation history (both local and session)
+	userMsg := llm.Message{Role: llm.RoleUser, Content: userPrompt}
+	assistantMsg := llm.Message{Role: llm.RoleAssistant, Content: finalResp}
 
-	// 4. Update conversation history
-	s.history = append(s.history,
-		llm.Message{Role: llm.RoleUser, Content: userPrompt},
-		llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-	)
+	s.history = append(s.history, userMsg, assistantMsg)
+
+	if sess := s.sessionRegistry.Current(); sess != nil {
+		sess.History = append(sess.History, userMsg, assistantMsg)
+		sess.UpdatedAt = time.Now()
+		if s.sessionStore != nil {
+			s.sessionStore.UpdateSession(sess)
+		}
+	}
 
 	// 5. Update stats (estimate tokens: ~4 chars per token)
 	inputTokens := len(userPrompt) / 4
-	outputTokens := len(resp.Content) / 4
+	outputTokens := len(finalResp) / 4
 	totalTokens := inputTokens + outputTokens
-	estimatedCost := float64(totalTokens) * 0.00001 // rough estimate: $0.01 per 1K tokens
+	estimatedCost := float64(totalTokens) * 0.00001
 	s.updateStats(totalTokens, estimatedCost, time.Since(startTime))
 
 	// 6. Save interaction to memory
 	if s.memStore != nil {
 		tag := fmt.Sprintf("mode:%s", s.mode)
-		content := fmt.Sprintf("Q: %s\nA: %s", userPrompt, truncate(resp.Content, 500))
+		content := fmt.Sprintf("Q: %s\nA: %s", userPrompt, truncate(finalResp, 500))
 		embedding, _ := s.provider.GenerateEmbedding(content)
 		s.memStore.Save(content, tag, "supervisor", embedding)
 	}
 
-	return resp.Content, resp.Thinking, nil
+	return finalResp, finalThinking, nil
 }
 
 // RunAgenticLoop executes the agentic loop: LLM → tool calls → execute → feed back → repeat.
@@ -666,10 +716,18 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		if len(toolCalls) == 0 {
 			// No tool calls — LLM gave final answer
 			// Update history and save to memory
-			s.history = append(s.history,
-				llm.Message{Role: llm.RoleUser, Content: userPrompt},
-				llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-			)
+			userMsg := llm.Message{Role: llm.RoleUser, Content: userPrompt}
+			assistantMsg := llm.Message{Role: llm.RoleAssistant, Content: resp.Content}
+			
+			s.history = append(s.history, userMsg, assistantMsg)
+			
+			if sess := s.sessionRegistry.Current(); sess != nil {
+				sess.History = append(sess.History, userMsg, assistantMsg)
+				sess.UpdatedAt = time.Now()
+				if s.sessionStore != nil {
+					s.sessionStore.UpdateSession(sess)
+				}
+			}
 
 			if s.memStore != nil {
 				tag := fmt.Sprintf("mode:%s", s.mode)

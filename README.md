@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.5.0**
+**Autonomous Multi-Agent Terminal v1.6.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -17,6 +17,7 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
   - `plan` (📋): Membuat rencana dan meminta persetujuan sebelum eksekusi.
 - **Platform Integration**: Jalankan Smara sebagai bot di **Telegram** dan **Discord**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
+- **Persistent Sessions**: Riwayat percakapan dan status agen kini tersimpan secara otomatis di SQLite, memungkinkan Anda melanjutkan sesi sebelumnya.
 - **Smart Memory**: Menggunakan SQLite & Vector Search untuk menyimpan konteks percakapan lintas platform.
 - **MCP Integration**: Secara otomatis mendeteksi dan menghubungkan ke server MCP dari OpenCode.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
@@ -75,6 +76,13 @@ smara serve --platform telegram --mode plan
 - `/mode <ask|rush|plan>` — Ganti mode agen.
 - `/mcp` — Lihat daftar tool yang tersedia.
 - `/clear` — Reset sesi percakapan.
+
+---
+
+## 📝 Changelog v1.6.0
+- **Persistent Sessions**: Implementasi penyimpanan sesi otomatis ke database SQLite.
+- **Auto-Resume**: Kemampuan untuk memuat dan melanjutkan sesi aktif terakhir saat aplikasi dijalankan.
+- **Improved History Management**: Sinkronisasi riwayat percakapan yang lebih baik antara memori lokal dan database.
 
 ---
 
