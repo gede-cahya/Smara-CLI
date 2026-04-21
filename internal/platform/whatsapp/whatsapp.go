@@ -57,7 +57,9 @@ func (a *Adapter) Connect(ctx context.Context, cfg platform.AdapterConfig) error
 	}
 
 	dbPath := filepath.Join(sessionDir, "session.db")
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)", a.dbLog)
+	// Use WAL mode and connection pooling to avoid "database is locked" (SQLITE_BUSY) errors
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", dbPath)
+	container, err := sqlstore.New(ctx, "sqlite", dsn, a.dbLog)
 	if err != nil {
 		return fmt.Errorf("gagal inisialisasi database sesi WA: %w", err)
 	}
