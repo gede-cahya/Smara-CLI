@@ -77,6 +77,11 @@ smara serve --platform telegram --mode plan
 - `/mcp` — Lihat daftar tool yang tersedia.
 - `/clear` — Reset sesi percakapan.
 
+## 📝 Changelog v1.8.1
+- **Enhanced UI Rendering**: Peningkatan visual untuk blok kode dan output terminal agar lebih mudah dibaca.
+- **Tool Refinements**: Penambahan tool `view_file` dengan penomoran baris dan dukungan _line range_ pada `replace_file_content` untuk pengeditan kode yang lebih presisi.
+- **Minor Fixes**: Perbaikan bug pada penanganan event TUI.
+
 ---
 
 ## 📝 Changelog v1.8.0

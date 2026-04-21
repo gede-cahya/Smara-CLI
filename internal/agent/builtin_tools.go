@@ -33,8 +33,30 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "view_file",
+			Description: "Melihat isi file dengan nomor baris. Sangat berguna untuk menganalisis kode sebelum melakukan pengeditan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path relatif atau absolut ke file",
+					},
+					"start_line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Baris awal untuk mulai membaca (1-indexed)",
+					},
+					"end_line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Baris akhir untuk selesai membaca",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
 			Name:        "read_file",
-			Description: "Membaca isi file di sistem lokal.",
+			Description: "Membaca isi file mentah di sistem lokal.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -107,7 +129,7 @@ func GetBuiltinTools() []llm.ToolFunction {
 		},
 		{
 			Name:        "edit_file",
-			Description: "Mengubah bagian spesifik dari sebuah file dengan mencari teks lama dan menggantinya dengan teks baru. Sangat berguna untuk file besar.",
+			Description: "Mengubah bagian spesifik dari sebuah file. Gunakan view_file terlebih dahulu untuk mendapatkan nomor baris dan konten yang tepat.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -122,6 +144,14 @@ func GetBuiltinTools() []llm.ToolFunction {
 					"new_content": map[string]interface{}{
 						"type":        "string",
 						"description": "Teks pengganti",
+					},
+					"start_line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Optional: Baris awal target perubahan (untuk akurasi)",
+					},
+					"end_line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Optional: Baris akhir target perubahan",
 					},
 				},
 				"required": []string{"path", "old_content", "new_content"},
@@ -239,6 +269,39 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 		
 		return result, nil
+
+		return result, nil
+	
+	case "view_file":
+		path, ok := args["path"].(string)
+		if !ok {
+			return "", fmt.Errorf("argumen 'path' tidak valid")
+		}
+		
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("gagal membaca file: %w", err)
+		}
+		
+		lines := strings.Split(string(data), "\n")
+		startLine := 1
+		if sl, ok := args["start_line"].(float64); ok {
+			startLine = int(sl)
+		}
+		endLine := len(lines)
+		if el, ok := args["end_line"].(float64); ok {
+			endLine = int(el)
+		}
+		
+		if startLine < 1 { startLine = 1 }
+		if endLine > len(lines) { endLine = len(lines) }
+		
+		var sb strings.Builder
+		for i := startLine; i <= endLine; i++ {
+			sb.WriteString(fmt.Sprintf("%4d | %s\n", i, lines[i-1]))
+		}
+		
+		return sb.String(), nil
 
 	case "read_file":
 		path, ok := args["path"].(string)
@@ -370,21 +433,56 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		path, _ := args["path"].(string)
 		oldContent, _ := args["old_content"].(string)
 		newContent, _ := args["new_content"].(string)
-
+		
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca file: %w", err)
 		}
 
+		lines := strings.Split(string(data), "\n")
+		startLine := 1
+		if sl, ok := args["start_line"].(float64); ok {
+			startLine = int(sl)
+		}
+		endLine := len(lines)
+		if el, ok := args["end_line"].(float64); ok {
+			endLine = int(el)
+		}
+
+		// Jika start_line/end_line diberikan, cari hanya di range tersebut
 		content := string(data)
+		if okStart, okEnd := args["start_line"] != nil, args["end_line"] != nil; okStart || okEnd {
+			if startLine < 1 { startLine = 1 }
+			if endLine > len(lines) { endLine = len(lines) }
+			
+			subContent := strings.Join(lines[startLine-1:endLine], "\n")
+			if !strings.Contains(subContent, oldContent) {
+				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d. Gunakan view_file untuk verifikasi.", startLine, endLine)
+			}
+			
+			// Lakukan penggantian hanya di bagian tersebut
+			newSubContent := strings.Replace(subContent, oldContent, newContent, 1)
+			
+			// Gabungkan kembali
+			finalLines := append(lines[:startLine-1], strings.Split(newSubContent, "\n")...)
+			finalLines = append(finalLines, lines[endLine:]...)
+			finalContent := strings.Join(finalLines, "\n")
+			
+			err = os.WriteFile(path, []byte(finalContent), 0644)
+			if err != nil {
+				return "", fmt.Errorf("gagal menulis file: %w", err)
+			}
+			return fmt.Sprintf("File %s berhasil diperbarui di baris %d-%d.", path, startLine, endLine), nil
+		}
+
+		// Fallback ke pencarian global jika baris tidak diberikan
 		if !strings.Contains(content, oldContent) {
 			return "", fmt.Errorf("teks 'old_content' tidak ditemukan di dalam file. Pastikan teks sama persis termasuk spasi.")
 		}
 
-		// Hitung berapa kali muncul untuk keamanan
 		count := strings.Count(content, oldContent)
 		if count > 1 {
-			return "", fmt.Errorf("teks 'old_content' muncul %d kali. Mohon berikan blok teks yang lebih unik.", count)
+			return "", fmt.Errorf("teks 'old_content' muncul %d kali. Gunakan start_line dan end_line untuk spesifikasi lokasi.", count)
 		}
 
 		newContentStr := strings.Replace(content, oldContent, newContent, 1)

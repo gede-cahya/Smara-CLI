@@ -63,6 +63,17 @@ var (
 	terminalStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A6E22E")).
 			Bold(true)
+
+	codingStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#D1D1D1")).
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(lipgloss.Color("#3A3A3A")).
+			PaddingLeft(1).
+			MarginLeft(1)
+
+	codePrefixStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#36C5F0")).
+			Italic(true)
 )
 
 // Global reference for programmatic messaging
@@ -453,7 +464,13 @@ func (m *AppModel) renderMessages() {
 				mode = strings.ToUpper(string(m.supervisor.GetMode()))
 			}
 			prefix = agentStyle.Render(fmt.Sprintf("Smara [%s]:", mode))
-			renderedContent = messageStyle.Render(msg.Content)
+			
+			// Detect if content is primarily code or tool output
+			if strings.Contains(msg.Content, "```") || strings.Contains(msg.Content, "package ") || strings.Contains(msg.Content, "import ") {
+				renderedContent = codingStyle.Render(msg.Content)
+			} else {
+				renderedContent = messageStyle.Render(msg.Content)
+			}
 		case "System":
 			if strings.HasPrefix(msg.Content, "Error") {
 				prefix = errStyle.Render("System:")
@@ -463,13 +480,21 @@ func (m *AppModel) renderMessages() {
 				renderedContent = dimStyle.Render(msg.Content)
 			}
 		case "Terminal":
-			prefix = terminalStyle.Render("Terminal:")
-			renderedContent = dimStyle.Render(msg.Content)
+			prefix = terminalStyle.Render("$")
+			// Terminal output is dimmed and bracketed like the reference image
+			lines := strings.Split(msg.Content, "\n")
+			var terminalRows []string
+			for _, line := range lines {
+				if line != "" {
+					terminalRows = append(terminalRows, dimStyle.Render(line))
+				}
+			}
+			renderedContent = strings.Join(terminalRows, "\n")
 		}
 
 		var thinkingContent string
 		if msg.Thinking != "" {
-			thinkingContent = thinkingStyle.Render(msg.Thinking) + "\n"
+			thinkingContent = thinkingStyle.Render("Thinking: " + msg.Thinking) + "\n"
 		}
 
 		stats := ""
@@ -479,7 +504,12 @@ func (m *AppModel) renderMessages() {
 				msg.Duration.Round(time.Millisecond)))
 		}
 
-		sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent, stats))
+		// Distinct separation: prefix on top or beside depending on role
+		if msg.Role == "Terminal" {
+			sb.WriteString(fmt.Sprintf("%s %s %s\n\n", timeStr, prefix, renderedContent))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent, stats))
+		}
 	}
 	
 	// Append current stream if any
@@ -492,10 +522,15 @@ func (m *AppModel) renderMessages() {
 		
 		var thinkingContent string
 		if m.currentThinking != "" {
-			thinkingContent = thinkingStyle.Render(m.currentThinking) + "\n"
+			thinkingContent = thinkingStyle.Render("Thinking: " + m.currentThinking) + "\n"
 		}
 		
-		renderedContent := messageStyle.Render(m.currentStream)
+		var renderedContent string
+		if strings.Contains(m.currentStream, "```") || strings.Contains(m.currentStream, "package ") {
+			renderedContent = codingStyle.Render(m.currentStream)
+		} else {
+			renderedContent = messageStyle.Render(m.currentStream)
+		}
 		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, renderedContent))
 	}
 	
