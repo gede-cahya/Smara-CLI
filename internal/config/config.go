@@ -56,6 +56,7 @@ type SmaraConfig struct {
 	OllamaHost         string         `mapstructure:"ollama_host" yaml:"ollama_host"`
 	OpenAIAPIKey       string         `mapstructure:"openai_api_key" yaml:"openai_api_key"`
 	OpenAIModel        string         `mapstructure:"openai_model" yaml:"openai_model"`
+	OpenAIBaseURL      string         `mapstructure:"openai_base_url" yaml:"openai_base_url"`
 	OpenRouterAPIKey   string         `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
 	OpenRouterModel    string         `mapstructure:"openrouter_model" yaml:"openrouter_model"`
 	AnthropicAPIKey    string         `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
@@ -92,6 +93,7 @@ func DefaultConfig() *SmaraConfig {
 		OllamaHost:         "http://localhost:11434",
 		OpenAIAPIKey:       "",
 		OpenAIModel:        "gpt-4o",
+		OpenAIBaseURL:      "",
 		OpenRouterAPIKey:   "",
 		OpenRouterModel:    "anthropic/claude-sonnet-4",
 		AnthropicAPIKey:    "",
@@ -152,6 +154,7 @@ func Init(configPath string) error {
 	viper.SetDefault("ollama_host", defaults.OllamaHost)
 	viper.SetDefault("openai_api_key", defaults.OpenAIAPIKey)
 	viper.SetDefault("openai_model", defaults.OpenAIModel)
+	viper.SetDefault("openai_base_url", defaults.OpenAIBaseURL)
 	viper.SetDefault("openrouter_api_key", defaults.OpenRouterAPIKey)
 	viper.SetDefault("openrouter_model", defaults.OpenRouterModel)
 	viper.SetDefault("anthropic_api_key", defaults.AnthropicAPIKey)

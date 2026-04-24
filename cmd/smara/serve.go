@@ -73,6 +73,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	switch cfg.Provider {
 	case "openai":
 		providerCfg.APIKey = cfg.OpenAIAPIKey
+		providerCfg.Host = cfg.OpenAIBaseURL
 	case "openrouter":
 		providerCfg.APIKey = cfg.OpenRouterAPIKey
 		if cfg.Model == "" || cfg.Model == "minimax-m2.5:cloud" {
@@ -83,6 +84,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if cfg.Model == "" || cfg.Model == "minimax-m2.5:cloud" {
 			providerCfg.Model = cfg.AnthropicModel
 		}
+	case "custom":
+		providerCfg.APIKey = cfg.CustomAPIKey
+		providerCfg.Host = cfg.CustomBaseURL
 	}
 
 	provider, err := llm.NewProvider(providerCfg)
