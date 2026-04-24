@@ -50,6 +50,7 @@ func init() {
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(providerCmd)
 	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(dashboardCmd)
 }
 
 func initConfig() {

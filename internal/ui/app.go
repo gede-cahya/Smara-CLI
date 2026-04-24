@@ -100,20 +100,20 @@ type AppSupervisor interface {
 
 // AppModel is the Bubbletea model for our TUI
 type AppModel struct {
-	viewport    viewport.Model
-	textarea    textarea.Model
-	messages    []ChatMessage
-	err         error
-	width       int
-	height      int
-	supervisor  AppSupervisor
-	ctx         context.Context
-	cancel      context.CancelFunc
-	processing  bool
-	
+	viewport   viewport.Model
+	textarea   textarea.Model
+	messages   []ChatMessage
+	err        error
+	width      int
+	height     int
+	supervisor AppSupervisor
+	ctx        context.Context
+	cancel     context.CancelFunc
+	processing bool
+
 	// Streaming state
-	currentStream    string
-	currentThinking  string
+	currentStream   string
+	currentThinking string
 
 	// Confirmation state
 	awaitingConfirmation bool
@@ -122,15 +122,21 @@ type AppModel struct {
 	confirmSelection     int // 0: Ya, 1: Tidak
 
 	// Interactive TUI state
-	spinner              spinner.Model
-	statusText           string
+	spinner    spinner.Model
+	statusText string
 
 	// History management
-	cmdHistory  []string
-	historyIdx  int
+	cmdHistory []string
+	historyIdx int
 
 	// Command handler callback
 	onCommand func(string, []string)
+
+	// Sidebar state
+	todoList        TodoList
+	showSidebar     bool
+	sidebarViewport viewport.Model
+	sidebarWidth    int
 }
 
 // InitialModel creates a new model
@@ -149,6 +155,9 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 	vp := viewport.New(80, 20)
 	vp.SetContent(bannerContent())
 
+	sidebarVp := viewport.New(30, 20)
+	sidebarVp.SetContent("  Belum ada edit.")
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := spinner.New()
@@ -156,16 +165,19 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return AppModel{
-		textarea:   ta,
-		viewport:   vp,
-		messages:   []ChatMessage{},
-		supervisor: sup,
-		ctx:        ctx,
-		cancel:     cancel,
-		spinner:    s,
-		cmdHistory: []string{},
-		historyIdx: -1,
-		onCommand:  onCmd,
+		textarea:        ta,
+		viewport:        vp,
+		messages:        []ChatMessage{},
+		supervisor:      sup,
+		ctx:             ctx,
+		cancel:          cancel,
+		spinner:         s,
+		cmdHistory:      []string{},
+		historyIdx:      -1,
+		onCommand:       onCmd,
+		sidebarViewport: sidebarVp,
+		showSidebar:     false,
+		sidebarWidth:    30,
 	}
 }
 
@@ -178,7 +190,7 @@ func bannerContent() string {
   ███████║██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 `
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render(banner) + 
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render(banner) +
 		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.8.0\n  Ketik /help untuk daftar perintah.\n")
 }
 
@@ -247,7 +259,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				m.awaitingConfirmation = false
 				m.confirmResponseCh <- (m.confirmSelection == 0)
-				
+
 				answer := "ya"
 				if m.confirmSelection == 1 {
 					answer = "tidak"
@@ -274,7 +286,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				return m, tea.Quit
 			}
-			
+
 		case tea.KeyCtrlD:
 			return m, tea.Quit
 
@@ -284,10 +296,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				currentMode := m.supervisor.GetMode()
 				var nextMode agent.Mode
 				switch currentMode {
-				case "ask": nextMode = "rush"
-				case "rush": nextMode = "plan"
-				case "plan": nextMode = "ask"
-				default: nextMode = "ask"
+				case "ask":
+					nextMode = "rush"
+				case "rush":
+					nextMode = "plan"
+				case "plan":
+					nextMode = "ask"
+				default:
+					nextMode = "ask"
 				}
 				m.supervisor.SetMode(nextMode)
 				// m.addMessage("System", fmt.Sprintf("Mode diubah menjadi: %s", nextMode)) // Removed to prevent viewport clutter
@@ -348,7 +364,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentThinking = ""
 				sup := m.supervisor
 				ctx := m.ctx
-				
+
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, func() tea.Msg {
 					result, err := sup.ProcessPrompt(ctx, processedPrompt)
@@ -387,13 +403,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Extract everything before the prompt, if any
 				cleanResp := strings.ReplaceAll(msg.Result.Response, "Lanjutkan eksekusi? (ya/tidak)", "")
 				cleanResp = strings.TrimSpace(cleanResp)
-				
+
 				if cleanResp != "" {
 					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 				} else if msg.Result.Thinking != "" {
 					m.addMessageFull("Agent", "", msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 				}
-				
+
 				m.awaitingConfirmation = true
 				m.confirmSelection = 0 // Default "Ya"
 			} else {
@@ -406,7 +422,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 		m.textarea.SetWidth(msg.Width - 4)
-		
+
 		vpHeight := msg.Height - m.textarea.Height() - 5 // Header + borders + input
 		if vpHeight < 5 {
 			vpHeight = 5
@@ -414,7 +430,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = msg.Width - 4
 		m.viewport.Height = vpHeight
 		m.renderMessages()
-		
+
 	case LogMsg:
 		m.messages = append(m.messages, msg.Message)
 		m.renderMessages()
@@ -447,13 +463,13 @@ func (m *AppModel) addMessageFull(role, content, thinking string, inTokens, outT
 func (m *AppModel) renderMessages() {
 	var sb strings.Builder
 	sb.WriteString(bannerContent())
-	
+
 	for _, msg := range m.messages {
 		timeStr := dimStyle.Render(msg.Time.Format("15:04"))
-		
+
 		var prefix string
 		var renderedContent string
-		
+
 		switch msg.Role {
 		case "User":
 			prefix = userStyle.Render("User:")
@@ -464,7 +480,7 @@ func (m *AppModel) renderMessages() {
 				mode = strings.ToUpper(string(m.supervisor.GetMode()))
 			}
 			prefix = agentStyle.Render(fmt.Sprintf("Smara [%s]:", mode))
-			
+
 			// Detect if content is primarily code or tool output
 			if strings.Contains(msg.Content, "```") || strings.Contains(msg.Content, "package ") || strings.Contains(msg.Content, "import ") {
 				renderedContent = codingStyle.Render(msg.Content)
@@ -494,13 +510,13 @@ func (m *AppModel) renderMessages() {
 
 		var thinkingContent string
 		if msg.Thinking != "" {
-			thinkingContent = thinkingStyle.Render("Thinking: " + msg.Thinking) + "\n"
+			thinkingContent = thinkingStyle.Render("Thinking: "+msg.Thinking) + "\n"
 		}
 
 		stats := ""
 		if msg.Role == "Agent" && msg.InputTokens > 0 {
-			stats = dimStyle.Render(fmt.Sprintf("\n(In: %d | Out: %d | Total: %d | %s)", 
-				msg.InputTokens, msg.OutputTokens, msg.InputTokens+msg.OutputTokens, 
+			stats = dimStyle.Render(fmt.Sprintf("\n(In: %d | Out: %d | Total: %d | %s)",
+				msg.InputTokens, msg.OutputTokens, msg.InputTokens+msg.OutputTokens,
 				msg.Duration.Round(time.Millisecond)))
 		}
 
@@ -511,7 +527,7 @@ func (m *AppModel) renderMessages() {
 			sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent, stats))
 		}
 	}
-	
+
 	// Append current stream if any
 	if m.currentStream != "" || m.currentThinking != "" {
 		mode := "Agent"
@@ -519,12 +535,12 @@ func (m *AppModel) renderMessages() {
 			mode = strings.ToUpper(string(m.supervisor.GetMode()))
 		}
 		prefix := agentStyle.Render(fmt.Sprintf("Smara [%s]:", mode))
-		
+
 		var thinkingContent string
 		if m.currentThinking != "" {
-			thinkingContent = thinkingStyle.Render("Thinking: " + m.currentThinking) + "\n"
+			thinkingContent = thinkingStyle.Render("Thinking: "+m.currentThinking) + "\n"
 		}
-		
+
 		var renderedContent string
 		if strings.Contains(m.currentStream, "```") || strings.Contains(m.currentStream, "package ") {
 			renderedContent = codingStyle.Render(m.currentStream)
@@ -533,7 +549,7 @@ func (m *AppModel) renderMessages() {
 		}
 		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, renderedContent))
 	}
-	
+
 	m.viewport.SetContent(sb.String())
 	m.viewport.GotoBottom()
 }
@@ -573,7 +589,7 @@ func (m AppModel) View() string {
 	if m.supervisor != nil {
 		mode = strings.ToUpper(string(m.supervisor.GetMode()))
 	}
-	
+
 	header := titleStyle.Render(fmt.Sprintf(" Smara CLI - Mode: %s ", mode))
 	if m.supervisor != nil {
 		provider, modelName := m.supervisor.GetModelInfo()
@@ -586,13 +602,13 @@ func (m AppModel) View() string {
 		}
 		header += " " + warnStyle.Render(fmt.Sprintf("%s %s", m.spinner.View(), status))
 	}
-	
+
 	// Confirmation UI
 	inputArea := ""
 	if m.awaitingConfirmation {
 		yaStyle := lipgloss.NewStyle().Padding(0, 1)
 		tidakStyle := lipgloss.NewStyle().Padding(0, 1)
-		
+
 		if m.confirmSelection == 0 {
 			yaStyle = yaStyle.Background(lipgloss.Color("#04B575")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
 			tidakStyle = tidakStyle.Foreground(lipgloss.Color("#767676"))
@@ -600,11 +616,11 @@ func (m AppModel) View() string {
 			yaStyle = yaStyle.Foreground(lipgloss.Color("#767676"))
 			tidakStyle = tidakStyle.Background(lipgloss.Color("#FF3366")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
 		}
-		
+
 		confirmPrompt := warnStyle.Render("➤ Lanjutkan eksekusi?")
-		inputArea = fmt.Sprintf("\n  %s\n  %s    %s\n  %s", 
-			confirmPrompt, 
-			yaStyle.Render("[ Ya ]"), 
+		inputArea = fmt.Sprintf("\n  %s\n  %s    %s\n  %s",
+			confirmPrompt,
+			yaStyle.Render("[ Ya ]"),
 			tidakStyle.Render("[ Tidak ]"),
 			dimStyle.Render("(Gunakan panah Kiri/Kanan dan tekan Enter)"),
 		)
@@ -624,7 +640,8 @@ func (m AppModel) View() string {
 // Programmatic message injection
 func InjectLog(role, content string) {
 	if globalProgram != nil {
-		globalProgram.Send(LogMsg{
+		// Send asynchronously to avoid deadlock when called from within Update()
+		go globalProgram.Send(LogMsg{
 			Message: ChatMessage{
 				Role:    role,
 				Content: content,
@@ -724,8 +741,8 @@ func GetGlobalProgram() *tea.Program {
 // NewProgram creates a new bubbletea program
 func NewProgram(m AppModel) *tea.Program {
 	// Use AltScreen so it feels like a full app
-	return tea.NewProgram(m, 
-		tea.WithAltScreen(), 
+	return tea.NewProgram(m,
+		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 	"github.com/gede-cahya/Smara-CLI/internal/platform"
 	"github.com/gede-cahya/Smara-CLI/internal/platform/discord"
 	"github.com/gede-cahya/Smara-CLI/internal/platform/telegram"
@@ -258,6 +260,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 		BurstSize:         5,
 	})
 	gateway.SetRateLimiter(rl)
+
+	// Set up metrics collector
+	smaraDir := filepath.Dir(cfg.DBPath)
+	metricsPath := filepath.Join(smaraDir, "metrics.json")
+	collector := metrics.NewCollector(metricsPath, providerCfg.Name, providerCfg.Model)
+
+	// Register platforms in metrics
+	for _, p := range enabledPlatforms {
+		collector.RegisterPlatform(p)
+	}
+
+	// Register MCP servers in metrics
+	mcpInfo := supervisor.GetMCPInfo()
+	for name, info := range mcpInfo {
+		collector.RegisterMCP(name, info.Connected, len(info.Tools))
+	}
+
+	gateway.SetMetrics(collector)
+	collector.Start(ctx, 2*time.Second)
+	ui.PrintSuccess("Metrics collector aktif → %s", metricsPath)
 
 	elapsed := time.Since(startTime)
 	ui.PrintInfo("Startup: %s", elapsed.Round(time.Millisecond))

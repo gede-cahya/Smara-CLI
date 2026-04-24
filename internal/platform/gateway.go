@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 )
 
 // maxMessageLength is the maximum length of a single message on most platforms.
@@ -23,6 +24,7 @@ type Gateway struct {
 	sessions    map[string]*PlatformSession // channelID → session
 	auth        *AuthManager
 	rateLimiter *RateLimiter
+	metrics     *metrics.MetricsCollector
 	mu          sync.RWMutex
 }
 
@@ -45,6 +47,11 @@ func (g *Gateway) SetAuth(auth *AuthManager) {
 // SetRateLimiter configures the rate limiter for the gateway.
 func (g *Gateway) SetRateLimiter(rl *RateLimiter) {
 	g.rateLimiter = rl
+}
+
+// SetMetrics configures the metrics collector for the gateway.
+func (g *Gateway) SetMetrics(mc *metrics.MetricsCollector) {
+	g.metrics = mc
 }
 
 // RegisterAdapter adds a platform adapter to the gateway.
@@ -135,12 +142,17 @@ func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error
 		return g.sendReply(ctx, msg, "⏳ Rate limit tercapai. Coba lagi dalam beberapa saat.")
 	}
 
-	// 3. Handle commands
+	// 3. Record incoming message metric
+	if g.metrics != nil {
+		g.metrics.RecordMessageIn(msg.Platform, msg.UserID, msg.Username)
+	}
+
+	// 4. Handle commands
 	if msg.IsCommand {
 		return g.handleCommand(ctx, msg)
 	}
 
-	// 4. Process as prompt
+	// 5. Process as prompt
 	return g.processPrompt(ctx, msg)
 }
 
@@ -251,9 +263,26 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	}
 
 	// Process via supervisor
+	startTime := time.Now()
 	result, err := g.supervisor.ProcessPrompt(ctx, msg.Content)
+	latencyMs := time.Since(startTime).Milliseconds()
+
 	if err != nil {
+		if g.metrics != nil {
+			g.metrics.RecordError(msg.Platform, err.Error())
+		}
 		return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
+	}
+
+	// Record metrics
+	if g.metrics != nil {
+		g.metrics.RecordMessageOut(msg.Platform)
+		g.metrics.RecordLatency(msg.Platform, latencyMs)
+		cost := metrics.EstimateCost(
+			g.supervisor.GetProviderName(), "",
+			int64(result.InputTokens), int64(result.OutputTokens),
+		)
+		g.metrics.RecordLLMUsage(result.InputTokens, result.OutputTokens, latencyMs, cost)
 	}
 
 	return g.sendReply(ctx, msg, result.Response)
