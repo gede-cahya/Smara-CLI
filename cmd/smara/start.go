@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	stdsync "sync"
 	"syscall"
@@ -17,9 +18,9 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/session"
 	"github.com/gede-cahya/Smara-CLI/internal/sync"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
-	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
 var (
@@ -310,7 +311,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	appModel := ui.InitialModel(supervisor, func(cmd string, args []string) {
 		handleCommand(cmd, args, supervisor, memStore, nil)
 	})
-	
+
 	// Setup callback for streaming
 	supervisor.SetCallback(agent.AgenticCallback{
 		OnStream: func(chunk string, isThinking bool) {
@@ -342,8 +343,18 @@ func runStart(cmd *cobra.Command, args []string) error {
 			})
 			return <-respCh
 		},
+		OnExplore: func(path string, _ string) {
+			p := ui.GetGlobalProgram()
+			if p == nil {
+				return
+			}
+			if results, err := ui.ExploreCodebase(path, 2); err == nil {
+				exploreOutput := ui.RenderExplore(results)
+				p.Send(ui.ExploreMsg{Path: path, Content: exploreOutput})
+			}
+		},
 	})
-	
+
 	// Pre-load chat history into the UI if there is an active session
 	if session := supervisor.GetCurrentSession(); session != nil && len(session.History) > 0 {
 		var hist []struct{ Role, Content string }
@@ -355,7 +366,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	p := ui.NewProgram(appModel)
 	ui.SetGlobalProgram(p)
-	
+
 	// Pass mainCtx to UI if needed, but Tea program manages its own lifecycle mostly.
 	if _, err := p.Run(); err != nil {
 		ui.PrintError("Error starting TUI: %v", err)
@@ -438,9 +449,41 @@ func handleCommand(cmd string, args []string, supervisor *agent.Supervisor, memS
 		// handled by app.go
 	case "session":
 		handleSessionCommand(args, supervisor)
+	case "explore":
+		handleExploreCommand(args)
 	default:
 		ui.PrintWarning("Perintah tidak dikenali: /%s", cmd)
 	}
+}
+
+func handleExploreCommand(args []string) {
+	path := "."
+	depth := 2
+
+	for _, arg := range args {
+		if arg == "--interactive" {
+			ui.PrintInfo("Meluncurkan explore interaktif...")
+			if err := ui.RunExploreInteractive(path, depth); err != nil {
+				ui.PrintError("Gagal membuka explore interaktif: %v", err)
+			}
+			return
+		}
+		if strings.HasPrefix(arg, "--depth=") {
+			d, err := strconv.Atoi(strings.TrimPrefix(arg, "--depth="))
+			if err == nil && d > 0 {
+				depth = d
+			}
+		} else if arg != "" && !strings.HasPrefix(arg, "-") {
+			path = arg
+		}
+	}
+
+	results, err := ui.ExploreCodebase(path, depth)
+	if err != nil {
+		ui.PrintError("Gagal mengeksplorasi codebase: %v", err)
+		return
+	}
+	ui.PrintInfo("Struktur direktori %s:\n%s", path, ui.RenderExplore(results))
 }
 
 func truncateStr(s string, maxLen int) string {
@@ -627,7 +670,7 @@ func handleModelCommand(args []string, supervisor *agent.Supervisor) {
 // loadProjectContext reads project files to provide initial context.
 func loadProjectContext() string {
 	var contextParts []string
-	
+
 	// Read README.md
 	if content, err := os.ReadFile("README.md"); err == nil {
 		contentStr := string(content)
@@ -636,7 +679,7 @@ func loadProjectContext() string {
 		}
 		contextParts = append(contextParts, "Isi README.md:\n```\n"+contentStr+"\n```")
 	}
-	
+
 	// Basic folder structure
 	if entries, err := os.ReadDir("."); err == nil {
 		var dirs, files []string
@@ -649,10 +692,10 @@ func loadProjectContext() string {
 		}
 		contextParts = append(contextParts, "Struktur root direktori proyek:\nFolder: "+strings.Join(dirs, ", ")+"\nFile: "+strings.Join(files, ", "))
 	}
-	
+
 	if len(contextParts) > 0 {
 		return "Kamu sedang berada dalam sebuah direktori proyek lokal. Berikut adalah informasi konteks dari proyek ini:\n\n" + strings.Join(contextParts, "\n\n")
 	}
-	
+
 	return ""
 }

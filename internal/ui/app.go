@@ -116,6 +116,7 @@ type AppModel struct {
 	// Streaming state
 	currentStream   string
 	currentThinking string
+	currentExplore  string
 
 	// Confirmation state
 	awaitingConfirmation bool
@@ -216,6 +217,11 @@ type StreamMsg struct {
 // LogMsg allows external systems to inject messages into the UI
 type LogMsg struct {
 	Message ChatMessage
+}
+
+type ExploreMsg struct {
+	Path    string
+	Content string
 }
 
 type ConfirmRequestMsg struct {
@@ -390,11 +396,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.renderMessages()
 
+	case ExploreMsg:
+		m.currentExplore = msg.Content
+		m.renderMessages()
+
 	case ProcessMsg:
 		m.processing = false
 		m.statusText = ""
 		m.currentStream = ""
 		m.currentThinking = ""
+		m.currentExplore = ""
 		if msg.Err != nil {
 			if msg.Err.Error() == "context canceled" {
 				// Already handled in KeyCtrlC
@@ -521,7 +532,7 @@ func (m *AppModel) renderMessages() {
 
 		var thoughtsContent string
 		if len(msg.Thoughts) > 0 {
-			thoughtsContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("Thought: ") + 
+			thoughtsContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("Thought: ") +
 				strings.Join(msg.Thoughts, "\n          ") + "\n"
 		}
 
@@ -546,7 +557,7 @@ func (m *AppModel) renderMessages() {
 	}
 
 	// Append current stream if any
-	if m.currentStream != "" || m.currentThinking != "" {
+	if m.currentStream != "" || m.currentThinking != "" || m.currentExplore != "" {
 		mode := "Agent"
 		if m.supervisor != nil {
 			mode = strings.ToUpper(string(m.supervisor.GetMode()))
@@ -564,7 +575,22 @@ func (m *AppModel) renderMessages() {
 		} else {
 			renderedContent = messageStyle.Render(m.currentStream)
 		}
-		sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, renderedContent))
+
+		if m.currentExplore != "" {
+			exploreLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render("Explore:")
+			exploreContent := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("#7D56F4")).
+				PaddingLeft(1).
+				MarginLeft(1).
+				Render(m.currentExplore)
+			sb.WriteString(fmt.Sprintf("%s %s\n%s\n%s %s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, exploreLabel, exploreContent))
+			if m.currentStream != "" {
+				sb.WriteString(fmt.Sprintf("%s\n", renderedContent))
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, renderedContent))
+		}
 	}
 
 	m.viewport.SetContent(sb.String())

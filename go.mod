@@ -15,6 +15,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	go.mau.fi/whatsmeow v0.0.0-20260421083005-5b8886176ff7
 	golang.org/x/term v0.42.0
+	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.49.1
 )
 
@@ -55,6 +56,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rs/zerolog v1.35.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sahilm/fuzzy v0.1.1 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -71,7 +73,6 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

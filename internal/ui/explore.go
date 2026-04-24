@@ -18,6 +18,21 @@ type ExploreResult struct {
 	Size     int64
 	Language string
 	Depth    int
+	Expanded bool
+}
+
+// PathNode represents a node in the tree with path-based lookup
+type PathNode struct {
+	Result   ExploreResult
+	Parent   *PathNode
+	Children []*PathNode
+}
+
+// ExploreTree wraps results with tree structure for interactive navigation
+type ExploreTree struct {
+	Root    *PathNode
+	Results []ExploreResult
+	NodeMap map[string]*PathNode
 }
 
 // ExploreCodebase walks a directory tree up to a given depth and returns results
@@ -104,6 +119,64 @@ func ExploreCodebase(root string, depth int) ([]ExploreResult, error) {
 	return results, nil
 }
 
+// BuildExploreTree builds a tree structure from flat results
+func BuildExploreTree(results []ExploreResult) *ExploreTree {
+	tree := &ExploreTree{
+		Results: results,
+		NodeMap: make(map[string]*PathNode),
+	}
+
+	if len(results) == 0 {
+		return tree
+	}
+
+	for _, r := range results {
+		node := &PathNode{Result: r}
+		tree.NodeMap[r.Path] = node
+	}
+
+	for _, r := range results {
+		node := tree.NodeMap[r.Path]
+		parentPath := filepath.Dir(r.Path)
+		if parentPath != "." && parentPath != "" {
+			if parent, ok := tree.NodeMap[parentPath]; ok {
+				node.Parent = parent
+				parent.Children = append(parent.Children, node)
+			}
+		} else {
+			tree.Root = node
+		}
+	}
+
+	return tree
+}
+
+// UpdateExpandState toggles expansion state for a path
+func UpdateExpandState(tree *ExploreTree, path string, expanded bool) {
+	if node, ok := tree.NodeMap[path]; ok {
+		node.Result.Expanded = expanded
+		tree.NodeMap[path] = node
+	}
+}
+
+// GetVisibleResults returns filtered results based on expansion state
+func GetVisibleResults(tree *ExploreTree) []ExploreResult {
+	var visible []ExploreResult
+	for _, r := range tree.Results {
+		if r.Depth == 0 {
+			visible = append(visible, r)
+			continue
+		}
+		parentPath := filepath.Dir(r.Path)
+		if parent, ok := tree.NodeMap[parentPath]; ok && parent.Result.Expanded {
+			visible = append(visible, r)
+		} else if parentPath == "." || parentPath == "" {
+			visible = append(visible, r)
+		}
+	}
+	return visible
+}
+
 // RenderExplore returns a tree-like string for the sidebar or chat
 func RenderExplore(results []ExploreResult) string {
 	if len(results) == 0 {
@@ -180,6 +253,39 @@ func detectLanguage(name string) string {
 		}
 		return "unknown"
 	}
+}
+
+// PreviewFile reads a file and returns preview content with syntax highlighting indicator
+func PreviewFile(path string, maxLines int) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("gagal membaca file: %w", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if maxLines <= 0 {
+		maxLines = 50
+	}
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+
+	var sb strings.Builder
+	lang := detectLanguage(path)
+	icon := getLanguageIcon(lang)
+
+	sb.WriteString(titleStyle.Render(fmt.Sprintf(" %s Preview: %s ", icon, filepath.Base(path))) + "\n\n")
+
+	for i, line := range lines {
+		sb.WriteString(fmt.Sprintf("%4d │ %s\n", i+1, line))
+	}
+
+	if len(strings.Split(string(data), "\n")) > maxLines {
+		sb.WriteString(dimStyle.Render(fmt.Sprintf("\n  ... (%d more lines)", len(strings.Split(string(data), "\n"))-maxLines)))
+	}
+
+	return sb.String(), nil
 }
 
 func getLanguageIcon(lang string) string {

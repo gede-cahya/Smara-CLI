@@ -1,6 +1,6 @@
 # Maintainer: Gede Cahya <cahya@smara.dev>
 pkgname=smara
-pkgver=1.8.5
+pkgver=1.8.6
 pkgrel=1
 pkgdesc="Autonomous Multi-Agent Terminal — Terminal pintar yang mengorkestrasi agen AI otonom dengan memori tim tersinkronisasi"
 arch=('x86_64' 'aarch64')

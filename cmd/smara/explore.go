@@ -19,10 +19,9 @@ var exploreCmd = &cobra.Command{
 
 		depth, _ := cmd.Flags().GetInt("depth")
 
-		// Jika flag --interactive ada, kita bisa buka TUI khusus (opsional nantinya)
 		interactive, _ := cmd.Flags().GetBool("interactive")
 		if interactive {
-			fmt.Println("Mode interaktif akan segera hadir. Menampilkan snapshot...")
+			return ui.RunExploreInteractive(path, depth)
 		}
 
 		results, err := ui.ExploreCodebase(path, depth)
