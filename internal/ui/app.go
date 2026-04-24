@@ -81,13 +81,15 @@ var globalProgram *tea.Program
 
 // ChatMessage represents a single message in the UI
 type ChatMessage struct {
-	Role         string // "System", "User", "Agent"
-	Content      string
-	Thinking     string
-	Time         time.Time
-	InputTokens  int
-	OutputTokens int
-	Duration     time.Duration
+	Role          string // "System", "User", "Agent"
+	Content       string
+	Thinking      string
+	Thoughts      []string
+	ToolsExecuted []string
+	Time          time.Time
+	InputTokens   int
+	OutputTokens  int
+	Duration      time.Duration
 }
 
 // Supervisor interface to avoid circular dependency
@@ -301,6 +303,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "rush":
 					nextMode = "plan"
 				case "plan":
+					nextMode = "test"
+				case "test":
 					nextMode = "ask"
 				default:
 					nextMode = "ask"
@@ -405,15 +409,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cleanResp = strings.TrimSpace(cleanResp)
 
 				if cleanResp != "" {
-					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 				} else if msg.Result.Thinking != "" {
-					m.addMessageFull("Agent", "", msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+					m.addMessageFull("Agent", "", msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 				}
 
 				m.awaitingConfirmation = true
 				m.confirmSelection = 0 // Default "Ya"
 			} else {
-				m.addMessageFull("Agent", msg.Result.Response, msg.Result.Thinking, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+				m.addMessageFull("Agent", msg.Result.Response, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
 			}
 		}
 
@@ -440,22 +444,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AppModel) addMessage(role, content string) {
-	m.addMessageFull(role, content, "", 0, 0, 0)
+	m.addMessageFull(role, content, "", nil, nil, 0, 0, 0)
 }
 
 func (m *AppModel) addMessageWithThinking(role, content, thinking string) {
-	m.addMessageFull(role, content, thinking, 0, 0, 0)
+	m.addMessageFull(role, content, thinking, nil, nil, 0, 0, 0)
 }
 
-func (m *AppModel) addMessageFull(role, content, thinking string, inTokens, outTokens int, duration time.Duration) {
+func (m *AppModel) addMessageFull(role, content, thinking string, thoughts, tools []string, inTokens, outTokens int, duration time.Duration) {
 	m.messages = append(m.messages, ChatMessage{
-		Role:         role,
-		Content:      content,
-		Thinking:     thinking,
-		Time:         time.Now(),
-		InputTokens:  inTokens,
-		OutputTokens: outTokens,
-		Duration:     duration,
+		Role:          role,
+		Content:       content,
+		Thinking:      thinking,
+		Thoughts:      thoughts,
+		ToolsExecuted: tools,
+		Time:          time.Now(),
+		InputTokens:   inTokens,
+		OutputTokens:  outTokens,
+		Duration:      duration,
 	})
 	m.renderMessages()
 }
@@ -513,6 +519,17 @@ func (m *AppModel) renderMessages() {
 			thinkingContent = thinkingStyle.Render("Thinking: "+msg.Thinking) + "\n"
 		}
 
+		var thoughtsContent string
+		if len(msg.Thoughts) > 0 {
+			thoughtsContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("Thought: ") + 
+				strings.Join(msg.Thoughts, "\n          ") + "\n"
+		}
+
+		var workedContent string
+		if len(msg.ToolsExecuted) > 0 {
+			workedContent = dimStyle.Render("Worked: ") + infoStyle.Render(strings.Join(msg.ToolsExecuted, ", ")) + "\n"
+		}
+
 		stats := ""
 		if msg.Role == "Agent" && msg.InputTokens > 0 {
 			stats = dimStyle.Render(fmt.Sprintf("\n(In: %d | Out: %d | Total: %d | %s)",
@@ -524,7 +541,7 @@ func (m *AppModel) renderMessages() {
 		if msg.Role == "Terminal" {
 			sb.WriteString(fmt.Sprintf("%s %s %s\n\n", timeStr, prefix, renderedContent))
 		} else {
-			sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s\n\n", timeStr, prefix, thinkingContent, renderedContent, stats))
+			sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s%s%s\n\n", timeStr, prefix, thinkingContent, thoughtsContent, workedContent, renderedContent, stats))
 		}
 	}
 

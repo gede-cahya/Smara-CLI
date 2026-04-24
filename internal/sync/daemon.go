@@ -149,7 +149,9 @@ func (d *Daemon) importDeltas() {
 			if tags == "" {
 				tags = "synced"
 			}
-			d.memStore.Save(de.Content, tags, "sync:"+delta.Source, nil)
+			// Defaulting to 0 (default workspace) for imported memories if not specified in delta
+			// In a more advanced version, we might want to preserve workspace info in the delta
+			d.memStore.Save(de.Content, tags, "sync:"+delta.Source, 0, nil)
 		}
 
 		// Move processed file to done directory

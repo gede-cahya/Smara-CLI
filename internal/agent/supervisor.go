@@ -39,12 +39,14 @@ type Stats struct {
 
 // PromptResult contains the result and statistics of a prompt processing.
 type PromptResult struct {
-	Response     string
-	Thinking     string
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
-	Duration     time.Duration
+	Response      string
+	Thinking      string   // The <thinking> block content
+	Thoughts      []string // Intermediate reasoning text
+	ToolsExecuted []string // List of tools run during this prompt
+	InputTokens   int
+	OutputTokens  int
+	TotalTokens   int
+	Duration      time.Duration
 }
 
 // AgenticCallback defines callbacks for agentic loop events.
@@ -77,6 +79,7 @@ type Supervisor struct {
 	history         []llm.Message // conversation history for context
 	callback        AgenticCallback
 	autoDiscovered  bool
+	workspaceID     int64 // active workspace ID
 	stats           Stats // usage statistics
 }
 
@@ -136,7 +139,17 @@ func (s *Supervisor) updateStats(tokens int, cost float64, duration time.Duratio
 // SetMode changes the agent's operating mode.
 func (s *Supervisor) SetMode(mode Mode) {
 	s.mode = mode
-	s.history = make([]llm.Message, 0)
+	// History is now preserved across mode changes to maintain conversation context
+}
+
+// SetWorkspaceID sets the active workspace for this supervisor.
+func (s *Supervisor) SetWorkspaceID(id int64) {
+	s.workspaceID = id
+}
+
+// GetWorkspaceID returns the active workspace ID.
+func (s *Supervisor) GetWorkspaceID() int64 {
+	return s.workspaceID
 }
 
 // SetModel switches the LLM model/provider at runtime.
@@ -154,7 +167,7 @@ func (s *Supervisor) SetModel(provider, model string) error {
 	}
 
 	s.provider = newProvider
-	s.history = make([]llm.Message, 0)
+	// We don't wipe history here anymore to maintain session context across model switches
 	return nil
 }
 
@@ -444,7 +457,17 @@ func (s *Supervisor) CreateSession(cfg SessionConfig) (*Session, error) {
 
 // SwitchSession switches to a different session by ID.
 func (s *Supervisor) SwitchSession(id string) error {
-	return s.sessionRegistry.Switch(id)
+	if err := s.sessionRegistry.Switch(id); err != nil {
+		return err
+	}
+	// Sync history from session to supervisor internal history
+	if sess := s.sessionRegistry.Current(); sess != nil {
+		s.mu.Lock()
+		s.history = make([]llm.Message, len(sess.History))
+		copy(s.history, sess.History)
+		s.mu.Unlock()
+	}
+	return nil
 }
 
 // GetSession retrieves a session by ID.
@@ -468,7 +491,7 @@ func (s *Supervisor) InitializeSessions() error {
 		return nil
 	}
 
-	sessions, err := s.sessionStore.ListSessions()
+	sessions, err := s.sessionStore.ListSessionsByWorkspace(s.workspaceID)
 	if err != nil {
 		return err
 	}
@@ -486,9 +509,9 @@ func (s *Supervisor) GetLastActiveSession() (*Session, error) {
 		return nil, nil
 	}
 
-	// Just use store helper (needs to be added to session.Store interface if used here)
+	// Just use store helper
 	if store, ok := s.sessionStore.(*session.SQLiteStore); ok {
-		return store.GetLastActiveSession()
+		return store.GetLastActiveSessionByWorkspace(s.workspaceID)
 	}
 	return nil, nil
 }
@@ -529,7 +552,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	if s.memStore != nil {
 		embedding, err := s.provider.GenerateEmbedding(userPrompt)
 		if err == nil && len(embedding) > 0 {
-			results, err := s.memStore.Search(embedding, 3)
+			results, err := s.memStore.Search(embedding, s.workspaceID, 3)
 			if err == nil && len(results) > 0 {
 				var parts []string
 				for _, r := range results {
@@ -548,26 +571,24 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		},
 	}
 
-	// Add MCP tools context (only relevant for rush and plan modes)
-	if s.mode == ModeRush || s.mode == ModePlan {
-		mcpInfo := s.GetMCPInfo()
-		if len(mcpInfo) > 0 {
-			var toolDescs []string
-			for serverName, info := range mcpInfo {
-				if !info.Connected {
-					continue
-				}
-				for _, tool := range info.Tools {
-					toolDescs = append(toolDescs, fmt.Sprintf("- [%s] %s: %s", serverName, tool.Name, tool.Description))
-				}
+	// Add MCP tools context (now added to all modes if tools are available)
+	mcpInfo := s.GetMCPInfo()
+	if len(mcpInfo) > 0 {
+		var toolDescs []string
+		for serverName, info := range mcpInfo {
+			if !info.Connected {
+				continue
 			}
-			if len(toolDescs) > 0 {
-				toolsDesc := "MCP Tools yang tersedia:\n" + strings.Join(toolDescs, "\n")
-				messages = append(messages, llm.Message{
-					Role:    llm.RoleSystem,
-					Content: toolsDesc,
-				})
+			for _, tool := range info.Tools {
+				toolDescs = append(toolDescs, fmt.Sprintf("- [%s] %s: %s", serverName, tool.Name, tool.Description))
 			}
+		}
+		if len(toolDescs) > 0 {
+			toolsDesc := "Tools yang tersedia (gunakan via function calling):\n" + strings.Join(toolDescs, "\n")
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleSystem,
+				Content: toolsDesc,
+			})
 		}
 	}
 
@@ -596,13 +617,27 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	var finalResp string
 	var finalThinking string
 
-	if s.mode == ModeRush || s.mode == ModePlan {
-		resp, thinking, err := s.RunAgenticLoop(ctx, userPrompt)
+	// Use agentic loop if tools are available, regardless of mode (with different behavior)
+	tools := s.ConvertMCPToolsToToolFunctions()
+
+	if len(tools) > 0 {
+		resp, thinking, thoughts, executed, err := s.RunAgenticLoop(ctx, userPrompt)
 		if err != nil {
 			return nil, err
 		}
+		
 		finalResp = resp
 		finalThinking = thinking
+		return &PromptResult{
+			Response:      finalResp,
+			Thinking:      finalThinking,
+			Thoughts:      thoughts,
+			ToolsExecuted: executed,
+			InputTokens:   s.stats.InputTokens,
+			OutputTokens:  s.stats.OutputTokens,
+			TotalTokens:   s.stats.InputTokens + s.stats.OutputTokens,
+			Duration:      time.Since(startTime),
+		}, nil
 	} else {
 		var resp *llm.ChatResponse
 		var err error
@@ -662,7 +697,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		tag := fmt.Sprintf("mode:%s", s.mode)
 		content := fmt.Sprintf("Q: %s\nA: %s", userPrompt, truncate(finalResp, 500))
 		embedding, _ := s.provider.GenerateEmbedding(content)
-		s.memStore.Save(content, tag, "supervisor", embedding)
+		s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
 	}
 
 	return result, nil
@@ -677,7 +712,7 @@ func (s *Supervisor) GetModelInfo() (string, string) {
 
 // RunAgenticLoop executes the agentic loop: LLM → tool calls → execute → feed back → repeat.
 // Returns the final text response when the LLM stops calling tools.
-func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (string, string, error) {
+func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (string, string, []string, []string, error) {
 	modeInfo := GetModeInfo(s.mode)
 
 	// 1. Search memory for relevant context
@@ -685,7 +720,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	if s.memStore != nil {
 		embedding, err := s.provider.GenerateEmbedding(userPrompt)
 		if err == nil && len(embedding) > 0 {
-			results, err := s.memStore.Search(embedding, 3)
+			results, err := s.memStore.Search(embedding, s.workspaceID, 3)
 			if err == nil && len(results) > 0 {
 				var parts []string
 				for _, r := range results {
@@ -705,25 +740,23 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	}
 
 	// Add MCP tools context
-	if s.mode == ModeRush || s.mode == ModePlan {
-		mcpInfo := s.GetMCPInfo()
-		if len(mcpInfo) > 0 {
-			var toolDescs []string
-			for serverName, info := range mcpInfo {
-				if !info.Connected {
-					continue
-				}
-				for _, tool := range info.Tools {
-					toolDescs = append(toolDescs, fmt.Sprintf("- [%s] %s: %s", serverName, tool.Name, tool.Description))
-				}
+	mcpInfo := s.GetMCPInfo()
+	if len(mcpInfo) > 0 {
+		var toolDescs []string
+		for serverName, info := range mcpInfo {
+			if !info.Connected {
+				continue
 			}
-			if len(toolDescs) > 0 {
-				toolsDesc := "MCP Tools yang tersedia:\n" + strings.Join(toolDescs, "\n")
-				messages = append(messages, llm.Message{
-					Role:    llm.RoleSystem,
-					Content: toolsDesc,
-				})
+			for _, tool := range info.Tools {
+				toolDescs = append(toolDescs, fmt.Sprintf("- [%s] %s: %s", serverName, tool.Name, tool.Description))
 			}
+		}
+		if len(toolDescs) > 0 {
+			toolsDesc := "Tools yang tersedia (gunakan via function calling):\n" + strings.Join(toolDescs, "\n")
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleSystem,
+				Content: toolsDesc,
+			})
 		}
 	}
 
@@ -752,6 +785,8 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	tools := s.ConvertMCPToolsToToolFunctions()
 
 	var allThinking []string
+	var toolsExecuted []string
+	var thoughts []string
 
 	// 4. Agentic loop
 	for iteration := 0; iteration < s.maxIterations; iteration++ {
@@ -780,7 +815,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		}
 
 		if err != nil {
-			return "", "", fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+			return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
 		}
 
 		// Accumulate thinking
@@ -788,7 +823,6 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			allThinking = append(allThinking, resp.Thinking)
 		}
 
-		// Check if LLM wants to call tools
 		if len(toolCalls) == 0 {
 			// No tool calls — LLM gave final answer
 			// Update history and save to memory
@@ -809,10 +843,21 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				tag := fmt.Sprintf("mode:%s", s.mode)
 				content := fmt.Sprintf("Q: %s\nA: %s", userPrompt, truncate(resp.Content, 500))
 				embedding, _ := s.provider.GenerateEmbedding(content)
-				s.memStore.Save(content, tag, "supervisor", embedding)
+				s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
 			}
 
-			return resp.Content, strings.Join(allThinking, "\n\n"), nil
+			return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+		}
+
+		// If we are here, LLM wants to call tools
+		// Capture this intermediate content as a "Thought"
+		if resp.Content != "" {
+			thoughts = append(thoughts, resp.Content)
+		}
+
+		// Update toolsExecuted list
+		for _, tc := range toolCalls {
+			toolsExecuted = append(toolsExecuted, tc.Function)
 		}
 
 		// LLM requested tool calls — execute them
@@ -867,7 +912,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 	resp, err := s.provider.Chat(messages)
 	if err != nil {
-		return "", "", fmt.Errorf("gagal mendapatkan response final: %w", err)
+		return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response final: %w", err)
 	}
 
 	s.history = append(s.history,
@@ -875,7 +920,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
 	)
 
-	return resp.Content, strings.Join(allThinking, "\n\n"), nil
+	return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 }
 
 // SetMaxIterations sets the maximum number of agentic loop iterations.

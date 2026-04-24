@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smara AI - Desktop Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body data-theme="dark">
+  
+  <aside class="sidebar">
+    <div class="logo">
+      <i class="fas fa-atom"></i>
+      <span>Smara</span>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-title">Workspaces</div>
+      <div class="nav-item active staggered-item" style="animation-delay: 0.1s">
+        <i class="fas fa-folder-open" style="margin-right: 12px"></i>
+        Smara CLI Core
+      </div>
+      <div class="nav-item staggered-item" style="animation-delay: 0.2s">
+        <i class="fas fa-microchip" style="margin-right: 12px"></i>
+        Agent Testing
+      </div>
+      <div class="nav-item staggered-item" style="animation-delay: 0.3s">
+        <i class="fas fa-plus-circle" style="margin-right: 12px; opacity: 0.6"></i>
+        New Workspace
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-title">Session History</div>
+      <div class="nav-item staggered-item" style="animation-delay: 0.4s">Implement Workspace...</div>
+      <div class="nav-item staggered-item" style="animation-delay: 0.5s">Debug LLM Provider</div>
+      <div class="nav-item staggered-item" style="animation-delay: 0.6s">Refactor TUI Layout</div>
+    </div>
+
+    <div style="margin-top: auto;">
+      <div class="nav-item">
+        <i class="fas fa-cog" style="margin-right: 12px"></i>
+        Settings
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <header class="header glass">
+      <div style="display: flex; align-items: center; gap: 12px">
+        <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--accent-gradient); display: flex; align-items: center; justify-content: center; color: white">
+          <i class="fas fa-terminal"></i>
+        </div>
+        <div>
+          <div style="font-weight: 600; font-size: 14px">Smara CLI Core</div>
+          <div style="font-size: 11px; color: var(--text-secondary)">Mode: Rush Agent</div>
+        </div>
+      </div>
+      
+      <div style="display: flex; gap: 16px; align-items: center">
+        <button class="theme-toggle" id="theme-toggle">
+          <i class="fas fa-sun"></i>
+        </button>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary)">
+          <i class="fas fa-circle" style="color: #22c55e; font-size: 8px"></i>
+          Model: Minimax-auto
+        </div>
+      </div>
+    </header>
+
+    <div class="chat-container" id="chat-container">
+      <div class="message ai">
+        Halo! Saya Smara. Ada yang bisa saya bantu dengan proyek <strong>Smara CLI Core</strong> hari ini?
+      </div>
+      
+      <div class="message user">
+        Bisa tolong buatkan implementasi workspace isolation untuk memory store?
+      </div>
+
+      <div class="message ai">
+        Tentu! Saya akan memperbarui skema SQLite dan menyisipkan <code>workspace_id</code> ke setiap query memori. Saya juga akan membuat perintah CLI baru untuk manajemen workspace.
+      </div>
+
+      <!-- Thinking Placeholder -->
+      <div class="message ai" style="display: flex; align-items: center; gap: 8px; font-style: italic; opacity: 0.7" id="thinking-bubble">
+        <div class="pulse-animation"></div>
+        <span>Thinking...</span>
+      </div>
+    </div>
+
+    <div class="input-area glass">
+      <div class="input-wrapper">
+        <input type="text" placeholder="Ketik perintah atau tanya apapun..." id="chat-input">
+        <div style="position: absolute; right: 20px; display: flex; gap: 12px; color: var(--text-secondary)">
+          <i class="fas fa-paperclip cursor-pointer"></i>
+          <i class="fas fa-microphone cursor-pointer"></i>
+        </div>
+      </div>
+      <button class="send-btn">
+        <i class="fas fa-paper-plane"></i>
+      </button>
+    </div>
+  </main>
+
+  <style>
+    /* Pulse animation for thinking */
+    .pulse-animation {
+      width: 8px;
+      height: 8px;
+      background-color: var(--accent-color);
+      border-radius: 50%;
+      animation: pulse 1.5s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.8); opacity: 0.5; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+      70% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+      100% { transform: scale(0.8); opacity: 0.5; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+  </style>
+
+  <script src="app.js"></script>
+</body>
+</html>

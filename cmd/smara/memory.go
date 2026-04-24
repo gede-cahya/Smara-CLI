@@ -29,7 +29,8 @@ var memoryListCmd = &cobra.Command{
 		defer store.Close()
 
 		limit, _ := cmd.Flags().GetInt("limit")
-		memories, err := store.List(limit)
+		wsID := cfg.ActiveWorkspaceID
+		memories, err := store.List(wsID, limit)
 		if err != nil {
 			return fmt.Errorf("gagal membaca memori: %w", err)
 		}
@@ -98,7 +99,8 @@ var memorySearchCmd = &cobra.Command{
 		}
 
 		limit, _ := cmd.Flags().GetInt("limit")
-		results, err := store.Search(embedding, limit)
+		wsID := cfg.ActiveWorkspaceID
+		results, err := store.Search(embedding, wsID, limit)
 		if err != nil {
 			return fmt.Errorf("gagal mencari memori: %w", err)
 		}

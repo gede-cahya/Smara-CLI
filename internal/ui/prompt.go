@@ -40,6 +40,7 @@ var ModeColors = map[string]string{
 	"ask":  Cyan,
 	"rush": Yellow,
 	"plan": Magenta,
+	"test": Green,
 }
 
 // Mode emojis
@@ -47,10 +48,11 @@ var ModeEmojis = map[string]string{
 	"ask":  "💬",
 	"rush": "⚡",
 	"plan": "📋",
+	"test": "🧪",
 }
 
 // ModeOrder defines the cycle order for Tab key
-var ModeOrder = []string{"ask", "rush", "plan"}
+var ModeOrder = []string{"ask", "rush", "plan", "test"}
 
 // Prompt manages the interactive REPL loop with raw terminal input.
 type Prompt struct {
@@ -485,7 +487,7 @@ func PrintHelp() {
 	fmt.Println()
 	fmt.Print("  " + Bold + White + "Perintah tersedia:" + Reset + "\n")
 	fmt.Print("  " + Yellow + "[Tab]" + Reset + "              — Ganti mode agen (cycle: ask → rush → plan)\n")
-	fmt.Print("  " + Yellow + "/mode [ask|rush|plan]" + Reset + " — Ganti mode agen\n")
+	fmt.Print("  " + Yellow + "/mode [ask|rush|plan|test]" + Reset + " — Ganti mode agen\n")
 	fmt.Print("  " + Yellow + "/model [provider] [model]" + Reset + " — Ganti LLM provider/model\n")
 	fmt.Print("  " + Yellow + "/help" + Reset + "              — Tampilkan bantuan ini\n")
 	fmt.Print("  " + Yellow + "/memory" + Reset + "            — Lihat memori tersimpan\n")
@@ -498,6 +500,7 @@ func PrintHelp() {
 	fmt.Print("  " + Cyan + "💬 ask" + Reset + "   — Tanya-jawab langsung\n")
 	fmt.Print("  " + Yellow + "⚡ rush" + Reset + "  — Eksekusi cepat, langsung bertindak\n")
 	fmt.Print("  " + Magenta + "📋 plan" + Reset + "  — Buat rencana dulu, lalu eksekusi\n")
+	fmt.Print("  " + Green + "🧪 test" + Reset + "  — Fokus pada verifikasi dan testing\n")
 	fmt.Println()
 }
 
@@ -559,7 +562,7 @@ func PrintStatusBar(mode string, promptCount int, totalTokens int) {
 func PrintKeyboardShortcuts() {
 	fmt.Println()
 	fmt.Print("  " + Bold + Yellow + "⌨️ Keyboard Shortcuts:" + Reset + "\n")
-	fmt.Print("  " + Yellow + "[Tab]" + Reset + "        — Cycle mode (ask → rush → plan)\n")
+	fmt.Print("  " + Yellow + "[Tab]" + Reset + "        — Cycle mode (ask → rush → plan → test)\n")
 	fmt.Print("  " + Yellow + "[↑/↓]" + Reset + "       — Command history\n")
 	fmt.Print("  " + Yellow + "[Ctrl+U]" + Reset + "     — Clear current line\n")
 	fmt.Print("  " + Yellow + "[Ctrl+W]" + Reset + "     — Delete last word\n")

@@ -10,11 +10,20 @@ import (
 
 // Memory represents a single piece of stored knowledge.
 type Memory struct {
+	ID          int64     `json:"id"`
+	WorkspaceID int64     `json:"workspace_id"`
+	Content     string    `json:"content"`
+	Embedding   []float32 `json:"-"` // stored as BLOB
+	Tags        string    `json:"tags"`
+	Source      string    `json:"source"` // e.g., "agent:worker-1", "user", "sync"
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Workspace represents a project-specific container.
+type Workspace struct {
 	ID        int64     `json:"id"`
-	Content   string    `json:"content"`
-	Embedding []float32 `json:"-"` // stored as BLOB
-	Tags      string    `json:"tags"`
-	Source    string    `json:"source"` // e.g., "agent:worker-1", "user", "sync"
+	Name      string    `json:"name"`
+	Path      string    `json:"path"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -61,13 +70,20 @@ type MemoryStore interface {
 	Init() error
 
 	// Save stores a new memory entry.
-	Save(content, tags, source string, embedding []float32) (*Memory, error)
+	Save(content, tags, source string, workspaceID int64, embedding []float32) (*Memory, error)
 
-	// Search finds memories similar to the given embedding.
-	Search(embedding []float32, topK int) ([]SearchResult, error)
+	// Search finds memories similar to the given embedding within a workspace.
+	Search(embedding []float32, workspaceID int64, topK int) ([]SearchResult, error)
 
-	// List returns recent memories.
-	List(limit int) ([]Memory, error)
+	// List returns recent memories for a workspace.
+	List(workspaceID int64, limit int) ([]Memory, error)
+
+	// Workspace Operations
+	CreateWorkspace(name, path string) (*Workspace, error)
+	GetWorkspace(id int64) (*Workspace, error)
+	GetWorkspaceByName(name string) (*Workspace, error)
+	ListWorkspaces() ([]Workspace, error)
+	DeleteWorkspace(id int64) error
 
 	// Delete removes a memory by ID.
 	Delete(id int64) error

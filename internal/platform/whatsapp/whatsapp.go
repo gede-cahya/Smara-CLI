@@ -86,7 +86,7 @@ func (a *Adapter) Connect(ctx context.Context, cfg platform.AdapterConfig) error
 				fmt.Println("\n📸 SCAN QR CODE UNTUK LOGIN WHATSAPP:")
 				qr, _ := qrcode.New(evt.Code, qrcode.Medium)
 				fmt.Println(qr.ToSmallString(false))
-				fmt.Println("Gunakan aplikasi WhatsApp di HP Anda: Settings > Linked Devices > Link a Device\n")
+				fmt.Println("Gunakan aplikasi WhatsApp di HP Anda: Settings > Linked Devices > Link a Device")
 			} else {
 				log.Printf("[whatsapp] QR Channel event: %s", evt.Event)
 			}

@@ -38,60 +38,100 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 
 // Init creates the database schema if it doesn't exist.
 func (s *SQLiteStore) Init() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS memories (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		content TEXT NOT NULL,
-		embedding BLOB,
-		tags TEXT DEFAULT '',
-		source TEXT DEFAULT '',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE IF NOT EXISTS sync_log (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		memory_id INTEGER NOT NULL,
-		delta_hash TEXT NOT NULL,
-		status TEXT DEFAULT 'pending',
-		synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
-	);
-
-	CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		name TEXT DEFAULT '',
-		state TEXT DEFAULT 'active',
-		mode TEXT DEFAULT 'ask',
-		mcp_servers TEXT DEFAULT '[]',
-		history TEXT DEFAULT '[]',
-		tasks TEXT DEFAULT '[]',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
-	CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
-	CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_log(status);
-	CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
-	`
-
-	_, err := s.db.Exec(schema)
-	if err != nil {
-		return fmt.Errorf("gagal membuat schema: %w", err)
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS workspaces (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			path TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS memories (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			content TEXT NOT NULL,
+			embedding BLOB,
+			tags TEXT DEFAULT '',
+			source TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS sync_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			memory_id INTEGER NOT NULL,
+			delta_hash TEXT NOT NULL,
+			status TEXT DEFAULT 'pending',
+			synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			name TEXT DEFAULT '',
+			state TEXT DEFAULT 'active',
+			mode TEXT DEFAULT 'ask',
+			mcp_servers TEXT DEFAULT '[]',
+			history TEXT DEFAULT '[]',
+			tasks TEXT DEFAULT '[]',
+			memory_ids TEXT DEFAULT '[]',
+			context TEXT DEFAULT '',
+			is_agentic INTEGER DEFAULT 0,
+			auto_resume INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags)`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_log(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)`,
 	}
+
+	for _, stmt := range statements {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("gagal eksekusi schema statement: %w", err)
+		}
+	}
+
+	// Migrasi: Tambahkan kolom workspace_id jika belum ada
+	if err := s.migrate(); err != nil {
+		return fmt.Errorf("gagal migrasi database: %w", err)
+	}
+
 	return nil
 }
 
-// Save stores a new memory with optional embedding.
-func (s *SQLiteStore) Save(content, tags, source string, embedding []float32) (*Memory, error) {
+func (s *SQLiteStore) migrate() error {
+	// 1. Cek tabel memories
+	var count int
+	err := s.db.QueryRow("SELECT count(*) FROM pragma_table_info('memories') WHERE name='workspace_id'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = s.db.Exec("ALTER TABLE memories ADD COLUMN workspace_id INTEGER DEFAULT 0")
+	}
+
+	// 2. Cek tabel sessions
+	err = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('sessions') WHERE name='workspace_id'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN workspace_id INTEGER DEFAULT 0")
+	}
+
+	// 3. Tambahkan index yang tergantung pada workspace_id
+	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id)")
+	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id)")
+
+	return nil
+}
+
+// Save stores a new memory with optional embedding and workspace scoping.
+func (s *SQLiteStore) Save(content, tags, source string, workspaceID int64, embedding []float32) (*Memory, error) {
 	var embBlob []byte
 	if len(embedding) > 0 {
 		embBlob = float32ToBytes(embedding)
 	}
 
+	var wID interface{} = workspaceID
+	if workspaceID <= 0 {
+		wID = nil
+	}
+
 	result, err := s.db.Exec(
-		"INSERT INTO memories (content, embedding, tags, source) VALUES (?, ?, ?, ?)",
-		content, embBlob, tags, source,
+		"INSERT INTO memories (content, embedding, tags, source, workspace_id) VALUES (?, ?, ?, ?, ?)",
+		content, embBlob, tags, source, wID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gagal menyimpan memory: %w", err)
@@ -99,24 +139,25 @@ func (s *SQLiteStore) Save(content, tags, source string, embedding []float32) (*
 
 	id, _ := result.LastInsertId()
 	return &Memory{
-		ID:        id,
-		Content:   content,
-		Embedding: embedding,
-		Tags:      tags,
-		Source:    source,
-		CreatedAt: time.Now(),
+		ID:          id,
+		WorkspaceID: workspaceID,
+		Content:     content,
+		Embedding:   embedding,
+		Tags:        tags,
+		Source:      source,
+		CreatedAt:   time.Now(),
 	}, nil
 }
 
-// List returns the most recent memories.
-func (s *SQLiteStore) List(limit int) ([]Memory, error) {
+// List returns the most recent memories for a specific workspace.
+func (s *SQLiteStore) List(workspaceID int64, limit int) ([]Memory, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 
 	rows, err := s.db.Query(
-		"SELECT id, content, tags, source, created_at FROM memories ORDER BY created_at DESC LIMIT ?",
-		limit,
+		"SELECT id, workspace_id, content, tags, source, created_at FROM memories WHERE workspace_id = ? OR workspace_id IS NULL ORDER BY created_at DESC LIMIT ?",
+		workspaceID, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gagal query memories: %w", err)
@@ -126,7 +167,7 @@ func (s *SQLiteStore) List(limit int) ([]Memory, error) {
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Tags, &m.Source, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &m.Tags, &m.Source, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("gagal scan memory: %w", err)
 		}
 		memories = append(memories, m)
@@ -192,10 +233,15 @@ func (s *SQLiteStore) CreateSession(session *session.Session) error {
 	historyJSON, _ := json.Marshal(session.History)
 	tasksJSON, _ := json.Marshal(session.Tasks)
 
+	var wID interface{} = session.WorkspaceID
+	if session.WorkspaceID <= 0 {
+		wID = nil
+	}
+
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.Name, string(session.State), string(session.Mode),
+		`INSERT INTO sessions (id, workspace_id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, wID, session.Name, string(session.State), string(session.Mode),
 		string(mcpServersJSON), string(historyJSON), string(tasksJSON),
 		session.CreatedAt, session.UpdatedAt,
 	)
@@ -205,14 +251,14 @@ func (s *SQLiteStore) CreateSession(session *session.Session) error {
 // GetSession retrieves a session by ID.
 func (s *SQLiteStore) GetSession(id string) (*session.Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
+		`SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
 		 FROM sessions WHERE id = ?`, id,
 	)
 
 	var sess session.Session
 	var mcpServersJSON, historyJSON, tasksJSON string
 
-	err := row.Scan(&sess.ID, &sess.Name, &sess.State, &sess.Mode,
+	err := row.Scan(&sess.ID, &sess.WorkspaceID, &sess.Name, &sess.State, &sess.Mode,
 		&mcpServersJSON, &historyJSON, &tasksJSON, &sess.CreatedAt, &sess.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -256,11 +302,12 @@ func (s *SQLiteStore) DeleteSession(id string) error {
 	return err
 }
 
-// ListSessions returns all sessions ordered by updated_at DESC.
-func (s *SQLiteStore) ListSessions() ([]session.Session, error) {
+// ListSessions returns all sessions for a workspace ordered by updated_at DESC.
+func (s *SQLiteStore) ListSessions(workspaceID int64) ([]session.Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
-		 FROM sessions ORDER BY updated_at DESC`,
+		`SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
+		 FROM sessions WHERE workspace_id = ? OR workspace_id IS NULL ORDER BY updated_at DESC`,
+		workspaceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gagal query sessions: %w", err)
@@ -272,7 +319,7 @@ func (s *SQLiteStore) ListSessions() ([]session.Session, error) {
 		var session session.Session
 		var mcpServersJSON, historyJSON, tasksJSON string
 
-		if err := rows.Scan(&session.ID, &session.Name, &session.State, &session.Mode,
+		if err := rows.Scan(&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
 			&mcpServersJSON, &historyJSON, &tasksJSON, &session.CreatedAt, &session.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("gagal scan session: %w", err)
 		}
@@ -287,10 +334,111 @@ func (s *SQLiteStore) ListSessions() ([]session.Session, error) {
 	return sessions, nil
 }
 
+// GetLastActiveSession returns the most recently updated session for a workspace.
+func (s *SQLiteStore) GetLastActiveSession(workspaceID int64) (*session.Session, error) {
+	row := s.db.QueryRow(
+		`SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, created_at, updated_at
+		 FROM sessions WHERE workspace_id = ? OR workspace_id IS NULL ORDER BY updated_at DESC LIMIT 1`,
+		workspaceID,
+	)
+
+	var sess session.Session
+	var mcpServersJSON, historyJSON, tasksJSON string
+
+	err := row.Scan(&sess.ID, &sess.WorkspaceID, &sess.Name, &sess.State, &sess.Mode,
+		&mcpServersJSON, &historyJSON, &tasksJSON, &sess.CreatedAt, &sess.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	json.Unmarshal([]byte(mcpServersJSON), &sess.MCPServers)
+	json.Unmarshal([]byte(historyJSON), &sess.History)
+	json.Unmarshal([]byte(tasksJSON), &sess.Tasks)
+
+	return &sess, nil
+}
+
+// --- Workspace Operations ---
+
+// CreateWorkspace creates a new workspace.
+func (s *SQLiteStore) CreateWorkspace(name, path string) (*Workspace, error) {
+	result, err := s.db.Exec(
+		"INSERT INTO workspaces (name, path) VALUES (?, ?)",
+		name, path,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gagal membuat workspace: %w", err)
+	}
+
+	id, _ := result.LastInsertId()
+	return &Workspace{
+		ID:        id,
+		Name:      name,
+		Path:      path,
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+// GetWorkspace retrieves a workspace by ID.
+func (s *SQLiteStore) GetWorkspace(id int64) (*Workspace, error) {
+	var w Workspace
+	err := s.db.QueryRow("SELECT id, name, path, created_at FROM workspaces WHERE id = ?", id).
+		Scan(&w.ID, &w.Name, &w.Path, &w.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &w, nil
+}
+
+// GetWorkspaceByName retrieves a workspace by name.
+func (s *SQLiteStore) GetWorkspaceByName(name string) (*Workspace, error) {
+	var w Workspace
+	err := s.db.QueryRow("SELECT id, name, path, created_at FROM workspaces WHERE name = ?", name).
+		Scan(&w.ID, &w.Name, &w.Path, &w.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &w, nil
+}
+
+// ListWorkspaces returns all available workspaces.
+func (s *SQLiteStore) ListWorkspaces() ([]Workspace, error) {
+	rows, err := s.db.Query("SELECT id, name, path, created_at FROM workspaces ORDER BY name ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var workspaces []Workspace
+	for rows.Next() {
+		var w Workspace
+		if err := rows.Scan(&w.ID, &w.Name, &w.Path, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		workspaces = append(workspaces, w)
+	}
+	return workspaces, nil
+}
+
+// DeleteWorkspace removes a workspace and all its associated data.
+func (s *SQLiteStore) DeleteWorkspace(id int64) error {
+	_, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id)
+	return err
+}
+
 // Search is implemented in search.go
 // Included here to satisfy the MemoryStore interface check.
-func (s *SQLiteStore) Search(embedding []float32, topK int) ([]SearchResult, error) {
-	return searchByEmbedding(s.db, embedding, topK)
+func (s *SQLiteStore) Search(embedding []float32, workspaceID int64, topK int) ([]SearchResult, error) {
+	return searchByEmbedding(s.db, embedding, workspaceID, topK)
 }
 
 // Close closes the database connection.

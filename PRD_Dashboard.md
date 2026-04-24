@@ -44,6 +44,8 @@ Satu dashboard terpusat yang menyatukan semua metrik dan kontrol ke dalam antarm
 | **US-03** | Sebagai developer, saya ingin melihat total token dan estimasi biaya LLM | Panel statistik menampilkan input/output tokens dan cost estimation |
 | **US-04** | Sebagai operator, saya ingin melihat error terbaru tanpa membaca log file | Panel error/log menampilkan 10 error terbaru dengan timestamp |
 | **US-05** | Sebagai user, saya ingin melihat daftar sesi aktif dan statusnya | Tabel sesi dengan kolom: ID, platform, user, mode, last activity |
+| **US-13** | Sebagai developer, saya ingin mengelompokkan pekerjaan ke dalam Workspace | Dukungan folder proyek (workspace) untuk isolasi memori dan context |
+| **US-14** | Sebagai user baru, saya ingin dipandu melalui tutorial interaktif | Fitur `smara guide` yang menjelaskan navigasi dan fitur dasar |
 
 ### P1 — Should Have
 | ID | Story | Acceptance Criteria |
@@ -505,6 +507,8 @@ Tidak ada dependensi Go baru yang diperlukan. Stack yang sudah ada sudah mencuku
 - [ ] Sparkline chart untuk request rate (P2)
 - [ ] Top users leaderboard
 - [ ] Database-only fallback mode
+- [ ] **Workspace Management**: Implementasi perintah `smara workspace` untuk isolasi proyek
+- [ ] **Interactive Walkthrough**: Implementasi perintah `smara guide` untuk onboarding tutorial
 
 ### Phase 4 — Advanced (v2.x)
 - [ ] Unix Domain Socket untuk real-time streaming (ganti file polling)

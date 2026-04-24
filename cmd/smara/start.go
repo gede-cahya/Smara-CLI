@@ -40,7 +40,7 @@ Alur: Config → SQLite Init → Sync Daemon → Supervisor Agent → REPL`,
 func init() {
 	startCmd.Flags().StringVarP(&model, "model", "m", "", "model LLM yang digunakan (default: dari config)")
 	startCmd.Flags().BoolVar(&offline, "offline", false, "jalankan tanpa sync daemon")
-	startCmd.Flags().StringVar(&startMode, "mode", "ask", "mode agen: ask, rush, plan")
+	startCmd.Flags().StringVar(&startMode, "mode", "ask", "mode agen: ask, rush, plan, test")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -124,6 +124,30 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// 4. Initialize Supervisor Agent
 	supervisor := agent.NewSupervisorWithConfig(provider, providerCfg, memStore)
 	defer supervisor.Close()
+
+	// 4.x Workspace Initialization
+	activeWorkspaceName := cfg.ActiveWorkspace
+	if activeWorkspaceName == "" {
+		activeWorkspaceName = "default"
+	}
+
+	w, err := memStore.GetWorkspaceByName(activeWorkspaceName)
+	if err != nil {
+		ui.PrintWarning("Gagal memuat workspace: %v", err)
+	} else if w == nil {
+		// Create default workspace if it doesn't exist
+		ui.PrintInfo("Membuat workspace default...")
+		w, err = memStore.CreateWorkspace(activeWorkspaceName, "")
+		if err != nil {
+			ui.PrintWarning("Gagal membuat workspace default: %v", err)
+		}
+	}
+
+	if w != nil {
+		supervisor.SetWorkspaceID(w.ID)
+		cfg.ActiveWorkspaceID = w.ID
+		ui.PrintSuccess("Workspace Aktif: %s", w.Name)
+	}
 
 	// 4.0 Initialize Session Store
 	sessStore, err := session.NewSQLiteStore(cfg.DBPath)
@@ -370,7 +394,7 @@ func handleCommand(cmd string, args []string, supervisor *agent.Supervisor, memS
 	case "model":
 		handleModelCommand(args, supervisor)
 	case "memory":
-		memories, err := memStore.List(10)
+		memories, err := memStore.List(config.Get().ActiveWorkspaceID, 10)
 		if err != nil {
 			ui.PrintError("Gagal membaca memori: %v", err)
 			return
@@ -474,7 +498,7 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 		msgParts = append(msgParts, fmt.Sprintf("History: %d messages", len(session.History)))
 		msgParts = append(msgParts, fmt.Sprintf("Tasks: %d", len(session.Tasks)))
 		msgParts = append(msgParts, fmt.Sprintf("MCP: %s", strings.Join(session.MCPServers, ", ")))
-		ui.PrintInfo(strings.Join(msgParts, "\n"))
+		ui.PrintInfo("%s", strings.Join(msgParts, "\n"))
 
 	case "switch":
 		if len(args) < 2 {

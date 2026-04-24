@@ -51,6 +51,8 @@ func init() {
 	rootCmd.AddCommand(providerCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(dashboardCmd)
+	rootCmd.AddCommand(guideCmd)
+	rootCmd.AddCommand(workspaceCmd)
 }
 
 func initConfig() {

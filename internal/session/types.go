@@ -18,11 +18,12 @@ const (
 
 // Session represents an agentic conversation session.
 type Session struct {
-	ID         string        `json:"id"`
-	Name       string        `json:"name"`
-	State      State         `json:"state"`
-	Mode       string        `json:"mode"`
-	MCPServers []string      `json:"mcp_servers"`
+	ID          string        `json:"id"`
+	WorkspaceID int64         `json:"workspace_id"`
+	Name        string        `json:"name"`
+	State       State         `json:"state"`
+	Mode        string        `json:"mode"`
+	MCPServers  []string      `json:"mcp_servers"`
 	History    []llm.Message `json:"history"`
 	Tasks      []Task        `json:"tasks"`
 	MemoryIDs  []int64       `json:"memory_ids"`  // References to persistent memories
@@ -35,11 +36,12 @@ type Session struct {
 
 // Config holds configuration for creating a new session.
 type Config struct {
-	Name       string
-	Mode       string
-	MCPServers []string
-	IsAgentic  bool // Enable agentic AI mode
-	AutoResume bool // Auto-resume from last state
+	Name        string
+	WorkspaceID int64
+	Mode        string
+	MCPServers  []string
+	IsAgentic   bool // Enable agentic AI mode
+	AutoResume  bool // Auto-resume from last state
 }
 
 // Store defines the interface for session persistence.
@@ -49,6 +51,10 @@ type Store interface {
 	UpdateSession(session *Session) error
 	DeleteSession(id string) error
 	ListSessions() ([]Session, error)
+	ListSessionsByWorkspace(workspaceID int64) ([]Session, error)
+	ListActiveSessions() ([]Session, error)
+	GetLastActiveSession() (*Session, error)
+	GetLastActiveSessionByWorkspace(workspaceID int64) (*Session, error)
 }
 
 // TaskStatus represents the current state of a task.
