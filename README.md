@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.8.0**
+**Autonomous Multi-Agent Terminal v1.8.7**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -15,7 +15,7 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
   - `ask` (💬): Tanya-jawab cepat tanpa tools.
   - `rush` (⚡): Eksekusi cepat, langsung bertindak menggunakan tools.
   - `plan` (📋): Membuat rencana dan meminta persetujuan sebelum eksekusi.
-- **Platform Integration**: Jalankan Smara sebagai bot di **Telegram** dan **Discord**.
+- **Platform Integration**: Jalankan Smara sebagai bot di **Telegram**, **Discord**, dan **WhatsApp**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
 - **Persistent Sessions**: Riwayat percakapan dan status agen kini tersimpan secara otomatis di SQLite, memungkinkan Anda melanjutkan sesi sebelumnya.
 - **Smart Memory**: Menggunakan SQLite & Vector Search untuk menyimpan konteks percakapan lintas platform.
