@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smara AI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      background: #131313; 
+      color: #e2e2e2; 
+      font-family: Inter, sans-serif;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      text-align: center;
+      padding: 40px;
+    }
+    .title {
+      color: #818cf8;
+      font-size: 48px;
+      font-weight: bold;
+      margin-bottom: 20px;
+    }
+    .subtitle {
+      color: #94a3b8;
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
+    .info {
+      background: #2a2a2a;
+      padding: 20px;
+      border-radius: 12px;
+      margin-top: 30px;
+      text-align: left;
+    }
+    button {
+      background: #818cf8;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 10px;
+    }
+    button:hover { background: #6366f1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">Smara AI</div>
+    <div class="subtitle">Desktop Agent</div>
+    <button onclick="testWails()">Test Wails Bindings</button>
+    <button onclick="loadWorkspaces()">Load Workspaces</button>
+    <div class="info">
+      <div>Status: <span id="status">Loading...</span></div>
+      <div id="wails-check" style="margin-top: 10px;"></div>
+      <div id="workspaces" style="margin-top: 10px;"></div>
+    </div>
+  </div>
+
+  <script>
+    // Check if Wails is available
+    function checkWails() {
+      const check = document.getElementById('wails-check');
+      if (window.go) {
+        check.innerHTML = '✓ Wails bindings loaded<br>window.go exists: true<br>';
+        if (window.go.main && window.go.main.App) {
+          check.innerHTML += '✓ App bindings found<br>';
+        } else {
+          check.innerHTML += '✗ App bindings NOT found<br>';
+        }
+      } else {
+        check.innerHTML = '✗ Wails bindings NOT loaded<br>';
+      }
+    }
+    
+    function testWails() {
+      document.getElementById('status').textContent = 'Testing Wails...';
+      try {
+        if (window.go && window.go.main && window.go.main.App) {
+          document.getElementById('status').textContent = 'Wails is working!';
+        } else {
+          document.getElementById('status').textContent = 'Wails bindings not ready yet';
+        }
+      } catch(e) {
+        document.getElementById('status').textContent = 'Error: ' + e;
+      }
+    }
+    
+    async function loadWorkspaces() {
+      document.getElementById('status').textContent = 'Loading workspaces...';
+      try {
+        const GetWorkspaces = window.go?.main?.App?.GetWorkspaces;
+        if (GetWorkspaces) {
+          const ws = await GetWorkspaces();
+          document.getElementById('status').textContent = 'Loaded ' + ws.length + ' workspaces';
+          const wsDiv = document.getElementById('workspaces');
+          wsDiv.innerHTML = '<b>Workspaces:</b><br>' + ws.map(w => '- ' + w.name).join('<br>');
+        } else {
+          document.getElementById('status').textContent = 'GetWorkspaces not available';
+        }
+      } catch(e) {
+        document.getElementById('status').textContent = 'Error: ' + e;
+      }
+    }
+    
+    // Run check after a delay
+    setTimeout(checkWails, 500);
+    console.log('[Smara] HTML loaded');
+  </script>
+</body>
+</html>

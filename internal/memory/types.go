@@ -10,13 +10,18 @@ import (
 
 // Memory represents a single piece of stored knowledge.
 type Memory struct {
-	ID          int64     `json:"id"`
-	WorkspaceID int64     `json:"workspace_id"`
-	Content     string    `json:"content"`
-	Embedding   []float32 `json:"-"` // stored as BLOB
-	Tags        string    `json:"tags"`
-	Source      string    `json:"source"` // e.g., "agent:worker-1", "user", "sync"
-	CreatedAt   time.Time `json:"created_at"`
+	ID          int64                  `json:"id"`
+	WorkspaceID int64                  `json:"workspace_id"`
+	CategoryID  *int64                 `json:"category_id,omitempty"`
+	Content     string                 `json:"content"`
+	Embedding   []float32              `json:"-"` // stored as BLOB
+	Tags        []string               `json:"tags"` // CHANGED: from string to []string
+	Source      string                 `json:"source"` // e.g., "agent:worker-1", "user", "sync"
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
+	Version     int                    `json:"version"`
 }
 
 // Workspace represents a project-specific container.
@@ -24,6 +29,27 @@ type Workspace struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	Path      string    `json:"path"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Category represents a memory category/folder within a workspace.
+type Category struct {
+	ID          int64      `json:"id"`
+	WorkspaceID int64      `json:"workspace_id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	ParentID    *int64     `json:"parent_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// MemoryVersion represents a historical version of a memory.
+type MemoryVersion struct {
+	ID        int64     `json:"id"`
+	MemoryID  int64     `json:"memory_id"`
+	Content   string    `json:"content"`
+	Metadata  string    `json:"metadata"`
+	ChangedBy string    `json:"changed_by"`
+	Reason    string    `json:"reason,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -49,6 +75,26 @@ const (
 type SearchResult struct {
 	Memory     Memory  `json:"memory"`
 	Similarity float64 `json:"similarity"`
+	Score      float64 `json:"score,omitempty"` // Combined score for hybrid search
+}
+
+// SearchFilters defines filters for searching memories.
+type SearchFilters struct {
+	Tags       []string
+	Sources    []string
+	DateFrom   *time.Time
+	DateTo     *time.Time
+	CategoryID *int64
+	MinScore   float64
+}
+
+// MemoryFilters defines filters for listing memories with pagination.
+type MemoryFilters struct {
+	SearchFilters
+	Limit  int
+	Offset int
+	SortBy string // "created_at", "updated_at", "relevance"
+	SortDir string // "ASC", "DESC"
 }
 
 // MessageToJSON serializes an llm.Message to JSON string for storage.
@@ -72,11 +118,26 @@ type MemoryStore interface {
 	// Save stores a new memory entry.
 	Save(content, tags, source string, workspaceID int64, embedding []float32) (*Memory, error)
 
+	// UpdateMemory updates an existing memory.
+	UpdateMemory(id int64, updates map[string]interface{}) error
+
+	// GetMemoryByID retrieves a memory by ID.
+	GetMemoryByID(id int64) (*Memory, error)
+
 	// Search finds memories similar to the given embedding within a workspace.
 	Search(embedding []float32, workspaceID int64, topK int) ([]SearchResult, error)
 
+	// SearchHybrid combines vector and full-text search.
+	SearchHybrid(query string, embedding []float32, workspaceID int64, topK int) ([]SearchResult, error)
+
+	// SearchFullText searches memories using full-text search.
+	SearchFullText(query string, workspaceID int64, filters MemoryFilters) ([]Memory, error)
+
 	// List returns recent memories for a workspace.
 	List(workspaceID int64, limit int) ([]Memory, error)
+
+	// ListMemoriesWithFilters returns memories with advanced filtering.
+	ListMemoriesWithFilters(workspaceID int64, filters MemoryFilters) ([]Memory, int, error)
 
 	// Workspace Operations
 	CreateWorkspace(name, path string) (*Workspace, error)
@@ -96,6 +157,39 @@ type MemoryStore interface {
 
 	// MarkSynced marks a memory as successfully synced.
 	MarkSynced(memoryID int64, deltaHash string) error
+
+	// CreateCategory creates a new category.
+	CreateCategory(name, description string, workspaceID int64, parentID *int64) (*Category, error)
+
+	// GetCategory retrieves a category by ID.
+	GetCategory(id int64) (*Category, error)
+
+	// ListCategories returns categories for a workspace.
+	ListCategories(workspaceID int64, includeSubcategories bool) ([]Category, error)
+
+	// UpdateCategory updates a category.
+	UpdateCategory(id int64, updates map[string]interface{}) error
+
+	// DeleteCategory removes a category.
+	DeleteCategory(id int64, reassignTo *int64) error
+
+	// DeleteExpiredMemories removes memories past their expiration date.
+	DeleteExpiredMemories() (int, error)
+
+	// SetRetentionPolicy sets TTL for a workspace.
+	SetRetentionPolicy(workspaceID int64, ttlDays int) error
+
+	// ExportMemories exports memories to JSON or Markdown.
+	ExportMemories(workspaceID int64, options ExportOptions) ([]byte, string, error)
+
+	// ImportMemories imports memories from JSON or Markdown.
+	ImportMemories(workspaceID int64, data []byte, format ExportFormat, options ImportOptions) (int, error)
+
+	// GetMemoryVersions returns version history for a memory.
+	GetMemoryVersions(memoryID int64) ([]MemoryVersion, error)
+
+	// RollbackMemory reverts a memory to a previous version.
+	RollbackMemory(memoryID int64, versionID int64) error
 
 	// Close closes the database connection.
 	Close() error

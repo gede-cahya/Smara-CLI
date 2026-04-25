@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.8.7**
+**Autonomous Multi-Agent Terminal v1.8.8**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)

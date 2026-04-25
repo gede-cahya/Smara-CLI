@@ -89,10 +89,12 @@ func (d *Daemon) exportDeltas() {
 
 	for _, m := range memories {
 		hash := hashContent(m.Content)
+		// Convert tags to JSON string
+		tagsJSON, _ := json.Marshal(m.Tags)
 		delta.Memories = append(delta.Memories, DeltaEntry{
 			MemoryID: m.ID,
 			Content:  m.Content,
-			Tags:     m.Tags,
+			Tags:     string(tagsJSON),
 			Hash:     hash,
 		})
 	}
