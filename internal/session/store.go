@@ -69,6 +69,8 @@ func (s *SQLiteStore) init() error {
 		{"context", "TEXT"},
 		{"is_agentic", "INTEGER DEFAULT 0"},
 		{"auto_resume", "INTEGER DEFAULT 0"},
+		{"is_archived", "INTEGER DEFAULT 0"},
+		{"archived_at", "TEXT"},
 	}
 
 	for _, col := range columns {
@@ -76,6 +78,9 @@ func (s *SQLiteStore) init() error {
 		// Kita abaikan error "duplicate column name"
 		_, _ = s.db.Exec(query)
 	}
+
+	// Index untuk archive queries
+	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(is_archived, workspace_id)")
 
 	return nil
 }
@@ -250,8 +255,8 @@ func (s *SQLiteStore) GetLastActiveSessionByWorkspace(workspaceID int64) (*Sessi
 	var session Session
 	var mcpServers, history, tasks, memoryIDs []byte
 
-	query := `SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, created_at, updated_at
-		 FROM sessions WHERE state = 'active'`
+	query := `SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, is_archived, archived_at, created_at, updated_at
+		 FROM sessions WHERE state = 'active' AND is_archived = 0`
 	var args []interface{}
 	if workspaceID > 0 {
 		query += " AND workspace_id = ?"
@@ -263,6 +268,7 @@ func (s *SQLiteStore) GetLastActiveSessionByWorkspace(workspaceID int64) (*Sessi
 		&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
 		&mcpServers, &history, &tasks, &memoryIDs,
 		&session.Context, &session.IsAgentic, &session.AutoResume,
+		&session.IsArchived, &session.ArchivedAt,
 		&session.CreatedAt, &session.UpdatedAt,
 	)
 
@@ -287,6 +293,110 @@ func (s *SQLiteStore) GetLastActiveSessionByWorkspace(workspaceID int64) (*Sessi
 	}
 
 	return &session, nil
+}
+
+// --- Archive Operations ---
+
+// ArchiveSession soft-archives a session by ID.
+func (s *SQLiteStore) ArchiveSession(id string) error {
+	now := time.Now().Format(time.RFC3339)
+	result, err := s.db.Exec(
+		"UPDATE sessions SET is_archived = 1, archived_at = ? WHERE id = ?",
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal mengarsipkan session: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("session tidak ditemukan: %s", id)
+	}
+	return nil
+}
+
+// UnarchiveSession restores an archived session.
+func (s *SQLiteStore) UnarchiveSession(id string) error {
+	result, err := s.db.Exec(
+		"UPDATE sessions SET is_archived = 0, archived_at = NULL WHERE id = ?",
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal memulihkan session: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("session tidak ditemukan: %s", id)
+	}
+	return nil
+}
+
+// ListArchivedSessions returns archived sessions for a workspace.
+func (s *SQLiteStore) ListArchivedSessions(workspaceID int64) ([]Session, error) {
+	query := `SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, is_archived, archived_at, created_at, updated_at
+		 FROM sessions WHERE is_archived = 1`
+	var args []interface{}
+	if workspaceID > 0 {
+		query += " AND workspace_id = ?"
+		args = append(args, workspaceID)
+	}
+	query += " ORDER BY archived_at DESC LIMIT 50"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("gagal daftar archived session: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var session Session
+		var mcpServers, history, tasks, memoryIDs []byte
+		var archivedAt sql.NullString
+
+		err := rows.Scan(
+			&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
+			&mcpServers, &history, &tasks, &memoryIDs,
+			&session.Context, &session.IsAgentic, &session.AutoResume,
+			&session.IsArchived, &archivedAt,
+			&session.CreatedAt, &session.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if archivedAt.Valid && archivedAt.String != "" {
+			t, _ := time.Parse(time.RFC3339, archivedAt.String)
+			session.ArchivedAt = &t
+		}
+		if len(mcpServers) > 0 {
+			json.Unmarshal(mcpServers, &session.MCPServers)
+		}
+		if len(history) > 0 {
+			json.Unmarshal(history, &session.History)
+		}
+		if len(tasks) > 0 {
+			json.Unmarshal(tasks, &session.Tasks)
+		}
+		if len(memoryIDs) > 0 {
+			json.Unmarshal(memoryIDs, &session.MemoryIDs)
+		}
+
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
+}
+
+// DeleteArchivedSession permanently deletes an archived session.
+func (s *SQLiteStore) DeleteArchivedSession(id string) error {
+	result, err := s.db.Exec("DELETE FROM sessions WHERE id = ? AND is_archived = 1", id)
+	if err != nil {
+		return fmt.Errorf("gagal menghapus session: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("archived session tidak ditemukan: %s", id)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) saveSession(session *Session) error {

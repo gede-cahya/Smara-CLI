@@ -218,6 +218,34 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"query"},
 			},
 		},
+		{
+			Name:        "remember",
+			Description: "Menyimpan informasi penting ke memori jangka panjang agar bisa diingat di sesi atau percakapan berikutnya (lintas sesi).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "Informasi atau fakta yang ingin diingat (misal: 'User suka tema gelap', 'Nama project ini adalah X')",
+					},
+				},
+				"required": []string{"content"},
+			},
+		},
+		{
+			Name:        "search_memories",
+			Description: "Mencari informasi yang pernah disimpan sebelumnya di memori jangka panjang.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Kata kunci atau topik pencarian memori",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
 	}
 }
 

@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/safety"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
@@ -79,9 +81,11 @@ type Supervisor struct {
 	mode            Mode
 	history         []llm.Message // conversation history for context
 	callback        AgenticCallback
-	autoDiscovered  bool
-	workspaceID     int64 // active workspace ID
-	stats           Stats // usage statistics
+	autoDiscovered      bool
+	workspaceID         int64 // active workspace ID
+	stats               Stats // usage statistics
+	safetyEngine        *safety.Engine
+	cognitiveValidator  *cognitive.Validator
 }
 
 // toolRouteInfo stores routing info for a registered tool.
@@ -141,6 +145,31 @@ func (s *Supervisor) updateStats(tokens int, cost float64, duration time.Duratio
 func (s *Supervisor) SetMode(mode Mode) {
 	s.mode = mode
 	// History is now preserved across mode changes to maintain conversation context
+
+	// Sync safety engine mode to enforce read-only in Plan Mode only
+	if s.safetyEngine != nil {
+		if mode == ModePlan {
+			s.safetyEngine.SetMode(safety.ModePlan)
+		} else {
+			s.safetyEngine.SetMode(safety.ModeBuild)
+		}
+	}
+}
+
+// SetSafetyEngine sets the safety engine for execution mode enforcement.
+func (s *Supervisor) SetSafetyEngine(engine *safety.Engine) {
+	s.safetyEngine = engine
+	// Sync current supervisor mode into safety engine
+	if s.mode == ModePlan {
+		engine.SetMode(safety.ModePlan)
+	} else {
+		engine.SetMode(safety.ModeBuild)
+	}
+}
+
+// SetCognitiveValidator sets the cognitive schema validator for tool argument validation.
+func (s *Supervisor) SetCognitiveValidator(validator *cognitive.Validator) {
+	s.cognitiveValidator = validator
 }
 
 // SetWorkspaceID sets the active workspace for this supervisor.
@@ -353,12 +382,26 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 	// 1. Add built-in agentic tools
 	tools := GetBuiltinTools()
 
-	// 2. Add MCP tools
+	// 2. If Plan Mode with safety engine, filter to read-only tools
+	if s.mode == ModePlan && s.safetyEngine != nil {
+		var filtered []llm.ToolFunction
+		for _, t := range tools {
+			if safety.IsReadOnlyTool(t.Name) {
+				filtered = append(filtered, t)
+			}
+		}
+		tools = filtered
+	}
+
+	// 3. Add MCP tools
 	for serverName, info := range s.mcpInfo {
 		if !info.Connected {
 			continue
 		}
 		for _, t := range info.Tools {
+			if s.mode == ModePlan && s.safetyEngine != nil && !safety.IsReadOnlyTool(t.Name) {
+				continue
+			}
 			// Prefix MCP tools with their server name if there's a conflict
 			// but for now we just append them directly
 			tf := llm.ToolFunction{
@@ -375,6 +418,23 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
+	// Safety engine enforcement: block write/execute/delete tools in Plan Mode
+	if s.safetyEngine != nil {
+		ok, reason := s.safetyEngine.CanExecute(tc.Function)
+		if !ok {
+			s.safetyEngine.RecordDraft(tc.Function, tc.Args)
+			return "", fmt.Errorf("safety block: %s", reason)
+		}
+	}
+
+	// Cognitive validator: validate tool arguments against registered schemas
+	if s.cognitiveValidator != nil {
+		result := s.cognitiveValidator.Validate(tc.Function, tc.Args)
+		if !result.Valid {
+			return "", fmt.Errorf("cognitive validation failed: %s", strings.Join(result.Errors, "; "))
+		}
+	}
+
 	// Check if confirmation is needed for critical tools
 	if s.isCriticalCall(s.mode, tc.Function, tc.Args) && s.callback.OnConfirm != nil {
 		if !s.callback.OnConfirm(fmt.Sprintf("Tool: %s\nArgs: %v", tc.Function, tc.Args)) {
@@ -385,6 +445,47 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 	// Check if it is a built-in tool first
 	for _, bt := range GetBuiltinTools() {
 		if bt.Name == tc.Function {
+			// Handle memory tools directly in supervisor because they need memStore and provider
+			if tc.Function == "remember" {
+				if s.memStore == nil {
+					return "Memory store tidak tersedia.", nil
+				}
+				content, _ := tc.Args["content"].(string)
+				embedding, err := s.provider.GenerateEmbedding(content)
+				if err != nil {
+					return "", fmt.Errorf("gagal generate embedding: %w", err)
+				}
+				_, err = s.memStore.Save(content, "user_preference", "agent", s.workspaceID, embedding)
+				if err != nil {
+					return "", fmt.Errorf("gagal menyimpan memori: %w", err)
+				}
+				return "Informasi berhasil disimpan ke memori jangka panjang.", nil
+			}
+
+			if tc.Function == "search_memories" {
+				if s.memStore == nil {
+					return "Memory store tidak tersedia.", nil
+				}
+				query, _ := tc.Args["query"].(string)
+				embedding, err := s.provider.GenerateEmbedding(query)
+				if err != nil {
+					return "", fmt.Errorf("gagal generate embedding: %w", err)
+				}
+				results, err := s.memStore.Search(embedding, s.workspaceID, 5)
+				if err != nil {
+					return "", fmt.Errorf("gagal mencari memori: %w", err)
+				}
+				if len(results) == 0 {
+					return "Tidak ada memori yang relevan ditemukan.", nil
+				}
+				var sb strings.Builder
+				sb.WriteString("Hasil pencarian memori:\n")
+				for _, r := range results {
+					sb.WriteString(fmt.Sprintf("- %s\n", r.Memory.Content))
+				}
+				return sb.String(), nil
+			}
+
 			var logFn func(string, string)
 			if s.callback.OnLog != nil {
 				logFn = s.callback.OnLog
@@ -544,13 +645,9 @@ func (s *Supervisor) IsCurrentSession(id string) bool {
 
 // ProcessPrompt handles a user prompt using the current agent mode.
 func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*PromptResult, error) {
-	s.discoverProjectContext()
+	// Auto-discovery and exploration removed to respect user preference for manual triggers.
 
-	// Auto-run explore on each prompt
-	cwd, _ := os.Getwd()
-	if s.callback.OnExplore != nil && cwd != "" {
-		s.callback.OnExplore(cwd, "")
-	}
+	// Pre-process: Search relevant memories
 
 	startTime := time.Now()
 	modeInfo := GetModeInfo(s.mode)

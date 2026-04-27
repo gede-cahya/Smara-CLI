@@ -1,121 +1,170 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { Ask, GetWorkspaces, GetSessions, SwitchSession, GetSessionHistory, CreateSession, SetWorkspace, GetConfig, UpdateConfig, GetTools } from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime'
-import { marked } from 'marked'
-import { cn } from "@/lib/utils"
-import { 
-  Plus, 
-  Settings, 
-  FolderOpen, 
-  MessageSquare, 
-  Send, 
-  Sun, 
-  Moon, 
-  Paperclip, 
-  Mic, 
+import React, { useState, useEffect, useRef, memo } from 'react'
+import {
+  Send,
+  Plus,
+  Settings,
+  Terminal,
+  History,
+  User,
+  Paperclip,
+  Mic,
+  Search,
   Atom,
-  Terminal
+  LayoutDashboard,
+  Moon,
+  Sun,
+  ChevronRight,
+  Sparkles,
+  Archive,
+  Trash2,
+  RotateCcw
 } from 'lucide-react'
-
-// ShadCN UI Components
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter
 } from "@/components/ui/dialog"
+import { Card, CardContent } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+import {
+  Ask,
+  GetSessions,
+  CreateSession,
+  GetSessionHistory,
+  SwitchSession,
+  GetTools,
+  GetConfig,
+  UpdateConfig,
+  ArchiveSession,
+  UnarchiveSession,
+  GetArchivedSessions,
+  DeleteArchivedSession
+} from "../../wailsjs/go/main/App"
+import { EventsOn } from "../../wailsjs/runtime/runtime"
+import { config as configModels, llm as llmModels, session as sessionModels } from "../../wailsjs/go/models"
+import { marked } from 'marked'
 
-interface Workspace {
-  id: number
-  name: string
-}
-
-interface Session {
-  id: string
-  name: string
-}
-
-interface Tool {
-  name: string
-  description: string
-  source: string
-}
+// Configure marked for performance
+marked.setOptions({
+  breaks: true,
+  gfm: true
+})
 
 interface Message {
-  role: 'user' | 'assistant'
+  role: string
   content: string
 }
 
-const App: React.FC = () => {
-  const [theme, setTheme] = useState<'dark' | 'light'>('light')
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [sessions, setSessions] = useState<Session[]>([])
+// Memoized Message Item to prevent redundant re-renders and re-parsing
+const MessageItem = memo(({ msg }: { msg: Message }) => {
+  const isAssistant = msg.role === 'assistant'
+
+  // Memoize markdown parsing to avoid heavy computation during scrolls/streams
+  const contentHtml = React.useMemo(() => {
+    if (!isAssistant) return null
+    return marked.parse(msg.content) as string
+  }, [msg.content, isAssistant])
+
+  return (
+    <div className={cn(
+      "flex w-full animate-in-slide group gpu-accelerated optimize-rendering",
+      msg.role === 'user' ? "justify-end" : "justify-start"
+    )}>
+      <div className={cn(
+        "max-w-[85%] rounded-2xl px-6 py-4 shadow-sm border transition-all duration-300",
+        msg.role === 'user'
+          ? "bg-smara text-white border-transparent shadow-lg shadow-primary/10"
+          : "bg-card text-card-foreground border-border/50 hover:border-primary/20 prose prose-sm dark:prose-invert max-w-full"
+      )}>
+        {isAssistant ? (
+          <div
+            className="markdown-content leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: contentHtml || '' }}
+          />
+        ) : (
+          <div className="whitespace-pre-wrap font-medium">{msg.content}</div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+export default function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
+  const [sessions, setSessions] = useState<sessionModels.Session[]>([])
+  const [archivedSessions, setArchivedSessions] = useState<sessionModels.Session[]>([])
   const [isThinking, setIsThinking] = useState(false)
-  const [currentWorkspace, setCurrentWorkspace] = useState('')
-  const [tools, setTools] = useState<Tool[]>([])
+  const [activeSession, setActiveSession] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [config, setConfig] = useState<any>(null)
+  const [archiveTab, setArchiveTab] = useState<'active' | 'archived'>('active')
+  const [config, setConfig] = useState<configModels.SmaraConfig | null>(null)
+  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('dark')
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    marked.setOptions({ breaks: true })
-    document.documentElement.classList.remove('dark', 'light')
-    document.documentElement.classList.add(theme)
-  }, [theme])
+  const isAutoScrolling = useRef(true)
 
   useEffect(() => {
     const init = async () => {
-      await loadWorkspaces()
       await loadSessions()
       await loadHistory()
       await loadTools()
       await loadConfig()
     }
-    
+
     init()
 
+    let off: any = null
+    // Handle streaming chunks
     if (typeof EventsOn === 'function') {
-      EventsOn('stream_chunk', (data: { chunk: string; is_thinking: boolean }) => {
+      off = EventsOn('stream_chunk', (data: { chunk: string; is_thinking: boolean }) => {
         if (data.is_thinking) return
         setMessages(prev => {
           const last = prev[prev.length - 1]
           if (last && last.role === 'assistant') {
-            return [...prev.slice(0, -1), { ...last, content: last.content + data.chunk }]
+            // Append to existing assistant message
+            return [
+              ...prev.slice(0, -1),
+              { ...last, content: last.content + data.chunk }
+            ]
           }
+          // Create new assistant message
           return [...prev, { role: 'assistant', content: data.chunk }]
         })
       })
     }
+
+    return () => {
+      if (typeof off === 'function') off()
+    }
   }, [])
 
+  // Watch for active session changes and reload history
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (activeSession) {
+      loadHistory()
+    }
+  }, [activeSession])
 
-  const loadWorkspaces = async () => {
-    try {
-      if (typeof GetWorkspaces !== 'function') return
-      const ws = await GetWorkspaces()
-      if (ws) setWorkspaces(ws as Workspace[])
-    } catch (err) { console.error('loadWorkspaces error:', err) }
-  }
+  // Robust auto-scroll logic
+  useEffect(() => {
+    if (isAutoScrolling.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    }
+  }, [messages])
 
   const loadSessions = async () => {
     try {
       if (typeof GetSessions !== 'function') return
       const s = await GetSessions()
-      if (s) setSessions(s as Session[])
+      if (s) setSessions(s)
     } catch (err) { console.error('loadSessions error:', err) }
   }
 
@@ -124,7 +173,7 @@ const App: React.FC = () => {
       if (typeof GetSessionHistory !== 'function') return
       const history = await GetSessionHistory()
       if (history) {
-        setMessages((history as Message[]).filter((m: any) => m.role === 'user' || m.role === 'assistant'))
+        setMessages((history as llmModels.Message[]).filter((m: any) => m.role === 'user' || m.role === 'assistant'))
       } else {
         setMessages([])
       }
@@ -134,8 +183,7 @@ const App: React.FC = () => {
   const loadTools = async () => {
     try {
       if (typeof GetTools !== 'function') return
-      const t = await GetTools()
-      if (t) setTools(t as Tool[])
+      await GetTools()
     } catch (err) { console.error('loadTools error:', err) }
   }
 
@@ -147,31 +195,25 @@ const App: React.FC = () => {
     } catch (err) { console.error('loadConfig error:', err) }
   }
 
-  const handleWorkspaceSelect = async (id: number, name: string) => {
+  const handleSaveConfig = async () => {
+    if (!config) return
     try {
-      if (typeof SetWorkspace !== 'function') return
-      await SetWorkspace(id)
-      setCurrentWorkspace(name)
-      await loadSessions()
-      await loadHistory()
-    } catch (err) { console.error('handleWorkspaceSelect error:', err) }
-  }
-
-  const handleSessionSelect = async (id: string) => {
-    try {
-      if (typeof SwitchSession !== 'function') return
-      await SwitchSession(id)
-      await loadHistory()
-    } catch (err) { console.error('handleSessionSelect error:', err) }
+      await UpdateConfig(config)
+      setShowSettings(false)
+    } catch (err) { console.error('UpdateConfig error:', err) }
   }
 
   const handleNewSession = async () => {
-    const name = prompt('Nama Session Baru:', 'Sesi Baru')
+    const name = prompt('Nama sesi baru:')
     if (name) {
       try {
         if (typeof CreateSession !== 'function') return
-        await CreateSession(name)
-        setMessages([])
+        const newID = await CreateSession(name)
+        if (newID) {
+          await SwitchSession(newID)
+          setActiveSession(newID)
+          setMessages([]) // Clear UI immediately
+        }
         await loadSessions()
       } catch (err) { console.error('handleNewSession error:', err) }
     }
@@ -182,19 +224,23 @@ const App: React.FC = () => {
     const text = input.trim()
     setInput('')
     setIsThinking(true)
+
+    // Add user message
     setMessages(prev => [...prev, { role: 'user', content: text }])
+    isAutoScrolling.current = true
 
     try {
       if (typeof Ask !== 'function') {
         setMessages(prev => [...prev, { role: 'assistant', content: 'Wails bridge not found. Are you running in browser?' }])
         return
       }
-      const response = await Ask(text)
-      setMessages(prev => [...prev, { role: 'assistant', content: response }])
+
+      // We DON'T add the response manually here to avoid double-response bug.
+      await Ask(text)
       await loadSessions()
     } catch (err) {
       console.error('handleSend error:', err)
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Maaf, terjadi kesalahan.' }])
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Maaf, terjadi kesalahan saat menghubungi asisten.' }])
     } finally {
       setIsThinking(false)
     }
@@ -208,125 +254,260 @@ const App: React.FC = () => {
   }
 
   const toggleTheme = () => {
-    setTheme(prev => prev === 'dark' ? 'light' : 'dark')
+    const newTheme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(newTheme)
+    document.documentElement.classList.toggle('dark')
   }
 
-  const handleSaveConfig = async () => {
+  const updateConfig = (key: keyof configModels.SmaraConfig, value: any) => {
     if (!config) return
+    const newConfig = configModels.SmaraConfig.createFrom({
+      ...config,
+      [key]: value
+    })
+    setConfig(newConfig)
+  }
+
+  const handleArchiveSession = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
     try {
-      if (typeof UpdateConfig !== 'function') return
-      await UpdateConfig(config)
-      setShowSettings(false)
-      loadTools()
-    } catch (err) {
-      alert('Gagal menyimpan: ' + err)
-    }
+      if (typeof ArchiveSession !== 'function') return
+      await ArchiveSession(id)
+      await loadSessions()
+      if (activeSession === id) setActiveSession(null)
+    } catch (err) { console.error('archiveSession error:', err) }
+  }
+
+  const handleUnarchiveSession = async (id: string) => {
+    try {
+      if (typeof UnarchiveSession !== 'function') return
+      await UnarchiveSession(id)
+      await loadArchivedSessions()
+      await loadSessions()
+    } catch (err) { console.error('unarchiveSession error:', err) }
+  }
+
+  const loadArchivedSessions = async () => {
+    try {
+      if (typeof GetArchivedSessions !== 'function') return
+      const s = await GetArchivedSessions()
+      if (s) setArchivedSessions(s)
+    } catch (err) { console.error('loadArchivedSessions error:', err) }
+  }
+
+  const handleDeleteArchivedSession = async (id: string) => {
+    if (!confirm('Hapus permanen session ini? Data tidak bisa dikembalikan.')) return
+    try {
+      if (typeof DeleteArchivedSession !== 'function') return
+      await DeleteArchivedSession(id)
+      await loadArchivedSessions()
+    } catch (err) { console.error('deleteArchivedSession error:', err) }
   }
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden font-sans text-foreground select-none">
-      {/* Sidebar */}
-      <aside className="w-72 glass-sidebar flex flex-col z-20">
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-9 h-9 bg-smara rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary/20">
-            <Atom size={22} />
+    <div className={cn(
+      "flex h-screen w-full bg-background text-foreground overflow-hidden font-sans selection:bg-primary/20",
+      theme === 'dark' ? 'dark' : ''
+    )}>
+      {/* Premium Sidebar */}
+      <aside className="w-80 flex flex-col glass-sidebar z-20">
+        <div className="p-8">
+          <div className="flex items-center gap-3 group cursor-default">
+            <div className="w-10 h-10 bg-smara rounded-xl flex items-center justify-center shadow-lg shadow-primary/20 group-hover:scale-110 transition-transform duration-500">
+              <Atom size={24} className="text-white animate-pulse" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold tracking-tight">Smara</h2>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Intelligence v2.0</p>
+            </div>
           </div>
-          <span className="font-bold text-2xl tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">Smara</span>
+        </div>
+
+        <div className="px-4 mb-6">
+          <Button
+            onClick={handleNewSession}
+            className="w-full justify-start gap-3 bg-smara text-white hover:opacity-90 shadow-lg shadow-primary/10 rounded-xl py-6 font-semibold transition-all active:scale-[0.98]"
+          >
+            <Plus size={20} />
+            New Mission
+          </Button>
         </div>
 
         <ScrollArea className="flex-1 px-4">
-          <div className="space-y-6">
-            <div>
-              <div className="px-2 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Workspaces
-              </div>
-              <div className="space-y-1">
-                {workspaces.map(w => (
-                  <button
-                    key={w.id}
-                    onClick={() => handleWorkspaceSelect(w.id, w.name)}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all duration-200 group",
-                      currentWorkspace === w.name 
-                        ? "bg-primary/10 text-primary font-semibold shadow-sm" 
-                        : "hover:bg-muted/50 text-muted-foreground hover:text-foreground hover:translate-x-1"
-                    )}
-                  >
-                    <FolderOpen size={17} className={cn(
-                      "transition-colors",
-                      currentWorkspace === w.name ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
-                    )} />
-                    {w.name}
-                  </button>
-                ))}
-              </div>
+          <div className="space-y-2 pb-8">
+            {/* Tab Switcher */}
+            <div className="flex items-center gap-1 px-2 mb-3">
+              <button
+                onClick={() => setArchiveTab('active')}
+                className={cn(
+                  "flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all",
+                  archiveTab === 'active'
+                    ? "bg-primary/10 text-primary border border-primary/20"
+                    : "text-muted-foreground hover:bg-muted/30"
+                )}
+              >
+                Active
+              </button>
+              <button
+                onClick={() => setArchiveTab('archived')}
+                className={cn(
+                  "flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all",
+                  archiveTab === 'archived'
+                    ? "bg-primary/10 text-primary border border-primary/20"
+                    : "text-muted-foreground hover:bg-muted/30"
+                )}
+              >
+                Archived
+              </button>
             </div>
 
-            <div>
-              <div className="px-2 mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Sessions
-                </span>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={handleNewSession}>
-                  <Plus size={14} />
-                </Button>
+            <div className="flex items-center justify-between px-4 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">
+              <div className="flex items-center gap-2">
+                <History size={12} />
+                {archiveTab === 'active' ? 'Recent Sessions' : 'Archived Sessions'}
               </div>
-              <div className="space-y-1">
-                {sessions.map(s => (
-                  <button
-                    key={s.id}
-                    onClick={() => handleSessionSelect(s.id)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all truncate text-left group hover:translate-x-1"
-                    title={s.name}
-                  >
-                    <MessageSquare size={17} className="shrink-0 text-muted-foreground group-hover:text-foreground transition-colors" />
-                    <span className="truncate">{s.name || 'Untitled Session'}</span>
-                  </button>
-                ))}
-              </div>
+              {archiveTab === 'archived' && archivedSessions.length > 0 && (
+                <span className="text-[9px] bg-muted px-2 py-0.5 rounded-full">{archivedSessions.length}</span>
+              )}
             </div>
 
-            <div>
-              <div className="px-2 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Connected Tools
+            {archiveTab === 'active' && sessions.map(s => (
+              <button
+                key={s.id}
+                onClick={async () => {
+                  await SwitchSession(s.id)
+                  setActiveSession(s.id)
+                }}
+                className={cn(
+                  "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-300 group relative overflow-hidden",
+                  activeSession === s.id
+                    ? "bg-primary/10 text-primary font-bold border border-primary/20"
+                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                )}
+              >
+                <div className={cn(
+                  "w-2 h-2 rounded-full transition-all duration-500",
+                  activeSession === s.id ? "bg-primary scale-125 shadow-[0_0_8px_rgba(var(--primary),0.5)]" : "bg-muted-foreground/30"
+                )} />
+                <span className="truncate flex-1 text-left">{s.name}</span>
+                {/* Archive button on hover */}
+                <div
+                  onClick={(e) => handleArchiveSession(s.id, e)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:bg-destructive/10 hover:text-destructive"
+                  title="Archive session"
+                >
+                  <Archive size={14} />
+                </div>
+                <ChevronRight size={14} className={cn(
+                  "transition-transform duration-300",
+                  activeSession === s.id ? "translate-x-0 opacity-100" : "-translate-x-2 opacity-0"
+                )} />
+              </button>
+            ))}
+
+            {archiveTab === 'active' && sessions.length === 0 && (
+              <div className="px-4 py-6 text-center text-xs text-muted-foreground/60">
+                Tidak ada sesi aktif. Buat sesi baru untuk memulai.
               </div>
-              <div className="flex flex-wrap gap-2 px-2">
-                {tools.map((t, i) => (
-                  <Badge key={i} variant="secondary" className="px-2 py-0 h-6 gap-1 font-normal bg-background/50 border-muted">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    {t.name}
-                  </Badge>
-                ))}
+            )}
+
+            {archiveTab === 'archived' && archivedSessions.map(s => (
+              <div
+                key={s.id}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all duration-300 group relative overflow-hidden text-muted-foreground bg-muted/20 border border-border/20"
+              >
+                <Archive size={14} className="text-muted-foreground/50" />
+                <span className="truncate flex-1 text-left">{s.name}</span>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => handleUnarchiveSession(s.id)}
+                    className="p-1.5 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors"
+                    title="Restore session"
+                  >
+                    <RotateCcw size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteArchivedSession(s.id)}
+                    className="p-1.5 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    title="Delete permanently"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
+            ))}
+
+            {archiveTab === 'archived' && archivedSessions.length === 0 && (
+              <div className="px-4 py-6 text-center text-xs text-muted-foreground/60">
+                Tidak ada sesi yang diarsipkan.
+              </div>
+            )}
           </div>
         </ScrollArea>
 
-        <div className="p-4 border-t bg-muted/50 mt-auto">
-          <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { loadConfig(); setShowSettings(true) }}>
-            <Settings size={18} />
-            Settings
-          </Button>
+        <div className="p-4 mt-auto border-t border-border/30 bg-muted/5">
+          <div className="flex items-center justify-between gap-2 p-2 rounded-2xl bg-background/50 border border-border/20 shadow-sm mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center text-muted-foreground">
+                <User size={18} />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold">Cahya</span>
+                <span className="text-[9px] text-muted-foreground uppercase font-black">Developer</span>
+              </div>
+            </div>
+            <Button variant="ghost" size="icon" onClick={toggleTheme} className="h-9 w-9 rounded-xl">
+              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSettings(true)}
+              className="rounded-xl border-border/50 hover:bg-muted/50 transition-all text-xs h-10 gap-2"
+            >
+              <Settings size={14} />
+              Setup
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-xl border-border/50 hover:bg-muted/50 transition-all text-xs h-10 gap-2"
+            >
+              <LayoutDashboard size={14} />
+              Fleet
+            </Button>
+          </div>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col bg-background relative overflow-hidden">
-        <header className="h-16 border-b flex items-center justify-between px-8 glass sticky top-0 z-10">
+      {/* Main Interface */}
+      <main className="flex-1 flex flex-col relative bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/5 via-background to-background">
+        <header className="h-20 flex items-center justify-between px-8 border-b border-border/30 glass sticky top-0 z-10">
           <div className="flex items-center gap-4">
-            <div className="flex flex-col text-left">
-              <h2 className="font-bold text-sm tracking-tight text-foreground/90 uppercase">{currentWorkspace || 'SMARA DESKTOP'}</h2>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">System Ready</span>
+            <div className="flex flex-col">
+              <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
+                {activeSession ? sessions.find(s => s.id === activeSession)?.name : "General Intelligence"}
+                <Sparkles size={14} className="text-primary animate-pulse" />
+              </h3>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_4px_rgba(34,197,94,0.5)]" />
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Active Core</span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full hover:bg-muted/50">
-              {theme === 'dark' ? <Sun size={19} className="text-yellow-400" /> : <Moon size={19} className="text-slate-700" />}
-            </Button>
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center px-4 py-2 bg-muted/40 rounded-xl border border-border/50 gap-3">
+              <Search size={14} className="text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search history..."
+                className="bg-transparent border-none text-xs focus:ring-0 w-32 placeholder:text-muted-foreground/50"
+              />
+            </div>
             <div className="h-6 w-[1px] bg-border mx-2" />
             <Button variant="outline" size="sm" className="gap-2 text-xs font-bold uppercase tracking-widest px-4 rounded-full border-primary/20 hover:border-primary/50 transition-colors">
               <Terminal size={14} className="text-primary" />
@@ -335,7 +516,10 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <ScrollArea className="flex-1 p-8">
+        <ScrollArea
+          className="flex-1 p-8 gpu-accelerated"
+          onWheel={() => { isAutoScrolling.current = false }}
+        >
           <div className="max-w-3xl mx-auto space-y-8 pb-32">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
@@ -352,29 +536,13 @@ const App: React.FC = () => {
             )}
 
             {messages.map((msg, i) => (
-              <div key={i} className={cn(
-                "flex w-full animate-in-slide",
-                msg.role === 'user' ? "justify-end" : "justify-start"
-              )}>
-                <div className={cn(
-                  "max-w-[85%] rounded-2xl px-6 py-4 shadow-sm border transition-all duration-300",
-                  msg.role === 'user' 
-                    ? "bg-smara text-white border-transparent shadow-lg shadow-primary/10" 
-                    : "bg-card/50 backdrop-blur-sm text-card-foreground border-border/50 hover:border-primary/20 prose prose-sm dark:prose-invert max-w-full"
-                )}>
-                  {msg.role === 'assistant' ? (
-                    <div className="markdown-content leading-relaxed" dangerouslySetInnerHTML={{ __html: marked.parse(msg.content) as string }} />
-                  ) : (
-                    <div className="whitespace-pre-wrap font-medium">{msg.content}</div>
-                  )}
-                </div>
-              </div>
+              <MessageItem key={i} msg={msg} />
             ))}
 
-            {isThinking && (
-              <div className="flex justify-start animate-in fade-in slide-in-from-bottom-1">
-                <Card className="bg-muted/50 border-none shadow-none">
-                  <CardContent className="p-3 flex items-center gap-3 text-sm text-muted-foreground">
+            {isThinking && messages[messages.length - 1]?.role === 'user' && (
+              <div className="flex justify-start animate-in-fade">
+                <Card className="max-w-[85%] bg-card/50 border-dashed border-border/50 rounded-2xl shadow-none">
+                  <CardContent className="px-6 py-4 flex items-center gap-3 text-sm text-muted-foreground font-medium italic">
                     <div className="flex gap-1">
                       <div className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:-0.3s]" />
                       <div className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:-0.15s]" />
@@ -415,8 +583,8 @@ const App: React.FC = () => {
                   <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-xl transition-colors">
                     <Mic size={19} />
                   </Button>
-                  <Button 
-                    onClick={handleSend} 
+                  <Button
+                    onClick={handleSend}
                     disabled={!input.trim() || isThinking}
                     className={cn(
                       "h-10 w-10 bg-smara text-white rounded-xl shadow-lg shadow-primary/20 transition-all duration-300 active:scale-90 disabled:opacity-30 disabled:grayscale",
@@ -447,71 +615,52 @@ const App: React.FC = () => {
           </DialogHeader>
 
           {config && (
-            <div className="space-y-4 py-4">
+            <div className="space-y-4 py-4 max-h-[400px] overflow-y-auto pr-2">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Provider</label>
-                <select 
-                  className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                  value={config.Provider} 
-                  onChange={e => setConfig({ ...config, Provider: e.target.value })}
-                >
-                  <option value="ollama">Ollama</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Model</label>
+                <label className="text-sm font-bold uppercase tracking-widest text-muted-foreground">LLM Provider</label>
                 <Input
-                  value={config.Model || ''}
-                  onChange={e => setConfig({ ...config, Model: e.target.value })}
-                  placeholder="e.g. gpt-4o, claude-3-5-sonnet"
+                  value={config.Provider}
+                  onChange={e => updateConfig('Provider', e.target.value)}
+                  className="rounded-xl border-border/50"
                 />
               </div>
-
               <div className="space-y-2">
-                <label className="text-sm font-medium">API Key</label>
+                <label className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Model</label>
+                <Input
+                  value={config.Model}
+                  onChange={e => updateConfig('Model', e.target.value)}
+                  className="rounded-xl border-border/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold uppercase tracking-widest text-muted-foreground">OpenAI API Key</label>
                 <Input
                   type="password"
-                  value={config.OpenAIAPIKey || config.AnthropicAPIKey || config.OpenRouterAPIKey || config.CustomAPIKey || ''}
-                  onChange={e => {
-                    const provider = config.Provider
-                    if (provider === 'openai') setConfig({ ...config, OpenAIAPIKey: e.target.value })
-                    else if (provider === 'anthropic') setConfig({ ...config, AnthropicAPIKey: e.target.value })
-                    else if (provider === 'openrouter') setConfig({ ...config, OpenRouterAPIKey: e.target.value })
-                    else if (provider === 'custom') setConfig({ ...config, CustomAPIKey: e.target.value })
-                  }}
+                  value={config.OpenAIAPIKey}
                   placeholder="sk-..."
+                  onChange={e => updateConfig('OpenAIAPIKey', e.target.value)}
+                  className="rounded-xl border-border/50"
                 />
               </div>
-
               <div className="space-y-2">
-                <label className="text-sm font-medium">Base URL</label>
+                <label className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Anthropic API Key</label>
                 <Input
-                  value={config.OllamaHost || config.OpenAIBaseURL || config.CustomBaseURL || ''}
-                  onChange={e => {
-                    const provider = config.Provider
-                    if (provider === 'ollama') setConfig({ ...config, OllamaHost: e.target.value })
-                    else if (provider === 'openai') setConfig({ ...config, OpenAIBaseURL: e.target.value })
-                    else if (provider === 'custom') setConfig({ ...config, CustomBaseURL: e.target.value })
-                  }}
-                  placeholder="e.g. http://localhost:11434"
+                  type="password"
+                  value={config.AnthropicAPIKey}
+                  placeholder="sk-ant-..."
+                  onChange={e => updateConfig('AnthropicAPIKey', e.target.value)}
+                  className="rounded-xl border-border/50"
                 />
               </div>
             </div>
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSettings(false)}>Batal</Button>
-            <Button onClick={handleSaveConfig}>Simpan Perubahan</Button>
+            <Button variant="outline" onClick={() => setShowSettings(false)} className="rounded-xl">Cancel</Button>
+            <Button onClick={handleSaveConfig} className="bg-smara text-white rounded-xl">Save Configuration</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   )
 }
-
-export default App

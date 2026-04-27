@@ -224,6 +224,18 @@
     from { transform: translateY(10px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
+
+  .gpu-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
+    will-change: transform, opacity;
+  }
+
+  .optimize-rendering {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 100px;
+  }
 }
 
 /* Brand Colors */

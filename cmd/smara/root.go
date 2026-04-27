@@ -53,6 +53,7 @@ func init() {
 	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(guideCmd)
 	rootCmd.AddCommand(workspaceCmd)
+	rootCmd.AddCommand(categoryCmd)
 }
 
 func initConfig() {

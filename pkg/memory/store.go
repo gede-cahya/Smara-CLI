@@ -110,9 +110,31 @@ func (s *SQLiteStore) migrate() error {
 		_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN workspace_id INTEGER DEFAULT 0")
 	}
 
-	// 3. Tambahkan index yang tergantung pada workspace_id
+	// 3. Tambahkan kolom archive untuk memories
+	err = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('memories') WHERE name='is_archived'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = s.db.Exec("ALTER TABLE memories ADD COLUMN is_archived INTEGER DEFAULT 0")
+	}
+	err = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('memories') WHERE name='archived_at'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = s.db.Exec("ALTER TABLE memories ADD COLUMN archived_at DATETIME")
+	}
+
+	// 4. Tambahkan kolom archive untuk workspaces
+	err = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('workspaces') WHERE name='is_archived'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN is_archived INTEGER DEFAULT 0")
+	}
+	err = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('workspaces') WHERE name='archived_at'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = s.db.Exec("ALTER TABLE workspaces ADD COLUMN archived_at DATETIME")
+	}
+
+	// 5. Tambahkan index yang tergantung pada workspace_id dan archive
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id)")
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id)")
+	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(is_archived, workspace_id)")
+	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_workspaces_archived ON workspaces(is_archived)")
 
 	return nil
 }
@@ -433,6 +455,139 @@ func (s *SQLiteStore) ListWorkspaces() ([]Workspace, error) {
 func (s *SQLiteStore) DeleteWorkspace(id int64) error {
 	_, err := s.db.Exec("DELETE FROM workspaces WHERE id = ?", id)
 	return err
+}
+
+// --- Archive Operations ---
+
+// ArchiveMemory soft-archives a memory by ID.
+func (s *SQLiteStore) ArchiveMemory(id int64) error {
+	now := time.Now()
+	result, err := s.db.Exec(
+		"UPDATE memories SET is_archived = 1, archived_at = ? WHERE id = ?",
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal mengarsipkan memory: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("memory tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// UnarchiveMemory restores an archived memory.
+func (s *SQLiteStore) UnarchiveMemory(id int64) error {
+	result, err := s.db.Exec(
+		"UPDATE memories SET is_archived = 0, archived_at = NULL WHERE id = ?",
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal memulihkan memory: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("memory tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// ListArchivedMemories returns archived memories for a workspace.
+func (s *SQLiteStore) ListArchivedMemories(workspaceID int64, limit int) ([]Memory, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(
+		"SELECT id, workspace_id, content, tags, source, is_archived, archived_at, created_at FROM memories WHERE is_archived = 1 AND (workspace_id = ? OR workspace_id IS NULL) ORDER BY archived_at DESC LIMIT ?",
+		workspaceID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gagal query archived memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []Memory
+	for rows.Next() {
+		var m Memory
+		var archivedAt sql.NullTime
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &m.Tags, &m.Source, &m.IsArchived, &archivedAt, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("gagal scan memory: %w", err)
+		}
+		if archivedAt.Valid {
+			m.ArchivedAt = &archivedAt.Time
+		}
+		memories = append(memories, m)
+	}
+	return memories, nil
+}
+
+// DeleteArchivedMemory permanently deletes an archived memory.
+func (s *SQLiteStore) DeleteArchivedMemory(id int64) error {
+	result, err := s.db.Exec("DELETE FROM memories WHERE id = ? AND is_archived = 1", id)
+	if err != nil {
+		return fmt.Errorf("gagal menghapus memory: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("archived memory tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// ArchiveWorkspace soft-archives a workspace by ID.
+func (s *SQLiteStore) ArchiveWorkspace(id int64) error {
+	now := time.Now()
+	result, err := s.db.Exec(
+		"UPDATE workspaces SET is_archived = 1, archived_at = ? WHERE id = ?",
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal mengarsipkan workspace: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("workspace tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// UnarchiveWorkspace restores an archived workspace.
+func (s *SQLiteStore) UnarchiveWorkspace(id int64) error {
+	result, err := s.db.Exec(
+		"UPDATE workspaces SET is_archived = 0, archived_at = NULL WHERE id = ?",
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal memulihkan workspace: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("workspace tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// ListArchivedWorkspaces returns all archived workspaces.
+func (s *SQLiteStore) ListArchivedWorkspaces() ([]Workspace, error) {
+	rows, err := s.db.Query("SELECT id, name, path, is_archived, archived_at, created_at FROM workspaces WHERE is_archived = 1 ORDER BY archived_at DESC")
+	if err != nil {
+		return nil, fmt.Errorf("gagal query archived workspaces: %w", err)
+	}
+	defer rows.Close()
+
+	var workspaces []Workspace
+	for rows.Next() {
+		var w Workspace
+		var archivedAt sql.NullTime
+		if err := rows.Scan(&w.ID, &w.Name, &w.Path, &w.IsArchived, &archivedAt, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		if archivedAt.Valid {
+			w.ArchivedAt = &archivedAt.Time
+		}
+		workspaces = append(workspaces, w)
+	}
+	return workspaces, nil
 }
 
 // Search is implemented in search.go

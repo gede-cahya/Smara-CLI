@@ -1,6 +1,6 @@
 package dashboard
 
-import "github.com/charmbracelet/lipgloss"
+import lipgloss "charm.land/lipgloss/v2"
 
 var (
 	// Colors

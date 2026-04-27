@@ -10,30 +10,34 @@ import (
 
 // Memory represents a single piece of stored knowledge.
 type Memory struct {
-	ID          int64     `json:"id"`
-	WorkspaceID int64     `json:"workspace_id"`
-	Content     string    `json:"content"`
-	Embedding   []float32 `json:"-"` // stored as BLOB
-	Tags        string    `json:"tags"`
-	Source      string    `json:"source"` // e.g., "agent:worker-1", "user", "sync"
-	CreatedAt   time.Time `json:"created_at"`
+	ID          int64      `json:"id"`
+	WorkspaceID int64      `json:"workspace_id"`
+	Content     string     `json:"content"`
+	Embedding   []float32  `json:"-"` // stored as BLOB
+	Tags        string     `json:"tags"`
+	Source      string     `json:"source"`                // e.g., "agent:worker-1", "user", "sync"
+	IsArchived  bool       `json:"is_archived"`           // NEW: soft-archive flag
+	ArchivedAt  *time.Time `json:"archived_at,omitempty"` // NEW: archive timestamp
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // Workspace represents a project-specific container.
 type Workspace struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	Path       string     `json:"path"`
+	IsArchived bool       `json:"is_archived"`           // NEW: soft-archive flag
+	ArchivedAt *time.Time `json:"archived_at,omitempty"` // NEW: archive timestamp
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // SyncEntry represents a synchronization log entry.
 type SyncEntry struct {
-	ID        int64     `json:"id"`
-	MemoryID  int64     `json:"memory_id"`
-	DeltaHash string    `json:"delta_hash"`
+	ID        int64      `json:"id"`
+	MemoryID  int64      `json:"memory_id"`
+	DeltaHash string     `json:"delta_hash"`
 	Status    SyncStatus `json:"status"`
-	SyncedAt  time.Time `json:"synced_at"`
+	SyncedAt  time.Time  `json:"synced_at"`
 }
 
 // SyncStatus represents the state of a sync operation.
@@ -96,6 +100,16 @@ type MemoryStore interface {
 
 	// MarkSynced marks a memory as successfully synced.
 	MarkSynced(memoryID int64, deltaHash string) error
+
+	// --- Archive Operations ---
+	ArchiveMemory(id int64) error
+	UnarchiveMemory(id int64) error
+	ListArchivedMemories(workspaceID int64, limit int) ([]Memory, error)
+	DeleteArchivedMemory(id int64) error
+
+	ArchiveWorkspace(id int64) error
+	UnarchiveWorkspace(id int64) error
+	ListArchivedWorkspaces() ([]Workspace, error)
 
 	// Close closes the database connection.
 	Close() error

@@ -14,10 +14,12 @@ type Memory struct {
 	WorkspaceID int64                  `json:"workspace_id"`
 	CategoryID  *int64                 `json:"category_id,omitempty"`
 	Content     string                 `json:"content"`
-	Embedding   []float32              `json:"-"` // stored as BLOB
-	Tags        []string               `json:"tags"` // CHANGED: from string to []string
+	Embedding   []float32              `json:"-"`      // BLOB in SQLite
+	Tags        []string               `json:"tags"`   // CHANGED: from string to []string
 	Source      string                 `json:"source"` // e.g., "agent:worker-1", "user", "sync"
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	IsArchived  bool                   `json:"is_archived"`           // NEW: soft-archive flag
+	ArchivedAt  *time.Time             `json:"archived_at,omitempty"` // NEW: archive timestamp
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 	ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
@@ -26,20 +28,22 @@ type Memory struct {
 
 // Workspace represents a project-specific container.
 type Workspace struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	Path       string     `json:"path"`
+	IsArchived bool       `json:"is_archived"`           // NEW: soft-archive flag
+	ArchivedAt *time.Time `json:"archived_at,omitempty"` // NEW: archive timestamp
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // Category represents a memory category/folder within a workspace.
 type Category struct {
-	ID          int64      `json:"id"`
-	WorkspaceID int64      `json:"workspace_id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description,omitempty"`
-	ParentID    *int64     `json:"parent_id,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          int64     `json:"id"`
+	WorkspaceID int64     `json:"workspace_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	ParentID    *int64    `json:"parent_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // MemoryVersion represents a historical version of a memory.
@@ -55,11 +59,11 @@ type MemoryVersion struct {
 
 // SyncEntry represents a synchronization log entry.
 type SyncEntry struct {
-	ID        int64     `json:"id"`
-	MemoryID  int64     `json:"memory_id"`
-	DeltaHash string    `json:"delta_hash"`
+	ID        int64      `json:"id"`
+	MemoryID  int64      `json:"memory_id"`
+	DeltaHash string     `json:"delta_hash"`
 	Status    SyncStatus `json:"status"`
-	SyncedAt  time.Time `json:"synced_at"`
+	SyncedAt  time.Time  `json:"synced_at"`
 }
 
 // SyncStatus represents the state of a sync operation.
@@ -91,9 +95,9 @@ type SearchFilters struct {
 // MemoryFilters defines filters for listing memories with pagination.
 type MemoryFilters struct {
 	SearchFilters
-	Limit  int
-	Offset int
-	SortBy string // "created_at", "updated_at", "relevance"
+	Limit   int
+	Offset  int
+	SortBy  string // "created_at", "updated_at", "relevance"
 	SortDir string // "ASC", "DESC"
 }
 
@@ -190,6 +194,16 @@ type MemoryStore interface {
 
 	// RollbackMemory reverts a memory to a previous version.
 	RollbackMemory(memoryID int64, versionID int64) error
+
+	// --- Archive Operations ---
+	ArchiveMemory(id int64) error
+	UnarchiveMemory(id int64) error
+	ListArchivedMemories(workspaceID int64, limit int) ([]Memory, error)
+	DeleteArchivedMemory(id int64) error
+
+	ArchiveWorkspace(id int64) error
+	UnarchiveWorkspace(id int64) error
+	ListArchivedWorkspaces() ([]Workspace, error)
 
 	// Close closes the database connection.
 	Close() error

@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.8.8**
+**Autonomous Multi-Agent Terminal v1.8.9**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -17,9 +17,13 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
   - `plan` (📋): Membuat rencana dan meminta persetujuan sebelum eksekusi.
 - **Platform Integration**: Jalankan Smara sebagai bot di **Telegram**, **Discord**, dan **WhatsApp**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
-- **Persistent Sessions**: Riwayat percakapan dan status agen kini tersimpan secara otomatis di SQLite, memungkinkan Anda melanjutkan sesi sebelumnya.
-- **Smart Memory**: Menggunakan SQLite & Vector Search untuk menyimpan konteks percakapan lintas platform.
-- **MCP Integration**: Secara otomatis mendeteksi dan menghubungkan ke server MCP dari OpenCode.
+- **📦 Workspace Management**: Isolasi proyek, memori, dan sesi antar ruang kerja yang berbeda.
+- **📊 Dashboard Monitoring**: TUI real-time untuk memantau metrik platform, LLM, dan MCP.
+- **🧠 Smart Memory v2**: 
+  - **Hybrid Search**: Kombinasi Semantic (Vector) dan Keyword (FTS5) search.
+  - **Versioning**: Simpan riwayat perubahan memori dan lakukan rollback jika diperlukan.
+  - **Categorization**: Atur memori dalam hierarki kategori yang rapi.
+  - **Export/Import**: Dukungan format JSON, CSV, Markdown, dan ZIP.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 
 ---
@@ -38,7 +42,11 @@ irm https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.ps1 | ie
 
 ---
 
-## 🔑 Setup & Konfigurasi
+## 📖 Panduan Penggunaan
+Untuk melihat panduan interaktif langsung di terminal, jalankan:
+```bash
+smara guide
+```
 
 ### 1. Login ke Provider
 Gunakan perintah `login` untuk menyimpan API key secara aman:
@@ -51,11 +59,44 @@ smara login
 smara provider select
 ```
 
-### 3. Konfigurasi Bot (Optional)
-Tambahkan token di `~/.smara/config.yaml` atau via environment variables:
+---
+
+## 📦 Workspace & Proyek
+Gunakan workspace untuk memisahkan konteks antar proyek:
 ```bash
-export SMARA_TELEGRAM_TOKEN="your_bot_token"
-export SMARA_DISCORD_TOKEN="your_bot_token"
+smara workspace create "Project X"
+smara workspace use "Project X"
+smara workspace list
+```
+
+---
+
+## 📊 Monitoring Dashboard
+Pantau aktivitas bot dan performa agen secara real-time:
+```bash
+smara dashboard
+```
+*Gunakan flag `--once` untuk snapshot cepat atau `--refresh 5s` untuk mengatur interval.*
+
+---
+
+## 🧠 Manajemen Memori
+Kelola basis pengetahuan agen Anda:
+```bash
+# Pencarian Hybrid (Semantic + Keyword)
+smara memory search "cara deploy nextjs" --hybrid
+
+# Kelola Kategori
+smara category create "Coding" --description "Snippet dan tutorial"
+smara category list
+
+# Versi & Rollback
+smara memory history [ID]
+smara memory rollback [ID] [VersionID]
+
+# Backup & Restore
+smara memory export backup.zip --format zip
+smara memory import backup.zip
 ```
 
 ---
@@ -79,7 +120,7 @@ smara serve --platform telegram --mode plan
 
 ---
 
-## 🛠️ Perintah CLI Utama
+## 🛠️ Perintah CLI Lainnya
 - `smara start`: Mulai sesi interaktif TUI.
 - `smara provider list`: Lihat provider yang tersedia.
 - `smara config list`: Cek konfigurasi saat ini.
@@ -98,11 +139,12 @@ platforms:
     enabled: true
     token: "YOUR_TOKEN"
     allowed_users: ["12345678"]
-    rate_limit: 20
   discord:
     enabled: true
     token: "YOUR_TOKEN"
     allowed_roles: ["smara-user"]
+  whatsapp:
+    enabled: true
 ```
 
 ---

@@ -14,9 +14,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
 )
 
-// Style definitions
+// ═══════════════════════════════════════════════════════════════
+// Smara CLI TUI App — Interactive Multi-Panel Terminal UI
+// ═══════════════════════════════════════════════════════════════
+
+// Style definitions (kept for backward compat, use theme now)
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -140,6 +145,19 @@ type AppModel struct {
 	showSidebar     bool
 	sidebarViewport viewport.Model
 	sidebarWidth    int
+
+	// ─── NEW: Interactive components ───────────────────────────
+	theme         *components.Theme
+	layout        components.Layout
+	headerComp    *components.Header
+	sidebarComp   *components.Sidebar
+	statusBarComp *components.StatusBar
+	msgRenderer   *components.MessageRenderer
+	helpOverlay   *components.HelpOverlay
+	palette       *components.CommandPalette
+	showHelp      bool
+	showPalette   bool
+	showThinking  bool // toggle thinking visibility
 }
 
 // InitialModel creates a new model
@@ -167,6 +185,8 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 	s.Spinner = spinner.MiniDot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
+	theme := components.GetTheme()
+
 	return AppModel{
 		textarea:        ta,
 		viewport:        vp,
@@ -179,8 +199,17 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 		historyIdx:      -1,
 		onCommand:       onCmd,
 		sidebarViewport: sidebarVp,
-		showSidebar:     false,
-		sidebarWidth:    30,
+		showSidebar:     false, // Default: sidebar hidden
+		sidebarWidth:    28,
+		// ─── NEW ─────────────────────────────────────────────────
+		theme:         theme,
+		headerComp:    components.NewHeader(80),
+		sidebarComp:   components.NewSidebar(28, 20),
+		statusBarComp: components.NewStatusBar(80),
+		msgRenderer:   components.NewMessageRenderer(80),
+		helpOverlay:   components.NewHelpOverlay(60),
+		palette:       components.NewCommandPalette(50),
+		showThinking:  true,
 	}
 }
 
@@ -236,6 +265,84 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vpCmd tea.Cmd
 		cmds  []tea.Cmd
 	)
+
+	// ─── Handle overlays first ─────────────────────────────────
+	// If palette is active, handle palette input
+	if m.palette.IsActive() {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc", "ctrl+c":
+				m.palette.Close()
+				return m, nil
+			case "enter":
+				if item, ok := m.palette.SelectedItem(); ok {
+					m.palette.Close()
+					m.textarea.SetValue(item.Command)
+					// Auto-submit
+					v := strings.TrimSpace(item.Command)
+					if v != "" {
+						m.addMessage("User", v)
+						if IsCommand(v) {
+							cmdName, cmdArgs := ParseCommand(v)
+							m.handleCommand(cmdName, cmdArgs)
+						} else {
+							m.processing = true
+							m.statusText = "Memproses..."
+							m.currentStream = ""
+							m.currentThinking = ""
+							sup := m.supervisor
+							ctx := m.ctx
+							cmds = append(cmds, m.spinner.Tick)
+							cmds = append(cmds, func() tea.Msg {
+								result, err := sup.ProcessPrompt(ctx, v)
+								return ProcessMsg{Result: result, Err: err}
+							})
+						}
+					}
+					m.textarea.Reset()
+				}
+				return m, tea.Batch(cmds...)
+			case "up":
+				m.palette.MoveSelection(-1)
+				return m, nil
+			case "down":
+				m.palette.MoveSelection(1)
+				return m, nil
+			case "backspace":
+				if len(m.palette.FilterText()) > 0 {
+					m.palette.SetFilter(m.palette.FilterText()[:len(m.palette.FilterText())-1])
+				}
+				return m, nil
+			default:
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.palette.SetFilter(m.palette.FilterText() + string(msg.Runes))
+				}
+				return m, nil
+			}
+		}
+		// Still update textarea/viewport in background but don't process their input
+		m.textarea, tiCmd = m.textarea.Update(msg)
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		cmds = append(cmds, tiCmd, vpCmd)
+		return m, tea.Batch(cmds...)
+	}
+
+	// If help overlay is showing
+	if m.showHelp {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc", "ctrl+?", "ctrl+c":
+				m.showHelp = false
+				return m, nil
+			}
+		}
+		m.textarea, tiCmd = m.textarea.Update(msg)
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		cmds = append(cmds, tiCmd, vpCmd)
+		return m, tea.Batch(cmds...)
+	}
 
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
@@ -298,6 +405,35 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlD:
 			return m, tea.Quit
 
+		case tea.KeyCtrlB:
+			// Toggle sidebar
+			m.showSidebar = !m.showSidebar
+			m.updateLayout()
+			m.renderMessages()
+			return m, nil
+
+		case tea.KeyCtrlT:
+			// Toggle thinking visibility
+			m.showThinking = !m.showThinking
+			m.renderMessages()
+			return m, nil
+
+		case tea.KeyCtrlP:
+			// Toggle command palette
+			m.palette.Toggle()
+			return m, nil
+
+		case tea.KeyRunes:
+			// Handle '?' key to toggle help overlay
+			if len(msg.Runes) == 1 && msg.Runes[0] == '?' && !m.processing {
+				m.showHelp = !m.showHelp
+				return m, nil
+			}
+		case tea.KeyF1:
+			// Alternative: F1 for help
+			m.showHelp = !m.showHelp
+			return m, nil
+
 		case tea.KeyTab:
 			// Cycle modes
 			if m.supervisor != nil {
@@ -316,7 +452,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					nextMode = "ask"
 				}
 				m.supervisor.SetMode(nextMode)
-				// m.addMessage("System", fmt.Sprintf("Mode diubah menjadi: %s", nextMode)) // Removed to prevent viewport clutter
 			}
 
 		case tea.KeyUp:
@@ -435,16 +570,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
-		m.textarea.SetWidth(msg.Width - 4)
-
-		vpHeight := msg.Height - m.textarea.Height() - 5 // Header + borders + input
-		if vpHeight < 5 {
-			vpHeight = 5
-		}
-		m.viewport.Width = msg.Width - 4
-		m.viewport.Height = vpHeight
-		m.renderMessages()
+		m.updateLayout()
 
 	case LogMsg:
 		m.messages = append(m.messages, msg.Message)
@@ -452,6 +578,33 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// updateLayout recalculates panel dimensions.
+func (m *AppModel) updateLayout() {
+	m.layout = components.ComputeLayout(m.width, m.height, m.showSidebar)
+
+	// Update component widths
+	m.headerComp.SetWidth(m.layout.ContentW)
+	m.statusBarComp.SetWidth(m.layout.ContentW)
+	m.msgRenderer.SetWidth(m.layout.ContentW)
+
+	if m.showSidebar {
+		m.sidebarComp.SetSize(m.layout.SidebarW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
+	}
+
+	// Update textarea
+	m.textarea.SetWidth(m.layout.ContentW - 4)
+
+	// Update viewport
+	vpHeight := m.layout.ChatH
+	if vpHeight < 5 {
+		vpHeight = 5
+	}
+	m.viewport.Width = m.layout.ContentW - 4
+	m.viewport.Height = vpHeight
+
+	m.renderMessages()
 }
 
 func (m *AppModel) addMessage(role, content string) {
@@ -481,116 +634,35 @@ func (m *AppModel) renderMessages() {
 	var sb strings.Builder
 	sb.WriteString(bannerContent())
 
-	for _, msg := range m.messages {
-		timeStr := dimStyle.Render(msg.Time.Format("15:04"))
-
-		var prefix string
-		var renderedContent string
-
-		switch msg.Role {
-		case "User":
-			prefix = userStyle.Render("User:")
-			renderedContent = messageStyle.Render(msg.Content)
-		case "Agent":
-			mode := "Agent"
-			if m.supervisor != nil {
-				mode = strings.ToUpper(string(m.supervisor.GetMode()))
-			}
-			prefix = agentStyle.Render(fmt.Sprintf("Smara [%s]:", mode))
-
-			// Detect if content is primarily code or tool output
-			if strings.Contains(msg.Content, "```") || strings.Contains(msg.Content, "package ") || strings.Contains(msg.Content, "import ") {
-				renderedContent = codingStyle.Render(msg.Content)
-			} else {
-				renderedContent = messageStyle.Render(msg.Content)
-			}
-		case "System":
-			if strings.HasPrefix(msg.Content, "Error") {
-				prefix = errStyle.Render("System:")
-				renderedContent = errStyle.Render(msg.Content)
-			} else {
-				prefix = infoStyle.Render("System:")
-				renderedContent = dimStyle.Render(msg.Content)
-			}
-		case "Terminal":
-			prefix = terminalStyle.Render("$")
-			// Terminal output is dimmed and bracketed like the reference image
-			lines := strings.Split(msg.Content, "\n")
-			var terminalRows []string
-			for _, line := range lines {
-				if line != "" {
-					terminalRows = append(terminalRows, dimStyle.Render(line))
-				}
-			}
-			renderedContent = strings.Join(terminalRows, "\n")
-		}
-
-		var thinkingContent string
-		if msg.Thinking != "" {
-			thinkingContent = thinkingStyle.Render("Thinking: "+msg.Thinking) + "\n"
-		}
-
-		var thoughtsContent string
-		if len(msg.Thoughts) > 0 {
-			thoughtsContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("Thought: ") +
-				strings.Join(msg.Thoughts, "\n          ") + "\n"
-		}
-
-		var workedContent string
-		if len(msg.ToolsExecuted) > 0 {
-			workedContent = dimStyle.Render("Worked: ") + infoStyle.Render(strings.Join(msg.ToolsExecuted, ", ")) + "\n"
-		}
-
-		stats := ""
-		if msg.Role == "Agent" && msg.InputTokens > 0 {
-			stats = dimStyle.Render(fmt.Sprintf("\n(In: %d | Out: %d | Total: %d | %s)",
-				msg.InputTokens, msg.OutputTokens, msg.InputTokens+msg.OutputTokens,
-				msg.Duration.Round(time.Millisecond)))
-		}
-
-		// Distinct separation: prefix on top or beside depending on role
-		if msg.Role == "Terminal" {
-			sb.WriteString(fmt.Sprintf("%s %s %s\n\n", timeStr, prefix, renderedContent))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s %s\n%s%s%s%s%s\n\n", timeStr, prefix, thinkingContent, thoughtsContent, workedContent, renderedContent, stats))
-		}
+	mode := "ask"
+	if m.supervisor != nil {
+		mode = string(m.supervisor.GetMode())
 	}
 
-	// Append current stream if any
+	// Render historical messages using new message renderer
+	for _, msg := range m.messages {
+		thinking := msg.Thinking
+		if !m.showThinking {
+			thinking = ""
+		}
+		rendered := m.msgRenderer.RenderMessage(
+			msg.Role, msg.Content, thinking,
+			msg.Thoughts, msg.ToolsExecuted,
+			msg.InputTokens, msg.OutputTokens, msg.Duration,
+			mode,
+		)
+		sb.WriteString(rendered)
+		sb.WriteString("\n")
+	}
+
+	// Render current stream
 	if m.currentStream != "" || m.currentThinking != "" || m.currentExplore != "" {
-		mode := "Agent"
-		if m.supervisor != nil {
-			mode = strings.ToUpper(string(m.supervisor.GetMode()))
+		thinking := m.currentThinking
+		if !m.showThinking {
+			thinking = ""
 		}
-		prefix := agentStyle.Render(fmt.Sprintf("Smara [%s]:", mode))
-
-		var thinkingContent string
-		if m.currentThinking != "" {
-			thinkingContent = thinkingStyle.Render("Thinking: "+m.currentThinking) + "\n"
-		}
-
-		var renderedContent string
-		if strings.Contains(m.currentStream, "```") || strings.Contains(m.currentStream, "package ") {
-			renderedContent = codingStyle.Render(m.currentStream)
-		} else {
-			renderedContent = messageStyle.Render(m.currentStream)
-		}
-
-		if m.currentExplore != "" {
-			exploreLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render("Explore:")
-			exploreContent := lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("#7D56F4")).
-				PaddingLeft(1).
-				MarginLeft(1).
-				Render(m.currentExplore)
-			sb.WriteString(fmt.Sprintf("%s %s\n%s\n%s %s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, exploreLabel, exploreContent))
-			if m.currentStream != "" {
-				sb.WriteString(fmt.Sprintf("%s\n", renderedContent))
-			}
-		} else {
-			sb.WriteString(fmt.Sprintf("%s %s\n%s%s\n\n", dimStyle.Render("LIVE"), prefix, thinkingContent, renderedContent))
-		}
+		rendered := m.msgRenderer.RenderStream(m.currentStream, thinking, mode)
+		sb.WriteString(rendered)
 	}
 
 	m.viewport.SetContent(sb.String())
@@ -622,32 +694,56 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
 	}
 }
 
+// buildSidebarData collects data for the sidebar.
+func (m *AppModel) buildSidebarData() components.SidebarData {
+	data := components.SidebarData{
+		Messages: len(m.messages),
+		Mode:     "ask",
+	}
+
+	if m.supervisor != nil {
+		data.Mode = string(m.supervisor.GetMode())
+		provider, model := m.supervisor.GetModelInfo()
+		data.Provider = provider
+		data.Model = model
+	}
+
+	// Count tokens from last agent message
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == "Agent" {
+			data.InTokens += m.messages[i].InputTokens
+			data.OutTokens += m.messages[i].OutputTokens
+			if m.messages[i].Duration > 0 {
+				data.Elapsed = m.messages[i].Duration
+			}
+			break
+		}
+	}
+
+	return data
+}
+
 // View renders the UI
 func (m AppModel) View() string {
 	if m.width == 0 {
 		return "Initializing..."
 	}
 
-	mode := "ASK"
+	mode := "ask"
+	provider, modelName := "", ""
 	if m.supervisor != nil {
-		mode = strings.ToUpper(string(m.supervisor.GetMode()))
+		mode = string(m.supervisor.GetMode())
+		provider, modelName = m.supervisor.GetModelInfo()
 	}
 
-	header := titleStyle.Render(fmt.Sprintf(" Smara CLI - Mode: %s ", mode))
-	if m.supervisor != nil {
-		provider, modelName := m.supervisor.GetModelInfo()
-		header += " " + dimStyle.Render(fmt.Sprintf("[%s / %s]", provider, modelName))
-	}
-	if m.processing {
-		status := m.statusText
-		if status == "" {
-			status = "Sedang memproses..."
-		}
-		header += " " + warnStyle.Render(fmt.Sprintf("%s %s", m.spinner.View(), status))
-	}
+	// ─── Header ────────────────────────────────────────────────
+	header := m.headerComp.Render(mode, provider, modelName, m.processing, m.spinner.View(), m.statusText)
 
-	// Confirmation UI
-	inputArea := ""
+	// ─── Chat Area ─────────────────────────────────────────────
+	chatContent := m.viewport.View()
+
+	// ─── Input Area ────────────────────────────────────────────
+	var inputArea string
 	if m.awaitingConfirmation {
 		yaStyle := lipgloss.NewStyle().Padding(0, 1)
 		tidakStyle := lipgloss.NewStyle().Padding(0, 1)
@@ -671,19 +767,48 @@ func (m AppModel) View() string {
 		inputArea = m.textarea.View()
 	}
 
-	// Create main layout
-	return fmt.Sprintf(
-		"%s\n%s\n%s",
+	// ─── Status Bar ────────────────────────────────────────────
+	totalTokens := 0
+	for _, msg := range m.messages {
+		totalTokens += msg.InputTokens + msg.OutputTokens
+	}
+	statusBar := m.statusBarComp.Render(components.StatusContext{
+		Mode:       mode,
+		Provider:   provider,
+		Model:      modelName,
+		TokenCount: totalTokens,
+		Processing: m.processing,
+	})
+
+	// ─── Sidebar ───────────────────────────────────────────────
+	var sidebar string
+	if m.showSidebar && m.layout.SidebarW > 0 {
+		sidebarData := m.buildSidebarData()
+		sidebar = m.sidebarComp.Render(sidebarData)
+	}
+
+	// ─── Combine Main Column ───────────────────────────────────
+	mainColumn := fmt.Sprintf("%s\n%s\n%s\n%s",
 		header,
-		borderStyle.Render(m.viewport.View()),
+		chatContent,
 		inputArea,
+		statusBar,
 	)
+
+	// ─── Final Layout ──────────────────────────────────────────
+	if m.showSidebar && m.layout.SidebarW > 0 {
+		// Join main column + sidebar horizontally
+		return components.JoinHorizontal(mainColumn, sidebar, m.layout.ContentW)
+	}
+
+	return mainColumn
 }
 
-// Programmatic message injection
+// ─── Programmatic message injection ───────────────────────────
+
+// InjectLog sends a log message to the TUI.
 func InjectLog(role, content string) {
 	if globalProgram != nil {
-		// Send asynchronously to avoid deadlock when called from within Update()
 		go globalProgram.Send(LogMsg{
 			Message: ChatMessage{
 				Role:    role,
@@ -692,32 +817,31 @@ func InjectLog(role, content string) {
 			},
 		})
 	} else {
-		// Fallback to normal print if TUI isn't running
 		fmt.Printf("[%s] %s\n", role, content)
 	}
 }
 
 // TUI-compatible Print overrides
 
-// PrintInfo replaces the standard PrintInfo when using TUI
+// TUIPrintInfo replaces the standard PrintInfo when using TUI
 func TUIPrintInfo(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	InjectLog("System", msg)
 }
 
-// PrintSuccess replaces the standard PrintSuccess when using TUI
+// TUIPrintSuccess replaces the standard PrintSuccess when using TUI
 func TUIPrintSuccess(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	InjectLog("System", "✓ "+msg)
 }
 
-// PrintWarning replaces the standard PrintWarning when using TUI
+// TUIPrintWarning replaces the standard PrintWarning when using TUI
 func TUIPrintWarning(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	InjectLog("System", "⚠ "+msg)
 }
 
-// PrintError replaces the standard PrintError when using TUI
+// TUIPrintError replaces the standard PrintError when using TUI
 func TUIPrintError(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	InjectLog("System", "Error: "+msg)
@@ -725,7 +849,6 @@ func TUIPrintError(format string, args ...interface{}) {
 
 // processFileMentions searches for @filename in the prompt and injects file content
 func (m *AppModel) processFileMentions(prompt string) string {
-	// Simple regex for @path/to/file.ext
 	re := regexp.MustCompile(`@([\w\.\/\-]+)`)
 	matches := re.FindAllStringSubmatch(prompt, -1)
 	if len(matches) == 0 {
@@ -783,7 +906,6 @@ func GetGlobalProgram() *tea.Program {
 
 // NewProgram creates a new bubbletea program
 func NewProgram(m AppModel) *tea.Program {
-	// Use AltScreen so it feels like a full app
 	return tea.NewProgram(m,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
@@ -800,7 +922,7 @@ func (m *AppModel) LoadHistory(history []struct{ Role, Content string }) {
 		m.messages = append(m.messages, ChatMessage{
 			Role:    role,
 			Content: h.Content,
-			Time:    time.Now(), // we might not have the actual time, but that's fine
+			Time:    time.Now(),
 		})
 	}
 	m.renderMessages()

@@ -103,14 +103,11 @@ func (s *SQLiteStore) Init() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL`,
+
 		`CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags)`,
 		`CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source)`,
 		`CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_log(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)`,
+
 		`CREATE INDEX IF NOT EXISTS idx_categories_workspace ON categories(workspace_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_memory_versions_memory ON memory_versions(memory_id)`,
 	}
@@ -159,7 +156,13 @@ func (s *SQLiteStore) migrate() error {
 			var stmt string
 			switch col {
 			case "updated_at":
-				stmt = "ALTER TABLE memories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+				// SQLite: ALTER TABLE ADD COLUMN with DEFAULT CURRENT_TIMESTAMP fails
+				// if table already has data. Workaround: add without default, then UPDATE.
+				if _, err := s.db.Exec("ALTER TABLE memories ADD COLUMN updated_at DATETIME"); err != nil {
+					return fmt.Errorf("gagal menambahkan kolom %s ke tabel memories: %w", col, err)
+				}
+				_, _ = s.db.Exec("UPDATE memories SET updated_at = created_at WHERE updated_at IS NULL")
+				stmt = ""
 			case "expires_at":
 				stmt = "ALTER TABLE memories ADD COLUMN expires_at DATETIME"
 			case "category_id":
@@ -170,7 +173,17 @@ func (s *SQLiteStore) migrate() error {
 				stmt = "ALTER TABLE memories ADD COLUMN version INTEGER DEFAULT 1"
 			}
 			if stmt != "" {
-				_, _ = s.db.Exec(stmt)
+				if _, err := s.db.Exec(stmt); err != nil {
+					return fmt.Errorf("gagal menambahkan kolom %s ke tabel memories: %w", col, err)
+				}
+			}
+			// Verify the column was actually added
+			existsNow, err := columnExists("memories", col)
+			if err != nil {
+				return fmt.Errorf("gagal verifikasi kolom %s: %w", col, err)
+			}
+			if !existsNow {
+				return fmt.Errorf("kolom %s masih belum ada setelah migrasi", col)
 			}
 		}
 	}
@@ -215,15 +228,50 @@ func (s *SQLiteStore) migrate() error {
 	}
 
 	// 3. Ensure workspace_id exists in memories (for backward compatibility)
-	exists, _ := columnExists("memories", "workspace_id")
-	if !exists {
-		_, _ = s.db.Exec("ALTER TABLE memories ADD COLUMN workspace_id INTEGER DEFAULT 0")
+	existsWID, err := columnExists("memories", "workspace_id")
+	if err != nil {
+		return fmt.Errorf("gagal cek kolom workspace_id: %w", err)
+	}
+	if !existsWID {
+		if _, err := s.db.Exec("ALTER TABLE memories ADD COLUMN workspace_id INTEGER DEFAULT 0"); err != nil {
+			return fmt.Errorf("gagal menambahkan kolom workspace_id ke tabel memories: %w", err)
+		}
 	}
 
-	// 4. Ensure workspace_id exists in sessions
-	exists, _ = columnExists("sessions", "workspace_id")
-	if !exists {
-		_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN workspace_id INTEGER DEFAULT 0")
+	// 4. Ensure missing columns exist in sessions
+	sessionCols := map[string]string{
+		"workspace_id": "INTEGER DEFAULT 0",
+		"mcp_servers":  "TEXT DEFAULT '[]'",
+		"memory_ids":   "TEXT DEFAULT '[]'",
+		"context":      "TEXT DEFAULT ''",
+		"is_agentic":   "INTEGER DEFAULT 0",
+		"auto_resume":  "INTEGER DEFAULT 0",
+		"created_at":   "DATETIME DEFAULT CURRENT_TIMESTAMP",
+		"updated_at":   "DATETIME DEFAULT CURRENT_TIMESTAMP",
+	}
+	for col, definition := range sessionCols {
+		exists, err := columnExists("sessions", col)
+		if err != nil {
+			return fmt.Errorf("gagal cek kolom sessions.%s: %w", col, err)
+		}
+		if !exists {
+			var stmt string
+			if col == "updated_at" || col == "created_at" {
+				// SQLite workaround: CURRENT_TIMESTAMP is a non-constant default
+				// and cannot be used with ALTER TABLE ADD COLUMN on existing data.
+				if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s DATETIME", col)); err != nil {
+					return fmt.Errorf("gagal menambahkan kolom %s ke tabel sessions: %w", col, err)
+				}
+				_, _ = s.db.Exec(fmt.Sprintf("UPDATE sessions SET %s = datetime('now') WHERE %s IS NULL", col, col))
+			} else {
+				stmt = fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s %s", col, definition)
+			}
+			if stmt != "" {
+				if _, err := s.db.Exec(stmt); err != nil {
+					return fmt.Errorf("gagal menambahkan kolom %s ke tabel sessions: %w", col, err)
+				}
+			}
+		}
 	}
 
 	// 5. Create indexes if they don't exist (CREATE INDEX IF NOT EXISTS handles this)
@@ -231,6 +279,7 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category_id)")
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC)")
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL")
+	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)")
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_categories_workspace ON categories(workspace_id)")
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memory_versions_memory ON memory_versions(memory_id)")
 
@@ -571,7 +620,7 @@ func (s *SQLiteStore) UpdateMemory(id int64, updates map[string]interface{}) err
 	}
 
 	args = append(args, id)
-	query := fmt.Sprintf("UPDATE memories SET %s WHERE id = $%d", 
+	query := fmt.Sprintf("UPDATE memories SET %s WHERE id = $%d",
 		strings.Join(setClauses, ", "), argCount)
 
 	_, err = s.db.Exec(query, args...)
@@ -632,7 +681,6 @@ func (s *SQLiteStore) GetMemoryByID(id int64) (*Memory, error) {
 
 	return &m, nil
 }
-
 
 // CreateSession stores a new session.
 func (s *SQLiteStore) CreateSession(session *session.Session) error {
@@ -895,9 +943,9 @@ func (s *SQLiteStore) ListMemoriesWithFilters(workspaceID int64, filters MemoryF
 	if len(filters.Tags) > 0 {
 		// For each tag, check if it exists in the tags array
 		for _, tag := range filters.Tags {
-			query += fmt.Sprintf(" AND (tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags = $%d)", 
+			query += fmt.Sprintf(" AND (tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags = $%d)",
 				argCount, argCount+1, argCount+2, argCount+3, argCount+4)
-			countQuery += fmt.Sprintf(" AND (tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags = $%d)", 
+			countQuery += fmt.Sprintf(" AND (tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags LIKE $%d OR tags = $%d)",
 				argCount, argCount+1, argCount+2, argCount+3, argCount+4)
 			args = append(args, "%[\""+tag+"\"]%", "%\""+tag+"%%", "%,"+tag+",%", "%,"+tag+"]%", "[\""+tag+"\"]")
 			argCount += 5
@@ -995,6 +1043,139 @@ func (s *SQLiteStore) ListMemoriesWithFilters(workspaceID int64, filters MemoryF
 	return memories, total, nil
 }
 
+// --- Archive Operations ---
+
+// ArchiveMemory soft-archives a memory by ID.
+func (s *SQLiteStore) ArchiveMemory(id int64) error {
+	now := time.Now()
+	result, err := s.db.Exec(
+		"UPDATE memories SET is_archived = 1, archived_at = ? WHERE id = ?",
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal mengarsipkan memory: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("memory tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// UnarchiveMemory restores an archived memory.
+func (s *SQLiteStore) UnarchiveMemory(id int64) error {
+	result, err := s.db.Exec(
+		"UPDATE memories SET is_archived = 0, archived_at = NULL WHERE id = ?",
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal memulihkan memory: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("memory tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// ListArchivedMemories returns archived memories for a workspace.
+func (s *SQLiteStore) ListArchivedMemories(workspaceID int64, limit int) ([]Memory, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(
+		"SELECT id, workspace_id, content, tags, source, is_archived, archived_at, created_at FROM memories WHERE is_archived = 1 AND (workspace_id = ? OR workspace_id IS NULL) ORDER BY archived_at DESC LIMIT ?",
+		workspaceID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gagal query archived memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []Memory
+	for rows.Next() {
+		var m Memory
+		var archivedAt sql.NullTime
+		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &m.Tags, &m.Source, &m.IsArchived, &archivedAt, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("gagal scan memory: %w", err)
+		}
+		if archivedAt.Valid {
+			m.ArchivedAt = &archivedAt.Time
+		}
+		memories = append(memories, m)
+	}
+	return memories, nil
+}
+
+// DeleteArchivedMemory permanently deletes an archived memory.
+func (s *SQLiteStore) DeleteArchivedMemory(id int64) error {
+	result, err := s.db.Exec("DELETE FROM memories WHERE id = ? AND is_archived = 1", id)
+	if err != nil {
+		return fmt.Errorf("gagal menghapus memory: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("archived memory tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// ArchiveWorkspace soft-archives a workspace by ID.
+func (s *SQLiteStore) ArchiveWorkspace(id int64) error {
+	now := time.Now()
+	result, err := s.db.Exec(
+		"UPDATE workspaces SET is_archived = 1, archived_at = ? WHERE id = ?",
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal mengarsipkan workspace: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("workspace tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// UnarchiveWorkspace restores an archived workspace.
+func (s *SQLiteStore) UnarchiveWorkspace(id int64) error {
+	result, err := s.db.Exec(
+		"UPDATE workspaces SET is_archived = 0, archived_at = NULL WHERE id = ?",
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("gagal memulihkan workspace: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("workspace tidak ditemukan: %d", id)
+	}
+	return nil
+}
+
+// ListArchivedWorkspaces returns all archived workspaces.
+func (s *SQLiteStore) ListArchivedWorkspaces() ([]Workspace, error) {
+	rows, err := s.db.Query("SELECT id, name, path, is_archived, archived_at, created_at FROM workspaces WHERE is_archived = 1 ORDER BY archived_at DESC")
+	if err != nil {
+		return nil, fmt.Errorf("gagal query archived workspaces: %w", err)
+	}
+	defer rows.Close()
+
+	var workspaces []Workspace
+	for rows.Next() {
+		var w Workspace
+		var archivedAt sql.NullTime
+		if err := rows.Scan(&w.ID, &w.Name, &w.Path, &w.IsArchived, &archivedAt, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		if archivedAt.Valid {
+			w.ArchivedAt = &archivedAt.Time
+		}
+		workspaces = append(workspaces, w)
+	}
+	return workspaces, nil
+}
+
 // --- Helpers ---
 
 func float32ToBytes(floats []float32) []byte {
@@ -1049,8 +1230,8 @@ func parseTagsFromJSON(tagsJSON string) []string {
 				tag = strings.Trim(tag, "\"")
 				tag = strings.Trim(tag, "'")
 				// Skip if it looks like a JSON object or invalid JSON
-				if strings.Contains(tag, "{") || strings.Contains(tag, "}") || 
-				   strings.Contains(tag, "[") || strings.Contains(tag, "]") {
+				if strings.Contains(tag, "{") || strings.Contains(tag, "}") ||
+					strings.Contains(tag, "[") || strings.Contains(tag, "]") {
 					continue
 				}
 				if tag != "" && tag != "[]" && tag != "[" && tag != "]" && tag != "{" && tag != "}" {

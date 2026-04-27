@@ -24,14 +24,16 @@ type Session struct {
 	State       State         `json:"state"`
 	Mode        string        `json:"mode"`
 	MCPServers  []string      `json:"mcp_servers"`
-	History    []llm.Message `json:"history"`
-	Tasks      []Task        `json:"tasks"`
-	MemoryIDs  []int64       `json:"memory_ids"`  // References to persistent memories
-	Context    string        `json:"context"`     // Session context/summary
-	IsAgentic  bool          `json:"is_agentic"`  // Whether session uses agentic AI
-	AutoResume bool          `json:"auto_resume"` // Auto-continue from last state
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
+	History     []llm.Message `json:"history"`
+	Tasks       []Task        `json:"tasks"`
+	MemoryIDs   []int64       `json:"memory_ids"`            // References to persistent memories
+	Context     string        `json:"context"`               // Session context/summary
+	IsAgentic   bool          `json:"is_agentic"`            // Whether session uses agentic AI
+	AutoResume  bool          `json:"auto_resume"`           // Auto-continue from last state
+	IsArchived  bool          `json:"is_archived"`           // NEW: soft-archive flag
+	ArchivedAt  *time.Time    `json:"archived_at,omitempty"` // NEW: archive timestamp
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
 }
 
 // Config holds configuration for creating a new session.
@@ -55,6 +57,12 @@ type Store interface {
 	ListActiveSessions() ([]Session, error)
 	GetLastActiveSession() (*Session, error)
 	GetLastActiveSessionByWorkspace(workspaceID int64) (*Session, error)
+
+	// Archive operations
+	ArchiveSession(id string) error
+	UnarchiveSession(id string) error
+	ListArchivedSessions(workspaceID int64) ([]Session, error)
+	DeleteArchivedSession(id string) error
 }
 
 // TaskStatus represents the current state of a task.

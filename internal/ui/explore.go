@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 // ExploreResult represents a single file or directory in the explore tree

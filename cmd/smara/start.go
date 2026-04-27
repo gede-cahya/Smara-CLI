@@ -14,10 +14,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/safety"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 	"github.com/gede-cahya/Smara-CLI/internal/sync"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
@@ -125,6 +127,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// 4. Initialize Supervisor Agent
 	supervisor := agent.NewSupervisorWithConfig(provider, providerCfg, memStore)
 	defer supervisor.Close()
+
+	// 4.1 Attach Safety Engine
+	safetyEngine := safety.NewEngine()
+	supervisor.SetSafetyEngine(safetyEngine)
+
+	// 4.2 Attach Cognitive Validator
+	cognitiveValidator := cognitive.NewValidator()
+	supervisor.SetCognitiveValidator(cognitiveValidator)
 
 	// 4.x Workspace Initialization
 	activeWorkspaceName := cfg.ActiveWorkspace

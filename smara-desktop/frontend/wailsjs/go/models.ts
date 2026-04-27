@@ -246,10 +246,59 @@ export namespace llm {
 
 export namespace memory {
 	
+	export class Memory {
+	    id: number;
+	    workspace_id: number;
+	    content: string;
+	    tags: string;
+	    source: string;
+	    is_archived: boolean;
+	    // Go type: time
+	    archived_at?: any;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Memory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspace_id = source["workspace_id"];
+	        this.content = source["content"];
+	        this.tags = source["tags"];
+	        this.source = source["source"];
+	        this.is_archived = source["is_archived"];
+	        this.archived_at = this.convertValues(source["archived_at"], null);
+	        this.created_at = this.convertValues(source["created_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Workspace {
 	    id: number;
 	    name: string;
 	    path: string;
+	    is_archived: boolean;
+	    // Go type: time
+	    archived_at?: any;
 	    // Go type: time
 	    created_at: any;
 	
@@ -262,6 +311,8 @@ export namespace memory {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.path = source["path"];
+	        this.is_archived = source["is_archived"];
+	        this.archived_at = this.convertValues(source["archived_at"], null);
 	        this.created_at = this.convertValues(source["created_at"], null);
 	    }
 	
@@ -348,6 +399,9 @@ export namespace session {
 	    context: string;
 	    is_agentic: boolean;
 	    auto_resume: boolean;
+	    is_archived: boolean;
+	    // Go type: time
+	    archived_at?: any;
 	    // Go type: time
 	    created_at: any;
 	    // Go type: time
@@ -371,6 +425,8 @@ export namespace session {
 	        this.context = source["context"];
 	        this.is_agentic = source["is_agentic"];
 	        this.auto_resume = source["auto_resume"];
+	        this.is_archived = source["is_archived"];
+	        this.archived_at = this.convertValues(source["archived_at"], null);
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }

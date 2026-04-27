@@ -103,7 +103,7 @@ func (a *App) initSmara() {
 	if a.sessStore != nil {
 		a.supervisor.SetSessionStore(a.sessStore)
 		_ = a.supervisor.InitializeSessions()
-		
+
 		// Auto-connect to last session
 		lastSess, _ := a.supervisor.GetLastActiveSession()
 		if lastSess != nil {
@@ -198,7 +198,7 @@ func (a *App) CreateSession(name string) (string, error) {
 	if a.supervisor == nil {
 		return "", fmt.Errorf("supervisor belum siap")
 	}
-	
+
 	sess, err := a.supervisor.CreateSession(agent.SessionConfig{
 		Name: name,
 		Mode: string(agent.ModeAsk), // Default to Ask for now
@@ -206,7 +206,7 @@ func (a *App) CreateSession(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	return sess.ID, nil
 }
 
@@ -220,12 +220,12 @@ func (a *App) UpdateConfig(newCfg config.SmaraConfig) error {
 	// Update local config
 	curr := config.Get()
 	*curr = newCfg
-	
+
 	// Save to file
 	if err := config.Save(); err != nil {
 		return err
 	}
-	
+
 	// Re-initialize LLM and Supervisor to apply changes
 	a.initSmara()
 	return nil
@@ -239,12 +239,12 @@ func (a *App) GetTools() ([]map[string]interface{}, error) {
 
 	// 1. Get Builtin Tools
 	builtin := agent.GetBuiltinTools()
-	
+
 	// 2. Get MCP Tools
 	mcpInfo := a.supervisor.GetMCPInfo()
-	
+
 	var result []map[string]interface{}
-	
+
 	// Process Builtin
 	for _, t := range builtin {
 		result = append(result, map[string]interface{}{
@@ -253,7 +253,7 @@ func (a *App) GetTools() ([]map[string]interface{}, error) {
 			"source":      "builtin",
 		})
 	}
-	
+
 	// Process MCP
 	for server, info := range mcpInfo {
 		if !info.Connected {
@@ -267,8 +267,100 @@ func (a *App) GetTools() ([]map[string]interface{}, error) {
 			})
 		}
 	}
-	
+
 	return result, nil
+}
+
+// --- Archive Operations ---
+
+// ArchiveSession soft-archives a session.
+func (a *App) ArchiveSession(id string) error {
+	if a.sessStore == nil {
+		return fmt.Errorf("sessStore belum siap")
+	}
+	return a.sessStore.ArchiveSession(id)
+}
+
+// UnarchiveSession restores an archived session.
+func (a *App) UnarchiveSession(id string) error {
+	if a.sessStore == nil {
+		return fmt.Errorf("sessStore belum siap")
+	}
+	return a.sessStore.UnarchiveSession(id)
+}
+
+// GetArchivedSessions returns all archived sessions.
+func (a *App) GetArchivedSessions() ([]session.Session, error) {
+	if a.sessStore == nil {
+		return nil, fmt.Errorf("sessStore belum siap")
+	}
+	wID := a.supervisor.GetWorkspaceID()
+	return a.sessStore.ListArchivedSessions(wID)
+}
+
+// DeleteArchivedSession permanently deletes an archived session.
+func (a *App) DeleteArchivedSession(id string) error {
+	if a.sessStore == nil {
+		return fmt.Errorf("sessStore belum siap")
+	}
+	return a.sessStore.DeleteArchivedSession(id)
+}
+
+// ArchiveMemory soft-archives a memory.
+func (a *App) ArchiveMemory(id int64) error {
+	if a.memStore == nil {
+		return fmt.Errorf("memStore belum siap")
+	}
+	return a.memStore.ArchiveMemory(id)
+}
+
+// UnarchiveMemory restores an archived memory.
+func (a *App) UnarchiveMemory(id int64) error {
+	if a.memStore == nil {
+		return fmt.Errorf("memStore belum siap")
+	}
+	return a.memStore.UnarchiveMemory(id)
+}
+
+// GetArchivedMemories returns archived memories for the active workspace.
+func (a *App) GetArchivedMemories() ([]memory.Memory, error) {
+	if a.memStore == nil {
+		return nil, fmt.Errorf("memStore belum siap")
+	}
+	wID := a.supervisor.GetWorkspaceID()
+	return a.memStore.ListArchivedMemories(wID, 50)
+}
+
+// DeleteArchivedMemory permanently deletes an archived memory.
+func (a *App) DeleteArchivedMemory(id int64) error {
+	if a.memStore == nil {
+		return fmt.Errorf("memStore belum siap")
+	}
+	return a.memStore.DeleteArchivedMemory(id)
+}
+
+// ArchiveWorkspace soft-archives a workspace.
+func (a *App) ArchiveWorkspace(id int64) error {
+	if a.memStore == nil {
+		return fmt.Errorf("memStore belum siap")
+	}
+	return a.memStore.ArchiveWorkspace(id)
+}
+
+// UnarchiveWorkspace restores an archived workspace.
+func (a *App) UnarchiveWorkspace(id int64) error {
+	if a.memStore == nil {
+		return fmt.Errorf("memStore belum siap")
+	}
+	return a.memStore.UnarchiveWorkspace(id)
+}
+
+// GetArchivedWorkspaces returns all archived workspaces.
+func (a *App) GetArchivedWorkspaces() ([]memory.Workspace, error) {
+	if a.memStore == nil {
+		return nil, fmt.Errorf("memStore belum siap")
+	}
+	return a.memStore.ListArchivedWorkspaces()
 }
 
 // Greet returns a greeting for the given name (Legacy)

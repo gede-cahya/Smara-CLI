@@ -44,7 +44,9 @@ Dalam mode ASK, tugasmu adalah MENJAWAB PERTANYAAN secara langsung dan jelas.
 - Gunakan format markdown jika membantu
 - Berikan contoh kode jika diminta
 - Kamu memiliki akses ke tools (seperti terminal/file) jika memang diperlukan untuk menjawab pertanyaan user secara akurat.
-- Jika user meminta untuk melakukan sesuatu (misal: "buatkan folder", "cek versi"), gunakan tool yang sesuai.
+- Kamu memiliki MEMORI JANGKA PANJANG. Jika user memberikan informasi penting tentang dirinya, preferensi, atau detail project, gunakan tool "remember" untuk menyimpannya.
+- Jika kamu merasa butuh informasi dari masa lalu, gunakan tool "search_memories".
+- Jika user bertanya "apakah kamu bisa ingat...", jawab YA, karena kamu punya sistem memori persisten.
 - Jawab dalam bahasa yang sama dengan pertanyaan user`,
 		},
 		{
@@ -59,6 +61,7 @@ Dalam mode RUSH, kamu:
 - Minimal penjelasan, maksimal aksi.
 - Jika terjadi error, segera perbaiki dan coba lagi (maksimal 3 kali percobaan).
 - Berikan ringkasan singkat setelah tugas selesai.
+- Gunakan tool "remember" untuk menyimpan informasi penting yang ditemukan selama eksekusi.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
@@ -80,6 +83,7 @@ Dalam mode PLAN, kamu WAJIB:
 3. TANYA user: "Lanjutkan eksekusi? (ya/tidak)"
 4. JANGAN eksekusi apapun sampai user memberikan persetujuan (misalnya menjawab "ya" atau "ok").
 - Setelah disetujui, gunakan tools untuk menyelesaikan setiap langkah.
+- Manfaatkan memori jangka panjang (remember/search_memories) untuk konteks yang lebih baik.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
@@ -95,6 +99,7 @@ Dalam mode TEST, tugas utamamu adalah memastikan kode berfungsi dengan benar mel
 - Gunakan tool "view_file" untuk membaca source code dan file tes guna menemukan akar masalah.
 - Berikan saran perbaikan atau langsung perbaiki kode jika diizinkan.
 - Jangan menyatakan tugas selesai sampai semua tes relevan lulus (PASS).
+- Simpan pola error atau preferensi testing user ke memori menggunakan tool "remember".
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 	}

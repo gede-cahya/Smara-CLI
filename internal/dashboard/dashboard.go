@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
+	lipgloss "charm.land/lipgloss/v2"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 )
 
