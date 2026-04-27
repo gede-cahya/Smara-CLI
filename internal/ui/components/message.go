@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -33,7 +34,7 @@ func (r *MessageRenderer) SetWidth(width int) {
 
 // RenderMessage renders a single chat message as a styled bubble.
 func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts, tools []string,
-	inTokens, outTokens int, duration time.Duration, mode string) string {
+	inTokens, outTokens int, duration time.Duration, mode string, modelName string) string {
 
 	var sb strings.Builder
 	contentWidth := r.width - 8 // padding + border margins
@@ -100,12 +101,6 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 		toolsBlock = r.renderTools(tools)
 	}
 
-	// Stats
-	var statsBlock string
-	if role == "Agent" && inTokens > 0 {
-		statsBlock = r.renderStats(inTokens, outTokens, duration)
-	}
-
 	// Assemble the bubble
 	sb.WriteString(fmt.Sprintf("%s %s\n", timeStr, prefix))
 	if thinkingBlock != "" {
@@ -127,16 +122,18 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 		sb.WriteString("\n")
 	}
 
-	if statsBlock != "" {
-		sb.WriteString(statsBlock)
+	// Completion footer for Agent messages with stats
+	if role == "Agent" && (inTokens > 0 || duration > 0) {
+		footer := r.RenderCompletionFooter(modelName, duration, inTokens, outTokens, contentWidth)
+		sb.WriteString(footer)
 		sb.WriteString("\n")
 	}
 
 	return sb.String()
 }
 
-// RenderStream renders a streaming message.
-func (r *MessageRenderer) RenderStream(content, thinking string, mode string) string {
+// RenderStream renders a streaming message with live animation.
+func (r *MessageRenderer) RenderStream(content, thinking string, mode string, elapsed time.Duration, dotFrame int, cursorVisible bool, modelName string) string {
 	contentWidth := r.width - 8
 	if contentWidth < 20 {
 		contentWidth = 20
@@ -147,136 +144,119 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string) st
 	icon := r.modeIcon(mode)
 	modeLabel := strings.ToUpper(mode)
 	prefixColor := r.theme.ModeColor(mode)
-	prefix := lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render(fmt.Sprintf("%s Smara [%s]", icon, modeLabel))
+	
+	modelLabel := ""
+	if modelName != "" {
+		modelLabel = fmt.Sprintf(" (%s)", modelName)
+	}
+	prefix := lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render(fmt.Sprintf("%s Smara [%s]%s", icon, modeLabel, modelLabel))
 
 	sb.WriteString(fmt.Sprintf("%s %s\n", live, prefix))
 
-	if thinking != "" {
-		thinkingBlock := r.renderThinking(thinking, contentWidth)
-		sb.WriteString(thinkingBlock)
-		sb.WriteString("\n")
-	}
+	// Animated thinking block with dots spinner and elapsed timer
+	if content == "" {
+		// Still thinking — show animated dots block with phase rotation
+		dotStr := r.theme.ThinkingDots.Render(dotsSpinner(dotFrame))
+		elapsedStr := r.theme.ThinkingElapsed.Render(fmt.Sprintf("%.1fs", elapsed.Seconds()))
+		phase := thinkingPhase(elapsed)
+		header := r.theme.ThinkingHeader.Render(fmt.Sprintf("💭 %s %s  %s", phase, dotStr, elapsedStr))
 
-	if content != "" {
+		var thinkContent string
+		if thinking != "" {
+			thinkContent = r.theme.ThinkingContent.Width(contentWidth - 6).Render(thinking)
+		}
+
+		block := header
+		if thinkContent != "" {
+			block = header + "\n" + thinkContent
+		}
+		sb.WriteString(r.theme.ThinkingBlock.Width(contentWidth - 2).Render(block))
+		sb.WriteString("\n")
+	} else {
+		// Streaming content — show thinking collapsed + content with cursor
+		if thinking != "" {
+			thinkingBlock := r.renderThinking(thinking, contentWidth)
+			sb.WriteString(thinkingBlock)
+			sb.WriteString("\n")
+		}
+
 		bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
-		sb.WriteString(bubbleStyle.Render(r.processContent(content, contentWidth)))
+		streamContent := r.processContent(content, contentWidth)
+
+		// Add blinking cursor at the end
+		if cursorVisible {
+			streamContent += r.theme.StreamCursor.Render("▌")
+		}
+
+		sb.WriteString(bubbleStyle.Render(streamContent))
 		sb.WriteString("\n")
 	}
 
 	return sb.String()
 }
 
-// processContent handles code blocks, inline code, and basic formatting.
+// RenderCompletionFooter renders the model + stats footer below a completed Agent message.
+func (r *MessageRenderer) RenderCompletionFooter(modelName string, duration time.Duration, inTokens, outTokens int, width int) string {
+	var parts []string
+
+	if modelName != "" {
+		parts = append(parts, r.theme.CompletionModel.Render(fmt.Sprintf("🏷️ %s", modelName)))
+	}
+	if duration > 0 {
+		parts = append(parts, r.theme.CompletionStats.Render(fmt.Sprintf("⏱ %.1fs", duration.Seconds())))
+	}
+	if inTokens > 0 {
+		parts = append(parts, r.theme.CompletionStats.Render(fmt.Sprintf("⇣ %d tk", inTokens)))
+	}
+	if outTokens > 0 {
+		parts = append(parts, r.theme.CompletionStats.Render(fmt.Sprintf("⇡ %d tk", outTokens)))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	footerContent := strings.Join(parts, "  ")
+	return r.theme.CompletionFooter.Width(width).Render(footerContent)
+}
+
+// dotsSpinner returns the current dots spinner frame.
+func dotsSpinner(frame int) string {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	return frames[frame%len(frames)]
+}
+
+// thinkingPhase returns the current phase text based on elapsed time.
+// Rotates every 2 seconds: Thinking → Analyzing → Planning response → Generating
+func thinkingPhase(elapsed time.Duration) string {
+	phases := []string{"Thinking...", "Analyzing...", "Planning response...", "Generating..."}
+	idx := int(elapsed.Seconds()/2) % len(phases)
+	return phases[idx]
+}
+
+// processContent handles markdown rendering via glamour.
 func (r *MessageRenderer) processContent(content string, width int) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-	inCodeBlock := false
-	var codeLang string
-	var codeLines []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Code block start/end
-		if strings.HasPrefix(trimmed, "```") {
-			if !inCodeBlock {
-				inCodeBlock = true
-				codeLang = strings.TrimPrefix(trimmed, "```")
-				codeLang = strings.TrimSpace(codeLang)
-				continue
-			} else {
-				inCodeBlock = false
-				// Render code block
-				codeContent := strings.Join(codeLines, "\n")
-				if codeLang != "" {
-					langLabel := r.theme.CodeLang.Render(codeLang)
-					result = append(result, r.theme.CodeBlock.Width(width-4).Render(langLabel+"\n"+codeContent))
-				} else {
-					result = append(result, r.theme.CodeBlock.Width(width-4).Render(codeContent))
-				}
-				codeLines = nil
-				codeLang = ""
-				continue
-			}
-		}
-
-		if inCodeBlock {
-			codeLines = append(codeLines, line)
-			continue
-		}
-
-		// Inline code
-		line = r.processInlineCode(line)
-		// Bold
-		line = r.processBold(line)
-		// Italic
-		line = r.processItalic(line)
-
-		result = append(result, line)
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		// Fallback to plain text on error
+		return content
 	}
 
-	return strings.Join(result, "\n")
-}
-
-func (r *MessageRenderer) processInlineCode(line string) string {
-	// Simple inline code: `code`
-	for strings.Contains(line, "`") {
-		start := strings.Index(line, "`")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(line[start+1:], "`")
-		if end == -1 {
-			break
-		}
-		end += start + 1
-		code := line[start+1 : end]
-		styled := r.theme.CodeInline.Render(code)
-		line = line[:start] + styled + line[end+1:]
+	out, err := renderer.Render(content)
+	if err != nil {
+		return content
 	}
-	return line
-}
 
-func (r *MessageRenderer) processBold(line string) string {
-	for strings.Contains(line, "**") {
-		start := strings.Index(line, "**")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(line[start+2:], "**")
-		if end == -1 {
-			break
-		}
-		end += start + 2
-		text := line[start+2 : end]
-		styled := lipgloss.NewStyle().Bold(true).Render(text)
-		line = line[:start] + styled + line[end+2:]
-	}
-	return line
-}
-
-func (r *MessageRenderer) processItalic(line string) string {
-	for strings.Contains(line, "*") {
-		start := strings.Index(line, "*")
-		if start == -1 || (start+1 < len(line) && line[start+1] == '*') {
-			break
-		}
-		end := strings.Index(line[start+1:], "*")
-		if end == -1 {
-			break
-		}
-		end += start + 1
-		text := line[start+1 : end]
-		styled := lipgloss.NewStyle().Italic(true).Render(text)
-		line = line[:start] + styled + line[end+1:]
-	}
-	return line
+	return strings.TrimRight(out, "\n")
 }
 
 func (r *MessageRenderer) renderThinking(thinking string, width int) string {
 	header := r.theme.ThinkingHeader.Render("💭 Thinking...")
 	content := r.theme.ThinkingContent.Width(width - 6).Render(thinking)
-	return r.theme.ThinkingBlock.Width(width - 4).Render(header + "\n" + content)
+	return r.theme.ThinkingBlock.Width(width - 2).Render(header + "\n" + content)
 }
 
 func (r *MessageRenderer) renderThoughts(thoughts []string, width int) string {
@@ -287,7 +267,7 @@ func (r *MessageRenderer) renderThoughts(thoughts []string, width int) string {
 		sb.WriteString(r.theme.ThinkingContent.Render("• " + t))
 		sb.WriteString("\n")
 	}
-	return r.theme.ThinkingBlock.Width(width - 4).Render(sb.String())
+	return r.theme.ThinkingBlock.Width(width - 2).Render(sb.String())
 }
 
 func (r *MessageRenderer) renderTools(tools []string) string {
@@ -299,20 +279,6 @@ func (r *MessageRenderer) renderTools(tools []string) string {
 		}
 		sb.WriteString(r.theme.StatsValue.Render(t))
 	}
-	return sb.String()
-}
-
-func (r *MessageRenderer) renderStats(inTokens, outTokens int, duration time.Duration) string {
-	var sb strings.Builder
-	sb.WriteString("  ")
-	sb.WriteString(r.theme.StatsLabel.Render("In: "))
-	sb.WriteString(r.theme.StatsValue.Render(fmt.Sprintf("%d", inTokens)))
-	sb.WriteString(r.theme.StatsLabel.Render(" | Out: "))
-	sb.WriteString(r.theme.StatsValue.Render(fmt.Sprintf("%d", outTokens)))
-	sb.WriteString(r.theme.StatsLabel.Render(" | Total: "))
-	sb.WriteString(r.theme.StatsValue.Render(fmt.Sprintf("%d", inTokens+outTokens)))
-	sb.WriteString(r.theme.StatsLabel.Render(" | "))
-	sb.WriteString(r.theme.StatsValue.Render(duration.Round(time.Millisecond).String()))
 	return sb.String()
 }
 

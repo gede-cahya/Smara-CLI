@@ -25,11 +25,10 @@ type Layout struct {
 }
 
 // ComputeLayout calculates panel dimensions based on terminal size.
-func ComputeLayout(width, height int, showSidebar bool) Layout {
+func ComputeLayout(width, height int, showSidebar bool, currentSidebarWidth int) Layout {
 	const (
 		minWidth     = 60
 		minHeight    = 15
-		sidebarWidth = 28
 		headerHeight = 1
 		statusHeight = 1
 		inputHeight  = 3
@@ -51,9 +50,9 @@ func ComputeLayout(width, height int, showSidebar bool) Layout {
 		InputH:      inputHeight,
 	}
 
-	if showSidebar && width >= 100 {
-		l.SidebarW = sidebarWidth
-		l.ContentW = width - sidebarWidth
+	if width >= 100 && currentSidebarWidth > 0 {
+		l.SidebarW = currentSidebarWidth
+		l.ContentW = width - currentSidebarWidth
 	} else {
 		l.SidebarW = 0
 		l.ContentW = width

@@ -3,21 +3,21 @@ package dashboard
 import lipgloss "charm.land/lipgloss/v2"
 
 var (
-	// Colors
-	colorPrimary   = lipgloss.Color("#7D56F4")
-	colorGreen     = lipgloss.Color("#04B575")
-	colorRed       = lipgloss.Color("#FF3366")
-	colorYellow    = lipgloss.Color("#F3C623")
-	colorCyan      = lipgloss.Color("#36C5F0")
-	colorDim       = lipgloss.Color("#767676")
-	colorBorder    = lipgloss.Color("#3C3C3C")
-	colorWhite     = lipgloss.Color("#FAFAFA")
-	colorBorderAct = lipgloss.Color("#7D56F4")
+	// Colors — Crush Pastel Green palette
+	colorPrimary   = lipgloss.Color("#bef264")
+	colorGreen     = lipgloss.Color("#86efac")
+	colorRed       = lipgloss.Color("#fda4af")
+	colorYellow    = lipgloss.Color("#fcd34d")
+	colorCyan      = lipgloss.Color("#67e8f9")
+	colorDim       = lipgloss.Color("#71717a")
+	colorBorder    = lipgloss.Color("#27272a")
+	colorWhite     = lipgloss.Color("#f4f4f5")
+	colorBorderAct = lipgloss.Color("#bef264")
 
 	// Header
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(colorWhite).
+			Foreground(lipgloss.Color("#09090b")).
 			Background(colorPrimary).
 			PaddingLeft(1).
 			PaddingRight(1)

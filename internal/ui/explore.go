@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	lipgloss "charm.land/lipgloss/v2"
+	"github.com/gede-cahya/Smara-CLI/internal/workspace"
 )
 
 // ExploreResult represents a single file or directory in the explore tree
@@ -46,8 +47,18 @@ func ExploreCodebase(root string, depth int) ([]ExploreResult, error) {
 
 	var results []ExploreResult
 
+	matcher := workspace.NewIgnoreMatcher(root)
+
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			return nil
+		}
+
+		// Use the new IgnoreMatcher
+		if matcher.IsIgnored(path, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -67,17 +78,7 @@ func ExploreCodebase(root string, depth int) ([]ExploreResult, error) {
 			return nil
 		}
 
-		// Skip unwanted directories
 		name := d.Name()
-		if d.IsDir() {
-			skipDirs := map[string]bool{
-				".git": true, "node_modules": true, "vendor": true, "dist": true,
-				"build": true, "__pycache__": true, ".next": true, ".kilo": true,
-			}
-			if skipDirs[name] {
-				return filepath.SkipDir
-			}
-		}
 
 		info, _ := d.Info()
 		size := int64(0)
@@ -193,9 +194,9 @@ func RenderExplore(results []ExploreResult) string {
 			icon = "📁"
 		}
 
-		nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#E2E2E2"))
+		nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f5"))
 		if r.Type == "dir" {
-			nameStyle = nameStyle.Bold(true).Foreground(lipgloss.Color("#66D9EF"))
+			nameStyle = nameStyle.Bold(true).Foreground(lipgloss.Color("#bef264"))
 		}
 
 		line := fmt.Sprintf("%s%s %s", indent, icon, nameStyle.Render(r.Name))

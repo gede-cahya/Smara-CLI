@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/lsp"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
@@ -86,6 +88,7 @@ type Supervisor struct {
 	stats               Stats // usage statistics
 	safetyEngine        *safety.Engine
 	cognitiveValidator  *cognitive.Validator
+	lspManager          *lsp.Manager
 }
 
 // toolRouteInfo stores routing info for a registered tool.
@@ -170,6 +173,11 @@ func (s *Supervisor) SetSafetyEngine(engine *safety.Engine) {
 // SetCognitiveValidator sets the cognitive schema validator for tool argument validation.
 func (s *Supervisor) SetCognitiveValidator(validator *cognitive.Validator) {
 	s.cognitiveValidator = validator
+}
+
+// SetLSPManager sets the LSP Manager for code intelligence tools.
+func (s *Supervisor) SetLSPManager(manager *lsp.Manager) {
+	s.lspManager = manager
 }
 
 // SetWorkspaceID sets the active workspace for this supervisor.
@@ -484,6 +492,72 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 					sb.WriteString(fmt.Sprintf("- %s\n", r.Memory.Content))
 				}
 				return sb.String(), nil
+			}
+
+			if strings.HasPrefix(tc.Function, "lsp_") {
+				if s.lspManager == nil {
+					return "LSP Manager tidak tersedia.", nil
+				}
+				cwd, _ := os.Getwd()
+				lang := "go"
+				filePath, _ := tc.Args["file_path"].(string)
+				if filePath != "" {
+					ext := filepath.Ext(filePath)
+					switch ext {
+					case ".go":
+						lang = "go"
+					case ".py":
+						lang = "python"
+					case ".ts", ".js", ".tsx", ".jsx":
+						lang = "typescript"
+					}
+				}
+				client, err := s.lspManager.GetOrCreateClient(lang, cwd)
+				if err != nil {
+					return "", fmt.Errorf("gagal inisialisasi LSP client: %w", err)
+				}
+
+				switch tc.Function {
+				case "lsp_document_symbols":
+					res, err := client.DocumentSymbol(filePath)
+					if err != nil {
+						return "", err
+					}
+					b, _ := json.MarshalIndent(res, "", "  ")
+					return string(b), nil
+				default:
+					var line, char int
+					if l, ok := tc.Args["line"].(float64); ok {
+						line = int(l)
+					}
+					if c, ok := tc.Args["character"].(float64); ok {
+						char = int(c)
+					}
+
+					switch tc.Function {
+					case "lsp_hover":
+						res, err := client.Hover(filePath, line, char)
+						if err != nil {
+							return "", err
+						}
+						b, _ := json.MarshalIndent(res, "", "  ")
+						return string(b), nil
+					case "lsp_definition":
+						res, err := client.Definition(filePath, line, char)
+						if err != nil {
+							return "", err
+						}
+						b, _ := json.MarshalIndent(res, "", "  ")
+						return string(b), nil
+					case "lsp_references":
+						res, err := client.References(filePath, line, char)
+						if err != nil {
+							return "", err
+						}
+						b, _ := json.MarshalIndent(res, "", "  ")
+						return string(b), nil
+					}
+				}
 			}
 
 			var logFn func(string, string)

@@ -17,6 +17,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/lsp"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
@@ -135,6 +136,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// 4.2 Attach Cognitive Validator
 	cognitiveValidator := cognitive.NewValidator()
 	supervisor.SetCognitiveValidator(cognitiveValidator)
+
+	// 4.3 Attach LSP Manager
+	lspManager := lsp.NewManager()
+	defer lspManager.CloseAll()
+	supervisor.SetLSPManager(lspManager)
 
 	// 4.x Workspace Initialization
 	activeWorkspaceName := cfg.ActiveWorkspace

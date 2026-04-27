@@ -61,7 +61,7 @@ func (t *ThinkingToggle) Render() string {
 		return ""
 	}
 
-	innerW := t.width - 4
+	innerW := t.width - 2
 	if innerW < 20 {
 		innerW = 20
 	}
@@ -76,13 +76,13 @@ func (t *ThinkingToggle) Render() string {
 
 	if !t.expanded {
 		// Collapsed — just show header
-		return t.theme.ThinkingBlock.Width(t.width - 2).Render(header)
+		return t.theme.ThinkingBlock.Width(innerW).Render(header)
 	}
 
 	// Expanded — show header + content
-	content := t.theme.ThinkingContent.Width(innerW - 2).Render(t.content)
+	content := t.theme.ThinkingContent.Width(innerW - 4).Render(t.content)
 
-	return t.theme.ThinkingBlock.Width(t.width - 2).Render(
+	return t.theme.ThinkingBlock.Width(innerW).Render(
 		lipgloss.JoinVertical(lipgloss.Left, header, content),
 	)
 }

@@ -37,27 +37,27 @@ import (
 
 var (
 	// Backgrounds
-	ClrBase     = lipgloss.Color("#0D0D12")
-	ClrSurface  = lipgloss.Color("#16161F")
-	ClrElevated = lipgloss.Color("#1C1C28")
-	ClrOverlay  = lipgloss.Color("#252533")
-	ClrOverlay2 = lipgloss.Color("#3F3F46")
-	ClrBorder   = lipgloss.Color("#2D2D3D")
+	ClrBase     = lipgloss.Color("#09090b")
+	ClrSurface  = lipgloss.Color("#18181b")
+	ClrElevated = lipgloss.Color("#27272a")
+	ClrOverlay  = lipgloss.Color("#3f3f46")
+	ClrOverlay2 = lipgloss.Color("#52525b")
+	ClrBorder   = lipgloss.Color("#27272a")
 
 	// Foregrounds
-	ClrText    = lipgloss.Color("#E1E1EA")
-	ClrSubtext = lipgloss.Color("#8B8BA0")
-	ClrMuted   = lipgloss.Color("#5C5C6E")
+	ClrText    = lipgloss.Color("#f4f4f5")
+	ClrSubtext = lipgloss.Color("#a1a1aa")
+	ClrMuted   = lipgloss.Color("#71717a")
 
 	// Accents
-	ClrAccent = lipgloss.Color("#7C6FF7")
-	ClrBlue   = lipgloss.Color("#5E9EFF")
-	ClrGreen  = lipgloss.Color("#3ECF8E")
-	ClrAmber  = lipgloss.Color("#F0B848")
-	ClrRose   = lipgloss.Color("#F2646E")
-	ClrCyan   = lipgloss.Color("#36D4E7")
-	ClrPink   = lipgloss.Color("#F47BBD")
-	ClrViolet = lipgloss.Color("#A78BFA")
+	ClrAccent = lipgloss.Color("#bef264")
+	ClrBlue   = lipgloss.Color("#7dd3fc")
+	ClrGreen  = lipgloss.Color("#86efac")
+	ClrAmber  = lipgloss.Color("#fcd34d")
+	ClrRose   = lipgloss.Color("#fda4af")
+	ClrCyan   = lipgloss.Color("#67e8f9")
+	ClrPink   = lipgloss.Color("#f9a8d4")
+	ClrViolet = lipgloss.Color("#c4b5fd")
 )
 
 // Legacy color name aliases — map old HrmXxx to new ClrXxx
@@ -598,6 +598,14 @@ type Theme struct {
 
 	BorderSubtle lipgloss.Style
 	DividerStyle lipgloss.Style
+
+	// Live Generate Animation
+	CompletionFooter lipgloss.Style
+	CompletionModel  lipgloss.Style
+	CompletionStats  lipgloss.Style
+	StreamCursor     lipgloss.Style
+	ThinkingDots     lipgloss.Style
+	ThinkingElapsed  lipgloss.Style
 }
 
 func (t *Theme) ModeColor(mode string) color.Color { return ModeColor(mode) }
@@ -695,5 +703,25 @@ func GetTheme() *Theme {
 
 		BorderSubtle: subtleBorder,
 		DividerStyle: s.Divider,
+
+		// Live Generate Animation
+		CompletionFooter: lipgloss.NewStyle().
+			Foreground(ClrMuted).
+			Border(lipgloss.NormalBorder(), true, false, false, false).
+			BorderForeground(ClrBorder).
+			PaddingLeft(1),
+		CompletionModel: lipgloss.NewStyle().
+			Foreground(ClrAccent).
+			Bold(true),
+		CompletionStats: lipgloss.NewStyle().
+			Foreground(ClrSubtext),
+		StreamCursor: lipgloss.NewStyle().
+			Foreground(ClrAccent).
+			Bold(true),
+		ThinkingDots: lipgloss.NewStyle().
+			Foreground(ClrAccent).
+			Bold(true),
+		ThinkingElapsed: lipgloss.NewStyle().
+			Foreground(ClrAccent),
 	}
 }

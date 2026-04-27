@@ -108,50 +108,50 @@ func (tl *TodoList) Render() string {
 	return sb.String()
 }
 
-// Syntax & Diff styles
+// Syntax & Diff styles — Crush Pastel Green palette
 var (
 	diffAddedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A6E22E")) // green
+			Foreground(lipgloss.Color("#86efac")) // green
 
 	diffRemovedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F92672")) // red
+				Foreground(lipgloss.Color("#fda4af")) // rose
 
 	diffContextStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#75715E")) // dim gray
+				Foreground(lipgloss.Color("#71717a")) // muted
 
 	diffHeaderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#66D9EF")). // cyan
+			Foreground(lipgloss.Color("#67e8f9")). // cyan
 			Bold(true)
 
 	diffLineNumStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#5F5F5F")) // dark gray
+				Foreground(lipgloss.Color("#52525b")) // overlay2
 
 	keywordStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F92672")) // magenta
+			Foreground(lipgloss.Color("#f9a8d4")) // pink
 
 	stringStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A6E22E")) // green
+			Foreground(lipgloss.Color("#bef264")) // accent green
 
 	commentStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#75715E")).
-			Italic(true) // gray italic
+			Foreground(lipgloss.Color("#71717a")).
+			Italic(true) // muted italic
 
 	numberStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#AE81FF")) // purple
+			Foreground(lipgloss.Color("#c4b5fd")) // violet
 
 	typeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#66D9EF")) // cyan
+			Foreground(lipgloss.Color("#67e8f9")) // cyan
 
 	selectedStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#7D56F4")).
-			Foreground(lipgloss.Color("#FAFAFA"))
+			Background(lipgloss.Color("#bef264")).
+			Foreground(lipgloss.Color("#09090b"))
 
 	todoItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E2E2E2"))
+			Foreground(lipgloss.Color("#f4f4f5"))
 
 	sidebarBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color("#3C3C3C"))
+				BorderForeground(lipgloss.Color("#27272a"))
 )
 
 var (

@@ -15,16 +15,26 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
   - `ask` (💬): Tanya-jawab cepat tanpa tools.
   - `rush` (⚡): Eksekusi cepat, langsung bertindak menggunakan tools.
   - `plan` (📋): Membuat rencana dan meminta persetujuan sebelum eksekusi.
+- **🎨 Crush TUI Design**: Antarmuka terminal ultra-minimalis dengan palet warna **Pastel Green** yang premium.
+- **🎬 Live Generate Animation**: 
+  - **Animated Thinking**: Spinner dots interaktif dengan rotasi fase (`Thinking` → `Analyzing` → `Planning`).
+  - **Real-time Stats**: Timer elapsed dan statistik penggunaan token (In/Out) yang persisten.
+  - **Streaming Cursor**: Feedback visual real-time saat teks sedang di-generate.
 - **Platform Integration**: Jalankan Smara sebagai bot di **Telegram**, **Discord**, dan **WhatsApp**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
 - **📦 Workspace Management**: Isolasi proyek, memori, dan sesi antar ruang kerja yang berbeda.
+- **🧠 Smart Memory v2**: Hybrid Search, Versioning, dan Categorization untuk basis pengetahuan agen.
 - **📊 Dashboard Monitoring**: TUI real-time untuk memantau metrik platform, LLM, dan MCP.
-- **🧠 Smart Memory v2**: 
-  - **Hybrid Search**: Kombinasi Semantic (Vector) dan Keyword (FTS5) search.
-  - **Versioning**: Simpan riwayat perubahan memori dan lakukan rollback jika diperlukan.
-  - **Categorization**: Atur memori dalam hierarki kategori yang rapi.
-  - **Export/Import**: Dukungan format JSON, CSV, Markdown, dan ZIP.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
+
+---
+
+## 🎨 TUI Experience
+Smara CLI kini menggunakan sistem desain **Crush** yang mengutamakan estetika dan kejelasan informasi:
+- **Pastel Palette**: Dominasi warna hijau muda (`#bef264`) pada background gelap untuk kontras tinggi dan kelelahan mata rendah.
+- **Harmonica Physics**: Sidebar dan transisi UI menggunakan animasi spring physics yang organik.
+- **Completion Footer**: Detail model dan performa (durasi, token) disematkan rapi di bawah setiap respons agen.
+
 
 ---
 

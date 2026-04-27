@@ -102,11 +102,11 @@ func itemsFromExplores(items []exploreItem) []list.Item {
 }
 
 var (
-	dirStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Bold(true)
-	fileStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#E2E2E2"))
-	previewStyle  = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#3C3C3C")).PaddingLeft(1)
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#767676"))
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA")).Background(lipgloss.Color("#7D56F4")).PaddingLeft(2).PaddingRight(2)
+	dirStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#bef264")).Bold(true)
+	fileStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#f4f4f5"))
+	previewStyle  = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#27272a")).PaddingLeft(1)
+	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#71717a"))
+	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#09090b")).Background(lipgloss.Color("#bef264")).PaddingLeft(2).PaddingRight(2)
 	chevronOpen   = "▼"
 	chevronClosed = "▶"
 )

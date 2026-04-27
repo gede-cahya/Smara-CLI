@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/workspace"
 )
 
 const builtinMCPServerName = "builtin"
@@ -244,6 +245,86 @@ func GetBuiltinTools() []llm.ToolFunction {
 					},
 				},
 				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "lsp_hover",
+			Description: "Mendapatkan dokumentasi atau tipe dari simbol (fungsi, variabel, struct) di baris/kolom tertentu (Code Intelligence).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path relatif/absolut file",
+					},
+					"line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Nomor baris (1-indexed)",
+					},
+					"character": map[string]interface{}{
+						"type":        "integer",
+						"description": "Posisi karakter (0-indexed)",
+					},
+				},
+				"required": []string{"file_path", "line", "character"},
+			},
+		},
+		{
+			Name:        "lsp_definition",
+			Description: "Lompat ke definisi dari simbol (fungsi, variabel, struct) (Code Intelligence).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path relatif/absolut file tempat simbol dipanggil",
+					},
+					"line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Nomor baris (1-indexed)",
+					},
+					"character": map[string]interface{}{
+						"type":        "integer",
+						"description": "Posisi karakter (0-indexed)",
+					},
+				},
+				"required": []string{"file_path", "line", "character"},
+			},
+		},
+		{
+			Name:        "lsp_references",
+			Description: "Mencari semua tempat di mana sebuah simbol (fungsi, variabel) digunakan/dipanggil (Code Intelligence).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path relatif/absolut file",
+					},
+					"line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Nomor baris (1-indexed)",
+					},
+					"character": map[string]interface{}{
+						"type":        "integer",
+						"description": "Posisi karakter (0-indexed)",
+					},
+				},
+				"required": []string{"file_path", "line", "character"},
+			},
+		},
+		{
+			Name:        "lsp_document_symbols",
+			Description: "Mendapatkan semua daftar fungsi, class, variabel global dalam satu file untuk mengetahui strukturnya (Code Intelligence).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path relatif/absolut file",
+					},
+				},
+				"required": []string{"file_path"},
 			},
 		},
 	}
@@ -593,15 +674,19 @@ func searchPath(query, root string, logFn func(string, string)) (string, error) 
 		root = "."
 	}
 
+	matcher := workspace.NewIgnoreMatcher(root)
+
 	var results []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors
 		}
 		
-		// Skip hidden directories like .git
-		if info.IsDir() && strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != ".." {
-			return filepath.SkipDir
+		if matcher.IsIgnored(path, info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
 		if strings.Contains(strings.ToLower(info.Name()), strings.ToLower(query)) {

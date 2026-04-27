@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
@@ -21,63 +23,63 @@ import (
 // Smara CLI TUI App — Interactive Multi-Panel Terminal UI
 // ═══════════════════════════════════════════════════════════════
 
-// Style definitions (kept for backward compat, use theme now)
+// Style definitions — Crush Pastel Green palette
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#7D56F4")).
+			Foreground(lipgloss.Color("#09090b")).
+			Background(lipgloss.Color("#bef264")).
 			PaddingLeft(2).
 			PaddingRight(2)
 
 	infoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#04B575"))
+			Foreground(lipgloss.Color("#86efac"))
 
 	warnStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F3C623"))
+			Foreground(lipgloss.Color("#fcd34d"))
 
 	errStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF3366"))
+			Foreground(lipgloss.Color("#fda4af"))
 
 	agentStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#36C5F0")).
+			Foreground(lipgloss.Color("#bef264")).
 			Bold(true)
 
 	userStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E2E2E2")).
+			Foreground(lipgloss.Color("#f4f4f5")).
 			Bold(true)
 
 	messageStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E2E2E2"))
+			Foreground(lipgloss.Color("#f4f4f5"))
 
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#767676"))
+			Foreground(lipgloss.Color("#71717a"))
 
 	thinkingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
+			Foreground(lipgloss.Color("#a1a1aa")).
 			Italic(true).
 			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("#444444")).
+			BorderForeground(lipgloss.Color("#27272a")).
 			PaddingLeft(1).
 			MarginLeft(1)
 
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("#3C3C3C"))
+			BorderForeground(lipgloss.Color("#27272a"))
 
 	terminalStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A6E22E")).
+			Foreground(lipgloss.Color("#bef264")).
 			Bold(true)
 
 	codingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D1D1D1")).
+			Foreground(lipgloss.Color("#f4f4f5")).
 			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color("#3A3A3A")).
+			BorderForeground(lipgloss.Color("#27272a")).
 			PaddingLeft(1).
 			MarginLeft(1)
 
 	codePrefixStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#36C5F0")).
+			Foreground(lipgloss.Color("#bef264")).
 			Italic(true)
 )
 
@@ -95,6 +97,7 @@ type ChatMessage struct {
 	InputTokens   int
 	OutputTokens  int
 	Duration      time.Duration
+	ModelName     string
 }
 
 // Supervisor interface to avoid circular dependency
@@ -158,6 +161,18 @@ type AppModel struct {
 	showHelp      bool
 	showPalette   bool
 	showThinking  bool // toggle thinking visibility
+
+	// Animation state
+	sidebarSpring      harmonica.Spring
+	sidebarWidthFloat  float64
+	sidebarTargetWidth float64
+	sidebarVelocity    float64
+	animatingSidebar   bool
+
+	// Live Generate Animation state
+	streamStartTime time.Time
+	dotFrame        int
+	cursorVisible   bool
 }
 
 // InitialModel creates a new model
@@ -183,7 +198,7 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#bef264"))
 
 	theme := components.GetTheme()
 
@@ -200,7 +215,7 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 		onCommand:       onCmd,
 		sidebarViewport: sidebarVp,
 		showSidebar:     false, // Default: sidebar hidden
-		sidebarWidth:    28,
+		sidebarWidth:    0,
 		// ─── NEW ─────────────────────────────────────────────────
 		theme:         theme,
 		headerComp:    components.NewHeader(80),
@@ -210,7 +225,16 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 		helpOverlay:   components.NewHelpOverlay(60),
 		palette:       components.NewCommandPalette(50),
 		showThinking:  true,
+		sidebarSpring: harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.4),
 	}
+}
+
+type animTickMsg time.Time
+
+func animTickCmd() tea.Cmd {
+	return tea.Tick(time.Second/60, func(t time.Time) tea.Msg {
+		return animTickMsg(t)
+	})
 }
 
 func bannerContent() string {
@@ -222,7 +246,7 @@ func bannerContent() string {
   ███████║██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██║
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 `
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true).Render(banner) +
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#bef264")).Bold(true).Render(banner) +
 		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.8.0\n  Ketik /help untuk daftar perintah.\n")
 }
 
@@ -258,6 +282,22 @@ type ConfirmRequestMsg struct {
 	ResponseCh chan bool
 }
 
+// Live Generate Animation ticks
+type dotTickMsg struct{}
+type cursorBlinkMsg struct{}
+
+func dotTickCmd() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
+		return dotTickMsg{}
+	})
+}
+
+func cursorBlinkCmd() tea.Cmd {
+	return tea.Tick(530*time.Millisecond, func(t time.Time) tea.Msg {
+		return cursorBlinkMsg{}
+	})
+}
+
 // Update handles messages and state changes
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
@@ -265,6 +305,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vpCmd tea.Cmd
 		cmds  []tea.Cmd
 	)
+
+	switch msg.(type) {
+	case animTickMsg:
+		if m.animatingSidebar {
+			m.sidebarWidthFloat, m.sidebarVelocity = m.sidebarSpring.Update(m.sidebarWidthFloat, m.sidebarVelocity, m.sidebarTargetWidth)
+			
+			if math.Abs(m.sidebarWidthFloat-m.sidebarTargetWidth) < 0.5 && math.Abs(m.sidebarVelocity) < 0.5 {
+				m.sidebarWidthFloat = m.sidebarTargetWidth
+				m.animatingSidebar = false
+			} else {
+				cmds = append(cmds, animTickCmd())
+			}
+			m.sidebarWidth = int(m.sidebarWidthFloat)
+			m.updateLayout()
+			m.renderMessages()
+		}
+		return m, tea.Batch(cmds...)
+	}
 
 	// ─── Handle overlays first ─────────────────────────────────
 	// If palette is active, handle palette input
@@ -408,9 +466,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlB:
 			// Toggle sidebar
 			m.showSidebar = !m.showSidebar
-			m.updateLayout()
-			m.renderMessages()
-			return m, nil
+			if m.showSidebar {
+				m.sidebarTargetWidth = 28.0
+			} else {
+				m.sidebarTargetWidth = 0.0
+			}
+			if !m.animatingSidebar {
+				m.animatingSidebar = true
+				cmds = append(cmds, animTickCmd())
+			}
+			return m, tea.Batch(cmds...)
 
 		case tea.KeyCtrlT:
 			// Toggle thinking visibility
@@ -507,10 +572,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusText = "Memproses..."
 				m.currentStream = ""
 				m.currentThinking = ""
+				m.streamStartTime = time.Now()
+				m.dotFrame = 0
+				m.cursorVisible = true
 				sup := m.supervisor
 				ctx := m.ctx
 
 				cmds = append(cmds, m.spinner.Tick)
+				cmds = append(cmds, dotTickCmd())
+				cmds = append(cmds, cursorBlinkCmd())
 				cmds = append(cmds, func() tea.Msg {
 					result, err := sup.ProcessPrompt(ctx, processedPrompt)
 					return ProcessMsg{Result: result, Err: err}
@@ -522,6 +592,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
+
+	case dotTickMsg:
+		if m.processing {
+			m.dotFrame++
+			m.renderMessages()
+			cmds = append(cmds, dotTickCmd())
+		}
+
+	case cursorBlinkMsg:
+		if m.processing {
+			m.cursorVisible = !m.cursorVisible
+			m.renderMessages()
+			cmds = append(cmds, cursorBlinkCmd())
+		}
 
 	case StreamMsg:
 		if msg.IsThinking {
@@ -548,6 +632,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addMessage("System", fmt.Sprintf("Error: %v", msg.Err))
 			}
 		} else {
+			_, modelName := m.supervisor.GetModelInfo()
+
 			// Intercept the "Lanjutkan eksekusi? (ya/tidak)" message
 			if strings.Contains(msg.Result.Response, "Lanjutkan eksekusi? (ya/tidak)") {
 				// Extract everything before the prompt, if any
@@ -555,15 +641,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cleanResp = strings.TrimSpace(cleanResp)
 
 				if cleanResp != "" {
-					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration, modelName)
 				} else if msg.Result.Thinking != "" {
-					m.addMessageFull("Agent", "", msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+					m.addMessageFull("Agent", "", msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration, modelName)
 				}
 
 				m.awaitingConfirmation = true
 				m.confirmSelection = 0 // Default "Ya"
 			} else {
-				m.addMessageFull("Agent", msg.Result.Response, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration)
+				m.addMessageFull("Agent", msg.Result.Response, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration, modelName)
 			}
 		}
 
@@ -582,7 +668,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateLayout recalculates panel dimensions.
 func (m *AppModel) updateLayout() {
-	m.layout = components.ComputeLayout(m.width, m.height, m.showSidebar)
+	m.layout = components.ComputeLayout(m.width, m.height, m.showSidebar, m.sidebarWidth)
 
 	// Update component widths
 	m.headerComp.SetWidth(m.layout.ContentW)
@@ -608,14 +694,14 @@ func (m *AppModel) updateLayout() {
 }
 
 func (m *AppModel) addMessage(role, content string) {
-	m.addMessageFull(role, content, "", nil, nil, 0, 0, 0)
+	m.addMessageFull(role, content, "", nil, nil, 0, 0, 0, "")
 }
 
 func (m *AppModel) addMessageWithThinking(role, content, thinking string) {
-	m.addMessageFull(role, content, thinking, nil, nil, 0, 0, 0)
+	m.addMessageFull(role, content, thinking, nil, nil, 0, 0, 0, "")
 }
 
-func (m *AppModel) addMessageFull(role, content, thinking string, thoughts, tools []string, inTokens, outTokens int, duration time.Duration) {
+func (m *AppModel) addMessageFull(role, content, thinking string, thoughts, tools []string, inTokens, outTokens int, duration time.Duration, modelName string) {
 	m.messages = append(m.messages, ChatMessage{
 		Role:          role,
 		Content:       content,
@@ -626,6 +712,7 @@ func (m *AppModel) addMessageFull(role, content, thinking string, thoughts, tool
 		InputTokens:   inTokens,
 		OutputTokens:  outTokens,
 		Duration:      duration,
+		ModelName:     modelName,
 	})
 	m.renderMessages()
 }
@@ -635,8 +722,10 @@ func (m *AppModel) renderMessages() {
 	sb.WriteString(bannerContent())
 
 	mode := "ask"
+	_, modelName := "", ""
 	if m.supervisor != nil {
 		mode = string(m.supervisor.GetMode())
+		_, modelName = m.supervisor.GetModelInfo()
 	}
 
 	// Render historical messages using new message renderer
@@ -649,19 +738,20 @@ func (m *AppModel) renderMessages() {
 			msg.Role, msg.Content, thinking,
 			msg.Thoughts, msg.ToolsExecuted,
 			msg.InputTokens, msg.OutputTokens, msg.Duration,
-			mode,
+			mode, msg.ModelName,
 		)
 		sb.WriteString(rendered)
 		sb.WriteString("\n")
 	}
 
-	// Render current stream
-	if m.currentStream != "" || m.currentThinking != "" || m.currentExplore != "" {
+	// Render current stream with live animation
+	if m.processing || m.currentStream != "" || m.currentThinking != "" || m.currentExplore != "" {
 		thinking := m.currentThinking
 		if !m.showThinking {
 			thinking = ""
 		}
-		rendered := m.msgRenderer.RenderStream(m.currentStream, thinking, mode)
+		elapsed := time.Since(m.streamStartTime)
+		rendered := m.msgRenderer.RenderStream(m.currentStream, thinking, mode, elapsed, m.dotFrame, m.cursorVisible, modelName)
 		sb.WriteString(rendered)
 	}
 
@@ -749,11 +839,11 @@ func (m AppModel) View() string {
 		tidakStyle := lipgloss.NewStyle().Padding(0, 1)
 
 		if m.confirmSelection == 0 {
-			yaStyle = yaStyle.Background(lipgloss.Color("#04B575")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
-			tidakStyle = tidakStyle.Foreground(lipgloss.Color("#767676"))
+			yaStyle = yaStyle.Background(lipgloss.Color("#bef264")).Foreground(lipgloss.Color("#09090b")).Bold(true)
+			tidakStyle = tidakStyle.Foreground(lipgloss.Color("#71717a"))
 		} else {
-			yaStyle = yaStyle.Foreground(lipgloss.Color("#767676"))
-			tidakStyle = tidakStyle.Background(lipgloss.Color("#FF3366")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
+			yaStyle = yaStyle.Foreground(lipgloss.Color("#71717a"))
+			tidakStyle = tidakStyle.Background(lipgloss.Color("#fda4af")).Foreground(lipgloss.Color("#09090b")).Bold(true)
 		}
 
 		confirmPrompt := warnStyle.Render("➤ Lanjutkan eksekusi?")
@@ -782,7 +872,8 @@ func (m AppModel) View() string {
 
 	// ─── Sidebar ───────────────────────────────────────────────
 	var sidebar string
-	if m.showSidebar && m.layout.SidebarW > 0 {
+	if m.layout.SidebarW > 0 {
+		m.sidebarComp.SetSize(m.layout.SidebarW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
 		sidebarData := m.buildSidebarData()
 		sidebar = m.sidebarComp.Render(sidebarData)
 	}
@@ -796,7 +887,7 @@ func (m AppModel) View() string {
 	)
 
 	// ─── Final Layout ──────────────────────────────────────────
-	if m.showSidebar && m.layout.SidebarW > 0 {
+	if m.layout.SidebarW > 0 {
 		// Join main column + sidebar horizontally
 		return components.JoinHorizontal(mainColumn, sidebar, m.layout.ContentW)
 	}
