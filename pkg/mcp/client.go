@@ -180,6 +180,11 @@ func (c *Client) ServerName() string {
 	return c.config.Name
 }
 
+// GetServerInfo returns the server info from initialization.
+func (c *Client) GetServerInfo() *ServerInfo {
+	return c.serverInfo
+}
+
 // Close terminates the MCP client connection.
 func (c *Client) Close() error {
 	return c.transport.Close()

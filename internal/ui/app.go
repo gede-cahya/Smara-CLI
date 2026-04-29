@@ -16,6 +16,10 @@ import (
 	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/nudge"
+	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/gede-cahya/Smara-CLI/internal/ui/clipboard"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
 )
 
@@ -158,6 +162,7 @@ type AppModel struct {
 	msgRenderer   *components.MessageRenderer
 	helpOverlay   *components.HelpOverlay
 	palette       *components.CommandPalette
+	phaseStepper  *components.PhaseStepper
 	showHelp      bool
 	showPalette   bool
 	showThinking  bool // toggle thinking visibility
@@ -173,10 +178,26 @@ type AppModel struct {
 	streamStartTime time.Time
 	dotFrame        int
 	cursorVisible   bool
+
+	// Phase stepper state (real-time pipeline phases)
+	currentPhase  string            // active phase name
+	phaseContents map[string]string // phase name → accumulated live content
+	phaseDescs    map[string]string // phase name → description
+	phaseSeen     []string          // ordered list of phases that became active
+	fadeWave      *components.FadeWave
+
+	// Copy / paste & selection state
+	selectionMode    bool          // Ctrl+S message selection mode
+	selectedMsgIndex int           // index of selected historical message
+	toastText        string        // transient notification text
+	toastExpiry      time.Time     // when toast disappears
+
+	// Memory store for persistence
+	store memory.MemoryStore
 }
 
 // InitialModel creates a new model
-func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppModel {
+func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string), store memory.MemoryStore) AppModel {
 	ta := textarea.New()
 	ta.Placeholder = "Ketik pesan atau /help..."
 	ta.Focus()
@@ -224,8 +245,13 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string)) AppM
 		msgRenderer:   components.NewMessageRenderer(80),
 		helpOverlay:   components.NewHelpOverlay(60),
 		palette:       components.NewCommandPalette(50),
+		phaseStepper:  components.NewPhaseStepper(80),
 		showThinking:  true,
 		sidebarSpring: harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.4),
+		store:         store,
+		phaseContents: make(map[string]string),
+		phaseDescs:    make(map[string]string),
+		fadeWave:      components.NewFadeWave(80),
 	}
 }
 
@@ -252,6 +278,13 @@ func bannerContent() string {
 
 // Init initializes the app
 func (m AppModel) Init() tea.Cmd {
+	// Check for pending nudges on startup
+	if dbStore, ok := m.store.(*memory.SQLiteStore); ok {
+		if nudges, err := nudge.GetAllPending(dbStore.DB()); err == nil && len(nudges) > 0 {
+			banner := nudge.FormatNudges(nudges)
+			m.addMessage("System", banner)
+		}
+	}
 	return tea.Batch(textarea.Blink, m.spinner.Tick, tea.EnableBracketedPaste)
 }
 
@@ -265,6 +298,13 @@ type ProcessMsg struct {
 type StreamMsg struct {
 	Chunk      string
 	IsThinking bool
+	Phase      string // e.g. "Thinking", "Analyzing", "Exploring", "Generating"
+}
+
+// PhaseMsg is sent when the backend transitions to a new pipeline phase.
+type PhaseMsg struct {
+	Phase       string
+	Description string
 }
 
 // LogMsg allows external systems to inject messages into the UI
@@ -285,6 +325,7 @@ type ConfirmRequestMsg struct {
 // Live Generate Animation ticks
 type dotTickMsg struct{}
 type cursorBlinkMsg struct{}
+type waveTickMsg struct{}
 
 func dotTickCmd() tea.Cmd {
 	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
@@ -295,6 +336,12 @@ func dotTickCmd() tea.Cmd {
 func cursorBlinkCmd() tea.Cmd {
 	return tea.Tick(530*time.Millisecond, func(t time.Time) tea.Msg {
 		return cursorBlinkMsg{}
+	})
+}
+
+func waveTickCmd() tea.Cmd {
+	return tea.Tick(33*time.Millisecond, func(t time.Time) tea.Msg {
+		return waveTickMsg{}
 	})
 }
 
@@ -449,6 +496,50 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Selection mode: copy from chat history
+		if m.selectionMode {
+			switch msg.Type {
+			case tea.KeyUp:
+				if m.selectedMsgIndex > 0 {
+					m.selectedMsgIndex--
+					m.renderMessages()
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.selectedMsgIndex < len(m.messages)-1 {
+					m.selectedMsgIndex++
+					m.renderMessages()
+				}
+				return m, nil
+			case tea.KeyEnter:
+				if m.selectedMsgIndex >= 0 && m.selectedMsgIndex < len(m.messages) {
+					content := m.messages[m.selectedMsgIndex].Content
+					clipboard.Write(content)
+					m.showToast(fmt.Sprintf("Pesan #%d disalin ke clipboard", m.selectedMsgIndex+1))
+					m.selectionMode = false
+					m.renderMessages()
+				}
+				return m, nil
+			case tea.KeyRunes:
+				if len(msg.Runes) == 1 && (msg.Runes[0] == 'c' || msg.Runes[0] == 'C') {
+					if m.selectedMsgIndex >= 0 && m.selectedMsgIndex < len(m.messages) {
+						content := m.messages[m.selectedMsgIndex].Content
+						clipboard.Write(content)
+						m.showToast(fmt.Sprintf("Pesan #%d disalin ke clipboard", m.selectedMsgIndex+1))
+						m.selectionMode = false
+						m.renderMessages()
+					}
+					return m, nil
+				}
+			case tea.KeyEsc:
+				m.selectionMode = false
+				m.renderMessages()
+				return m, nil
+			}
+			// Block other keys while in selection mode
+			return m, nil
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.processing {
@@ -460,8 +551,32 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 
+		case tea.KeyCtrlQ:
+			return m, tea.Quit
+
 		case tea.KeyCtrlD:
 			return m, tea.Quit
+
+		case tea.KeyCtrlV:
+			if msg.Alt { // Ctrl+Shift+V via bracketed paste
+				// Handled by msg.Paste above
+			} else {
+				if text, err := clipboard.Read(); err == nil && text != "" {
+					m.textarea.InsertString(text)
+				} else {
+					m.showToast("Clipboard tidak tersedia di terminal ini")
+				}
+			}
+			return m, nil
+
+		case tea.KeyCtrlS:
+			if !m.processing && len(m.messages) > 0 {
+				m.selectionMode = true
+				m.selectedMsgIndex = len(m.messages) - 1
+				m.showToast("Mode seleksi aktif: ↑/↓ pilih, Enter/C salin, Esc batal")
+				m.renderMessages()
+			}
+			return m, nil
 
 		case tea.KeyCtrlB:
 			// Toggle sidebar
@@ -563,6 +678,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Handle command immediately and add to view
 				cmdName, cmdArgs := ParseCommand(v)
 				m.handleCommand(cmdName, cmdArgs)
+			} else if isDirectSSHCommand(v) {
+				// Intercept raw SSH commands like "ssh -i key.pem user@host"
+				m.addMessage("System", fmt.Sprintf("Eksekusi SSH langsung: %s", v))
+				m.processing = true
+				m.statusText = "SSH..."
+				cmds = append(cmds, m.spinner.Tick)
+				cmds = append(cmds, func() tea.Msg {
+					result, err := m.handleDirectSSH(v)
+					return ProcessMsg{Result: &agent.PromptResult{Response: result}, Err: err}
+				})
 			} else {
 				// Process @mentions
 				processedPrompt := m.processFileMentions(v)
@@ -575,12 +700,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streamStartTime = time.Now()
 				m.dotFrame = 0
 				m.cursorVisible = true
+				m.currentPhase = ""
+				m.phaseSeen = nil
+				m.phaseContents = make(map[string]string)
+				m.phaseDescs = make(map[string]string)
+				m.fadeWave.Reset()
 				sup := m.supervisor
 				ctx := m.ctx
 
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, dotTickCmd())
 				cmds = append(cmds, cursorBlinkCmd())
+				cmds = append(cmds, waveTickCmd())
 				cmds = append(cmds, func() tea.Msg {
 					result, err := sup.ProcessPrompt(ctx, processedPrompt)
 					return ProcessMsg{Result: result, Err: err}
@@ -607,11 +738,50 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cursorBlinkCmd())
 		}
 
+	case waveTickMsg:
+		if m.processing && m.currentPhase == "Generating" {
+			// Re-render to update fade-wave gradient
+			m.renderMessages()
+			cmds = append(cmds, waveTickCmd())
+		}
+
+	case animTickMsg:
+		// Periodic timer to clear expired toasts and refresh UI
+		if m.toastText != "" && time.Now().After(m.toastExpiry) {
+			m.toastText = ""
+		}
+		cmds = append(cmds, animTickCmd())
+
+	case PhaseMsg:
+		// Track phases in order
+		if m.currentPhase != msg.Phase {
+			m.currentPhase = msg.Phase
+			if msg.Phase != "" {
+				m.phaseSeen = append(m.phaseSeen, msg.Phase)
+				m.phaseDescs[msg.Phase] = msg.Description
+			}
+		}
+		m.renderMessages()
+
 	case StreamMsg:
+		// Route content to the correct phase bucket
 		if msg.IsThinking {
 			m.currentThinking += msg.Chunk
+			if msg.Phase != "" {
+				m.phaseContents[msg.Phase] += msg.Chunk
+			}
 		} else {
 			m.currentStream += msg.Chunk
+			if msg.Phase != "" {
+				m.phaseContents[msg.Phase] += msg.Chunk
+				if msg.Phase == "Generating" {
+					m.fadeWave.Append(msg.Chunk)
+				}
+			}
+		}
+		if msg.Phase != "" && m.currentPhase != msg.Phase {
+			m.currentPhase = msg.Phase
+			m.phaseSeen = append(m.phaseSeen, msg.Phase)
 		}
 		m.renderMessages()
 
@@ -625,6 +795,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentStream = ""
 		m.currentThinking = ""
 		m.currentExplore = ""
+		m.currentPhase = ""
+		m.phaseSeen = nil
+		m.phaseContents = make(map[string]string)
+		m.phaseDescs = make(map[string]string)
+		m.fadeWave.Reset()
 		if msg.Err != nil {
 			if msg.Err.Error() == "context canceled" {
 				// Already handled in KeyCtrlC
@@ -674,6 +849,9 @@ func (m *AppModel) updateLayout() {
 	m.headerComp.SetWidth(m.layout.ContentW)
 	m.statusBarComp.SetWidth(m.layout.ContentW)
 	m.msgRenderer.SetWidth(m.layout.ContentW)
+	if m.phaseStepper != nil {
+		m.phaseStepper.SetWidth(m.layout.ContentW)
+	}
 
 	if m.showSidebar {
 		m.sidebarComp.SetSize(m.layout.SidebarW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
@@ -691,6 +869,11 @@ func (m *AppModel) updateLayout() {
 	m.viewport.Height = vpHeight
 
 	m.renderMessages()
+}
+
+func (m *AppModel) showToast(text string) {
+	m.toastText = text
+	m.toastExpiry = time.Now().Add(2 * time.Second)
 }
 
 func (m *AppModel) addMessage(role, content string) {
@@ -751,7 +934,36 @@ func (m *AppModel) renderMessages() {
 			thinking = ""
 		}
 		elapsed := time.Since(m.streamStartTime)
-		rendered := m.msgRenderer.RenderStream(m.currentStream, thinking, mode, elapsed, m.dotFrame, m.cursorVisible, modelName)
+
+		// Build phase info list for stepper from observed phases
+		var phaseInfos []components.PhaseInfo
+		seenActive := false
+		for _, p := range m.phaseSeen {
+			completed := false
+			active := false
+			if m.currentPhase == p {
+				active = true
+				seenActive = true
+			} else if seenActive {
+				completed = true
+			}
+			phaseInfos = append(phaseInfos, components.PhaseInfo{
+				Name:        p,
+				Description: m.phaseDescs[p],
+				Active:      active,
+				Completed:   completed,
+				Content:     m.phaseContents[p],
+				HasContent:  m.phaseContents[p] != "" || active || completed,
+			})
+		}
+
+		// Fade-wave text for Generating phase
+		var fadeText string
+		if m.currentPhase == "Generating" && m.fadeWave != nil {
+			fadeText = m.fadeWave.Render()
+		}
+
+		rendered := m.msgRenderer.RenderStream(m.currentStream, thinking, mode, elapsed, m.dotFrame, m.cursorVisible, modelName, phaseInfos, fadeText)
 		sb.WriteString(rendered)
 	}
 
@@ -771,10 +983,55 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
   /mcp               — Lihat MCP servers dan tools
   /session [list|new|info|switch|end] — Kelola sessions
   /clear             — Bersihkan layar
+  /ssh               — Lihat perintah SSH management
+  /nudge             — Lihat nudge/reminder tertunda
+  /remind <teks>     — Buat reminder nudge manual
+  ssh user@host [cmd] — Eksekusi SSH langsung dari prompt
   exit               — Keluar dari Smara`)
 	case "clear":
 		m.messages = []ChatMessage{}
 		m.renderMessages()
+	case "ssh":
+		if len(args) == 0 {
+			m.addMessage("System", `Perintah SSH:
+  /ssh list              — Daftar host tersimpan
+  /ssh add <name>        — Tambah host (gunakan UI config)
+  ssh user@host [cmd]    — Eksekusi SSH langsung dari prompt`)
+		} else {
+			m.addMessage("System", fmt.Sprintf("SSH command: %s %s", args[0], strings.Join(args[1:], " ")))
+		}
+	case "nudge":
+		if dbStore, ok := m.store.(*memory.SQLiteStore); ok {
+			if nudges, err := nudge.GetAllPending(dbStore.DB()); err == nil && len(nudges) > 0 {
+				m.addMessage("System", nudge.FormatNudges(nudges))
+			} else {
+				m.addMessage("System", "Tidak ada nudge/reminder tertunda.")
+			}
+		} else {
+			m.addMessage("System", "Nudge tidak tersedia (DB belum siap).")
+		}
+	case "remind":
+		if len(args) == 0 {
+			m.addMessage("System", "Gunakan: /remind <teks reminder> [when: hourly/daily at HH:MM/every N minutes]")
+			return
+		}
+		text := strings.Join(args, " ")
+		when := ""
+		if idx := strings.Index(text, " when:"); idx >= 0 {
+			when = strings.TrimSpace(text[idx+6:])
+			text = strings.TrimSpace(text[:idx])
+		}
+		if dbStore, ok := m.store.(*memory.SQLiteStore); ok {
+			nextRun, _ := nudge.SimpleCron(when, time.Now())
+			_, err := nudge.CreateSchedule(dbStore.DB(), text, when, nextRun)
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Gagal membuat reminder: %v", err))
+			} else {
+				m.addMessage("System", fmt.Sprintf("Reminder tersimpan: '%s' (when: %s)", text, when))
+			}
+		} else {
+			m.addMessage("System", "Reminder tidak tersedia (DB belum siap).")
+		}
 	default:
 		if m.onCommand != nil {
 			m.onCommand(cmd, args)
@@ -885,6 +1142,18 @@ func (m AppModel) View() string {
 		inputArea,
 		statusBar,
 	)
+
+	// ─── Toast Notification ────────────────────────────────────
+	if m.toastText != "" && time.Now().Before(m.toastExpiry) {
+		toastStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#bef264")).
+			Background(lipgloss.Color("#1a1a1a")).
+			Bold(true).
+			Padding(0, 1).
+			MarginLeft(m.layout.ContentW - len(m.toastText) - 4)
+		toast := toastStyle.Render("📋 "+m.toastText)
+		mainColumn = mainColumn + "\n" + toast
+	}
 
 	// ─── Final Layout ──────────────────────────────────────────
 	if m.layout.SidebarW > 0 {
@@ -1017,4 +1286,112 @@ func (m *AppModel) LoadHistory(history []struct{ Role, Content string }) {
 		})
 	}
 	m.renderMessages()
+}
+
+// isDirectSSHCommand detects raw SSH commands typed in the prompt.
+func isDirectSSHCommand(input string) bool {
+	input = strings.TrimSpace(input)
+	// Match patterns like "ssh user@host", "ssh -i /path/key.pem user@host", "ssh -p 2222 user@host"
+	if !strings.HasPrefix(input, "ssh ") {
+		return false
+	}
+	// Ensure it contains user@host pattern somewhere
+	parts := strings.Fields(input)
+	for _, p := range parts {
+		if strings.Contains(p, "@") {
+			return true
+		}
+	}
+	return false
+}
+
+// handleDirectSSH parses and executes a raw SSH command from the prompt.
+func (m *AppModel) handleDirectSSH(input string) (string, error) {
+	// Parse: ssh [-i key] [-p port] [-o ...] user@host [command...]
+	parts := strings.Fields(input)
+	var keyPath, port, userAtHost string
+	var remoteCommandParts []string
+	var afterHost bool
+
+	for i := 1; i < len(parts); i++ {
+		p := parts[i]
+		if afterHost {
+			remoteCommandParts = append(remoteCommandParts, p)
+			continue
+		}
+		if p == "-i" && i+1 < len(parts) {
+			keyPath = parts[i+1]
+			i++
+			continue
+		}
+		if p == "-p" && i+1 < len(parts) {
+			port = parts[i+1]
+			i++
+			continue
+		}
+		if strings.HasPrefix(p, "-") {
+			// Skip other ssh options
+			continue
+		}
+		if strings.Contains(p, "@") {
+			userAtHost = p
+			afterHost = true
+			continue
+		}
+	}
+
+	if userAtHost == "" {
+		return "", fmt.Errorf("format SSH tidak valid. Gunakan: ssh [-i key] user@host [command]")
+	}
+
+	ua := strings.SplitN(userAtHost, "@", 2)
+	user := ua[0]
+	address := ua[1]
+
+	host := &smarassh.Host{
+		Name:    userAtHost,
+		User:    user,
+		Address: address,
+		Port:    "22",
+		KeyPath: keyPath,
+	}
+	if port != "" {
+		host.Port = port
+	}
+
+	client, err := smarassh.Connect(host)
+	if err != nil {
+		return "", fmt.Errorf("gagal koneksi: %w", err)
+	}
+	defer client.Close()
+
+	// Auto-save host config for future sessions
+	_ = smarassh.SaveHost(*host)
+
+	if len(remoteCommandParts) == 0 {
+		return fmt.Sprintf("Berhasil terhubung ke %s@%s:%s (sesi interaktif belum tersedia dari prompt, gunakan /ssh connect %s)", user, address, host.Port, userAtHost), nil
+	}
+
+	remoteCmd := strings.Join(remoteCommandParts, " ")
+	stdout, stderr, err := client.Exec(remoteCmd)
+	var sb strings.Builder
+	if stdout != "" {
+		sb.WriteString(stdout)
+	}
+	if stderr != "" {
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("stderr: " + stderr)
+	}
+	if err != nil {
+		if sb.Len() > 0 {
+			return sb.String(), nil // return output even on error
+		}
+		return "", err
+	}
+	if sb.Len() == 0 {
+		return "Perintah berhasil dieksekusi tanpa output.", nil
+	}
+	return sb.String(), nil
 }

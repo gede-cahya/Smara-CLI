@@ -145,9 +145,7 @@ func (s *Sandbox) Execute(ctx context.Context, command string, args ...string) *
 
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if execCtx.Err() == context.DeadlineExceeded {
+		if execCtx.Err() == context.DeadlineExceeded {
 			exitCode = -1
 			return &Result{
 				Stdout:   stdout.String(),
@@ -155,6 +153,9 @@ func (s *Sandbox) Execute(ctx context.Context, command string, args ...string) *
 				ExitCode: exitCode,
 				Duration: duration,
 			}
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1
 		}

@@ -54,6 +54,7 @@ func init() {
 	rootCmd.AddCommand(guideCmd)
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(categoryCmd)
+	rootCmd.AddCommand(sshCmd)
 }
 
 func initConfig() {

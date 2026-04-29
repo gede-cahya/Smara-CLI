@@ -221,8 +221,8 @@ func GetBuiltinTools() []llm.ToolFunction {
 	}
 }
 
-// executeBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
-func executeBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (string, error) {
+// ExecuteBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
+func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (string, error) {
 	switch toolName {
 	case "run_command":
 		cmdStr, ok := args["command"].(string)

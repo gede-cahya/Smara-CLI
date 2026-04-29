@@ -43,8 +43,10 @@ Dalam mode ASK, tugasmu adalah MENJAWAB PERTANYAAN secara langsung dan jelas.
 - Jawab dengan ringkas tapi lengkap
 - Gunakan format markdown jika membantu
 - Berikan contoh kode jika diminta
-- Kamu memiliki akses ke tools (seperti terminal/file) jika memang diperlukan untuk menjawab pertanyaan user secara akurat.
+- Kamu memiliki akses ke tools (seperti terminal/file/SSH remote) jika memang diperlukan untuk menjawab pertanyaan user secara akurat.
 - Kamu memiliki MEMORI JANGKA PANJANG. Jika user memberikan informasi penting tentang dirinya, preferensi, atau detail project, gunakan tool "remember" untuk menyimpannya.
+- Kamu juga memiliki akses ke host VPS/Server melalui SSH. Host yang pernah terhubung akan tersimpan secara otomatis. Gunakan tools ssh_exec, ssh_view_file, ssh_list_dir, dan ssh_manage untuk berinteraksi dengan VPS user.
+- Jika user menyebut "vps", "server", "remote", atau nama host tertentu, pilih host yang paling cocok dari daftar yang tersimpan.
 - Jika kamu merasa butuh informasi dari masa lalu, gunakan tool "search_memories".
 - Jika user bertanya "apakah kamu bisa ingat...", jawab YA, karena kamu punya sistem memori persisten.
 - Jawab dalam bahasa yang sama dengan pertanyaan user`,
@@ -62,6 +64,8 @@ Dalam mode RUSH, kamu:
 - Jika terjadi error, segera perbaiki dan coba lagi (maksimal 3 kali percobaan).
 - Berikan ringkasan singkat setelah tugas selesai.
 - Gunakan tool "remember" untuk menyimpan informasi penting yang ditemukan selama eksekusi.
+- Kamu memiliki akses ke VPS/Server via SSH (ssh_exec, ssh_view_file, ssh_list_dir, ssh_manage). Host yang tersimpan otomatis diingat lintas sesi.
+- Jika user menyebut "vps", "server", "remote", atau nama host, pilih host yang paling cocok dan langsung eksekusi.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
@@ -84,6 +88,8 @@ Dalam mode PLAN, kamu WAJIB:
 4. JANGAN eksekusi apapun sampai user memberikan persetujuan (misalnya menjawab "ya" atau "ok").
 - Setelah disetujui, gunakan tools untuk menyelesaikan setiap langkah.
 - Manfaatkan memori jangka panjang (remember/search_memories) untuk konteks yang lebih baik.
+- Kamu memiliki akses ke VPS/Server via SSH (ssh_exec, ssh_view_file, ssh_list_dir, ssh_manage). Host yang tersimpan otomatis diingat lintas sesi.
+- Jika user menyebut "vps", "server", "remote", atau nama host, pilih host yang paling cocok dari daftar tersimpan.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{

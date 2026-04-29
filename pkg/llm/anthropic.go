@@ -229,7 +229,7 @@ func (a *AnthropicProvider) doStream(req anthropicChatRequest, callback StreamCa
 				if event.Delta.Type == "text_delta" {
 					fullContent.WriteString(event.Delta.Text)
 					if callback != nil {
-						callback(event.Delta.Text, false)
+						callback(event.Delta.Text, false, PhaseGenerating)
 					}
 				} else if event.Delta.Type == "input_json_delta" {
 					toolCallsRawArgs[event.Index].WriteString(event.Delta.PartialJSON)

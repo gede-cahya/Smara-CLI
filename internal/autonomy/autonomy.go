@@ -124,6 +124,7 @@ func (e *Engine) Stop() {
 	}
 	e.mu.Unlock()
 	e.wg.Wait()
+	e.setState(StateIdle)
 }
 
 func (e *Engine) runLoop(ctx context.Context) {

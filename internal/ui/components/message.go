@@ -133,7 +133,7 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 }
 
 // RenderStream renders a streaming message with live animation.
-func (r *MessageRenderer) RenderStream(content, thinking string, mode string, elapsed time.Duration, dotFrame int, cursorVisible bool, modelName string) string {
+func (r *MessageRenderer) RenderStream(content, thinking string, mode string, elapsed time.Duration, dotFrame int, cursorVisible bool, modelName string, phases []PhaseInfo, fadeText string) string {
 	contentWidth := r.width - 8
 	if contentWidth < 20 {
 		contentWidth = 20
@@ -153,9 +153,23 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 
 	sb.WriteString(fmt.Sprintf("%s %s\n", live, prefix))
 
-	// Animated thinking block with dots spinner and elapsed timer
-	if content == "" {
-		// Still thinking — show animated dots block with phase rotation
+	// Phase stepper — real pipeline phases from backend
+	if len(phases) > 0 {
+		stepper := NewPhaseStepper(contentWidth)
+		stepper.SetWidth(contentWidth)
+		for i := range phases {
+			if phases[i].Active {
+				stepper.SetActive(phases[i].Name)
+				break
+			}
+		}
+		stepperStr := stepper.Render(phases)
+		if stepperStr != "" {
+			sb.WriteString(stepperStr)
+			sb.WriteString("\n")
+		}
+	} else if content == "" {
+		// Fallback: still thinking with no phase data yet
 		dotStr := r.theme.ThinkingDots.Render(dotsSpinner(dotFrame))
 		elapsedStr := r.theme.ThinkingElapsed.Render(fmt.Sprintf("%.1fs", elapsed.Seconds()))
 		phase := thinkingPhase(elapsed)
@@ -172,24 +186,72 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 		}
 		sb.WriteString(r.theme.ThinkingBlock.Width(contentWidth - 2).Render(block))
 		sb.WriteString("\n")
-	} else {
-		// Streaming content — show thinking collapsed + content with cursor
+	}
+
+	// Determine active phase for conditional content rendering
+	activePhase := ""
+	for _, p := range phases {
+		if p.Active {
+			activePhase = p.Name
+			break
+		}
+	}
+
+	// Phase-specific live content area
+	switch activePhase {
+	case "Thinking":
 		if thinking != "" {
 			thinkingBlock := r.renderThinking(thinking, contentWidth)
 			sb.WriteString(thinkingBlock)
 			sb.WriteString("\n")
 		}
-
-		bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
-		streamContent := r.processContent(content, contentWidth)
-
-		// Add blinking cursor at the end
-		if cursorVisible {
-			streamContent += r.theme.StreamCursor.Render("▌")
+	case "Analyzing":
+		for _, p := range phases {
+			if p.Active && p.Content != "" {
+				sb.WriteString(r.renderAnalysisPreview(p.Content, contentWidth))
+				sb.WriteString("\n")
+				break
+			}
 		}
-
-		sb.WriteString(bubbleStyle.Render(streamContent))
-		sb.WriteString("\n")
+	case "Exploring":
+		for _, p := range phases {
+			if p.Active && p.Content != "" {
+				sb.WriteString(r.renderExplorePreview(p.Content, contentWidth))
+				sb.WriteString("\n")
+				break
+			}
+		}
+	case "Generating":
+		// Fade-wave animated text
+		if fadeText != "" {
+			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
+			sb.WriteString(bubbleStyle.Render(fadeText))
+			sb.WriteString("\n")
+		} else if content != "" {
+			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
+			streamContent := r.processContent(content, contentWidth)
+			if cursorVisible {
+				streamContent += r.theme.StreamCursor.Render("▌")
+			}
+			sb.WriteString(bubbleStyle.Render(streamContent))
+			sb.WriteString("\n")
+		}
+	default:
+		// No recognized phase — show standard stream
+		if thinking != "" {
+			thinkingBlock := r.renderThinking(thinking, contentWidth)
+			sb.WriteString(thinkingBlock)
+			sb.WriteString("\n")
+		}
+		if content != "" {
+			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
+			streamContent := r.processContent(content, contentWidth)
+			if cursorVisible {
+				streamContent += r.theme.StreamCursor.Render("▌")
+			}
+			sb.WriteString(bubbleStyle.Render(streamContent))
+			sb.WriteString("\n")
+		}
 	}
 
 	return sb.String()
@@ -257,6 +319,36 @@ func (r *MessageRenderer) renderThinking(thinking string, width int) string {
 	header := r.theme.ThinkingHeader.Render("💭 Thinking...")
 	content := r.theme.ThinkingContent.Width(width - 6).Render(thinking)
 	return r.theme.ThinkingBlock.Width(width - 2).Render(header + "\n" + content)
+}
+
+func (r *MessageRenderer) renderAnalysisPreview(analysis string, width int) string {
+	header := r.theme.ThinkingHeader.Render("🔍 Analyzing...")
+	var body strings.Builder
+	lines := strings.Split(analysis, "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		body.WriteString("  • ")
+		body.WriteString(r.theme.ThinkingContent.Render(line))
+		body.WriteString("\n")
+	}
+	return r.theme.ThinkingBlock.Width(width - 2).Render(header + "\n" + body.String())
+}
+
+func (r *MessageRenderer) renderExplorePreview(explore string, width int) string {
+	header := r.theme.ThinkingHeader.Render("🛠 Exploring...")
+	var body strings.Builder
+	lines := strings.Split(explore, "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		body.WriteString("  ▸ ")
+		body.WriteString(r.theme.ThinkingContent.Render(line))
+		body.WriteString("\n")
+	}
+	return r.theme.ThinkingBlock.Width(width - 2).Render(header + "\n" + body.String())
 }
 
 func (r *MessageRenderer) renderThoughts(thoughts []string, width int) string {

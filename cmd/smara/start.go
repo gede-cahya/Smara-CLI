@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -219,6 +220,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Try to load from Windsurf config
+	wsPath := mcp.WindsurfConfigPath()
+	if wsPath != "" {
+		ui.PrintInfo("Windsurf config ditemukan: %s", wsPath)
+		wsServers, err := mcp.LoadWindsurfMCPServers()
+		if err == nil && len(wsServers) > 0 {
+			mcpConfigs = append(mcpConfigs, wsServers...)
+			ui.PrintSuccess("Mengimpor %d MCP server dari Windsurf", len(wsServers))
+		}
+	}
+
 	// Also add any Smara-native configs
 	for _, mcpCfg := range cfg.MCPServers {
 		mcpConfigs = append(mcpConfigs, mcp.MCPServerConfig{
@@ -326,14 +338,24 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// 7. Start TUI
 	appModel := ui.InitialModel(supervisor, func(cmd string, args []string) {
 		handleCommand(cmd, args, supervisor, memStore, nil)
-	})
+	}, memStore)
+
+	// Track current phase locally to tag stream messages
+	var currentPhase string
 
 	// Setup callback for streaming
 	supervisor.SetCallback(agent.AgenticCallback{
 		OnStream: func(chunk string, isThinking bool) {
 			p := ui.GetGlobalProgram()
 			if p != nil {
-				p.Send(ui.StreamMsg{Chunk: chunk, IsThinking: isThinking})
+				p.Send(ui.StreamMsg{Chunk: chunk, IsThinking: isThinking, Phase: currentPhase})
+			}
+		},
+		OnPhaseChange: func(phase, description string) {
+			currentPhase = phase
+			p := ui.GetGlobalProgram()
+			if p != nil {
+				p.Send(ui.PhaseMsg{Phase: phase, Description: description})
 			}
 		},
 		OnLog: func(role, content string) {
@@ -345,6 +367,21 @@ func runStart(cmd *cobra.Command, args []string) error {
 						Content: content,
 					},
 				})
+			}
+		},
+		OnToolCall: func(server, tool string, args map[string]interface{}) {
+			p := ui.GetGlobalProgram()
+			if p != nil {
+				argsJSON, _ := json.Marshal(args)
+				content := fmt.Sprintf("▸ %s: %s", tool, string(argsJSON))
+				p.Send(ui.StreamMsg{Chunk: content + "\n", IsThinking: false, Phase: "Exploring"})
+			}
+		},
+		OnToolResult: func(output string) {
+			p := ui.GetGlobalProgram()
+			if p != nil {
+				content := fmt.Sprintf("◂ result: %s\n", truncateStr(output, 300))
+				p.Send(ui.StreamMsg{Chunk: content, IsThinking: false, Phase: "Exploring"})
 			}
 		},
 		OnConfirm: func(message string) bool {

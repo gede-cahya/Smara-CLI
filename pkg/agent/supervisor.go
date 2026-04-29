@@ -388,7 +388,7 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 			if s.callback.OnLog != nil {
 				logFn = s.callback.OnLog
 			}
-			return executeBuiltinTool(tc.Function, tc.Args, logFn)
+			return ExecuteBuiltinTool(tc.Function, tc.Args, logFn)
 		}
 	}
 
@@ -642,7 +642,12 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		var resp *llm.ChatResponse
 		var err error
 		if streamer, ok := s.provider.(llm.Streamer); ok {
-			resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+			streamCb := func(chunk string, isThinking bool, _ llm.PhaseHint) {
+				if s.callback.OnStream != nil {
+					s.callback.OnStream(chunk, isThinking)
+				}
+			}
+			resp, err = streamer.ChatStream(messages, streamCb)
 		} else {
 			resp, err = s.provider.Chat(messages)
 		}
@@ -801,10 +806,15 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		var err error
 
 		if streamer, ok := s.provider.(llm.Streamer); ok {
+			streamCb := func(chunk string, isThinking bool, _ llm.PhaseHint) {
+				if s.callback.OnStream != nil {
+					s.callback.OnStream(chunk, isThinking)
+				}
+			}
 			if len(tools) > 0 {
-				resp, toolCalls, err = streamer.ChatStreamWithTools(messages, tools, s.callback.OnStream)
+				resp, toolCalls, err = streamer.ChatStreamWithTools(messages, tools, streamCb)
 			} else {
-				resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+				resp, err = streamer.ChatStream(messages, streamCb)
 			}
 		} else {
 			if len(tools) > 0 {

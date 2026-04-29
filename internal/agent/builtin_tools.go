@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,17 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/nudge"
+	"github.com/gede-cahya/Smara-CLI/internal/skill"
+	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/workspace"
 )
+
+// BuiltinDB is set by the Supervisor so built-in tools can access SQLite.
+var BuiltinDB *sql.DB
 
 const builtinMCPServerName = "builtin"
 
@@ -248,6 +256,99 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "ssh_exec",
+			Description: "Menjalankan perintah shell di remote VPS/Server melalui SSH. Gunakan ini untuk deployment, update, monitoring, atau konfigurasi server.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama host yang tersimpan atau format user@address",
+					},
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Perintah shell yang akan dijalankan di remote server",
+					},
+				},
+				"required": []string{"host", "command"},
+			},
+		},
+		{
+			Name:        "ssh_view_file",
+			Description: "Melihat isi file di remote VPS/Server melalui SSH. Gunakan untuk membaca log, konfigurasi, atau file lain sebelum melakukan perbaikan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama host yang tersimpan atau format user@address",
+					},
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path absolut file di remote server (misal: /var/log/syslog, /etc/nginx/nginx.conf)",
+					},
+				},
+				"required": []string{"host", "path"},
+			},
+		},
+		{
+			Name:        "ssh_list_dir",
+			Description: "Melihat isi direktori di remote VPS/Server melalui SSH. Gunakan untuk eksplorasi struktur file sebelum melakukan perbaikan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama host yang tersimpan atau format user@address",
+					},
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path direktori di remote server (default: /home/user)",
+					},
+				},
+				"required": []string{"host"},
+			},
+		},
+		{
+			Name:        "ssh_manage",
+			Description: "Mengelola konfigurasi host SSH (VPS). Bisa menambah, menghapus, atau melihat daftar host tersimpan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"action": map[string]interface{}{
+						"type":        "string",
+						"description": "Aksi yang diinginkan: add, remove, list",
+						"enum":        []string{"add", "remove", "list"},
+					},
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama identifier host (wajib untuk add/remove)",
+					},
+					"address": map[string]interface{}{
+						"type":        "string",
+						"description": "Alamat IP atau hostname (wajib untuk add)",
+					},
+					"user": map[string]interface{}{
+						"type":        "string",
+						"description": "Username SSH (wajib untuk add, default: root)",
+					},
+					"key_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke private key file (opsional)",
+					},
+					"password": map[string]interface{}{
+						"type":        "string",
+						"description": "Password SSH (opsional, tidak direkomendasikan)",
+					},
+					"port": map[string]interface{}{
+						"type":        "string",
+						"description": "Port SSH (default: 22)",
+					},
+				},
+				"required": []string{"action"},
+			},
+		},
+		{
 			Name:        "lsp_hover",
 			Description: "Mendapatkan dokumentasi atau tipe dari simbol (fungsi, variabel, struct) di baris/kolom tertentu (Code Intelligence).",
 			Parameters: map[string]interface{}{
@@ -327,11 +428,66 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"file_path"},
 			},
 		},
+		{
+			Name:        "user_model",
+			Description: "Membaca atau memperbarui profil adaptif user (verbosity, risk tolerance, domains, bahasa, custom patterns). Gunakan saat user menyatakan preferensi seperti 'jangan panjang-panjang' atau 'saya suka mode agresif'.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"action": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"read", "update"},
+						"description": "Aksi: read = baca profil, update = ubah preferensi",
+					},
+					"key": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama preferensi (verbosity, risk_tolerance, primary_domains, preferred_languages, custom_patterns)",
+					},
+					"value": map[string]interface{}{
+						"type":        "string",
+						"description": "Nilai baru (wajib untuk action=update)",
+					},
+				},
+				"required": []string{"action"},
+			},
+		},
+		{
+			Name:        "skill_run",
+			Description: "Menjalankan skill otomasi tersimpan yang telah dibuat user. Skill adalah resep multi-step tool calls.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama skill yang tersimpan (misal: deploy-react)",
+					},
+				},
+				"required": []string{"skill_name"},
+			},
+		},
+		{
+			Name:        "schedule_reminder",
+			Description: "Menyimpan reminder/nudge periodik yang akan ditampilkan saat user buka Smara berikutnya.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"prompt_text": map[string]interface{}{
+						"type":        "string",
+						"description": "Teks perintah yang akan diingatkan, misal 'cek wa di vps'",
+					},
+					"when": map[string]interface{}{
+						"type":        "string",
+						"description": "Format waktu: 'hourly', 'daily at 09:00', 'every 30 minutes'",
+					},
+				},
+				"required": []string{"prompt_text"},
+			},
+		},
 	}
 }
 
-// executeBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
-func executeBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (string, error) {
+// ExecuteBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
+func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (string, error) {
 	switch toolName {
 	case "run_command":
 		cmdStr, ok := args["command"].(string)
@@ -660,9 +816,262 @@ func executeBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		query, _ := args["query"].(string)
 		return searchWeb(query)
 
+	case "ssh_exec":
+		hostArg, _ := args["host"].(string)
+		command, _ := args["command"].(string)
+		if hostArg == "" || command == "" {
+			return "", fmt.Errorf("argumen 'host' dan 'command' wajib diisi")
+		}
+
+		host, err := resolveHost(hostArg)
+		if err != nil {
+			return "", err
+		}
+
+		client, err := smarassh.Connect(host)
+		if err != nil {
+			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
+		}
+		defer client.Close()
+
+		stdout, stderr, err := client.Exec(command)
+		var result strings.Builder
+		if stdout != "" {
+			result.WriteString("stdout:\n" + stdout + "\n")
+		}
+		if stderr != "" {
+			result.WriteString("stderr:\n" + stderr + "\n")
+		}
+		if err != nil {
+			result.WriteString(fmt.Sprintf("error: %v\n", err))
+			return result.String(), nil // return partial output even on error
+		}
+		if result.Len() == 0 {
+			return "Perintah berhasil dieksekusi tanpa output.", nil
+		}
+		return result.String(), nil
+
+	case "ssh_view_file":
+		hostArg, _ := args["host"].(string)
+		path, _ := args["path"].(string)
+		if hostArg == "" || path == "" {
+			return "", fmt.Errorf("argumen 'host' dan 'path' wajib diisi")
+		}
+
+		host, err := resolveHost(hostArg)
+		if err != nil {
+			return "", err
+		}
+
+		client, err := smarassh.Connect(host)
+		if err != nil {
+			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
+		}
+		defer client.Close()
+
+		stdout, stderr, err := client.Exec("cat " + path)
+		if err != nil {
+			return "", fmt.Errorf("gagal membaca file: %w\nstderr: %s", err, stderr)
+		}
+		if stderr != "" {
+			return stdout + "\n(stderr: " + stderr + ")", nil
+		}
+		return stdout, nil
+
+	case "ssh_list_dir":
+		hostArg, _ := args["host"].(string)
+		path := "/home/"
+		if p, ok := args["path"].(string); ok && p != "" {
+			path = p
+		}
+		if hostArg == "" {
+			return "", fmt.Errorf("argumen 'host' wajib diisi")
+		}
+
+		host, err := resolveHost(hostArg)
+		if err != nil {
+			return "", err
+		}
+
+		client, err := smarassh.Connect(host)
+		if err != nil {
+			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
+		}
+		defer client.Close()
+
+		stdout, stderr, err := client.Exec("ls -la " + path)
+		if err != nil {
+			return "", fmt.Errorf("gagal list direktori: %w\nstderr: %s", err, stderr)
+		}
+		if stderr != "" {
+			return stdout + "\n(stderr: " + stderr + ")", nil
+		}
+		return stdout, nil
+
+	case "ssh_manage":
+		action, _ := args["action"].(string)
+		switch action {
+		case "add":
+			name, _ := args["name"].(string)
+			address, _ := args["address"].(string)
+			user, _ := args["user"].(string)
+			if name == "" || address == "" {
+				return "", fmt.Errorf("'name' dan 'address' wajib diisi untuk add")
+			}
+			if user == "" {
+				user = "root"
+			}
+			host := smarassh.Host{
+				Name:     name,
+				Address:  address,
+				User:     user,
+				Port:     "22",
+				KeyPath:  getStr(args, "key_path"),
+				Password: getStr(args, "password"),
+			}
+			if p, ok := args["port"].(string); ok && p != "" {
+				host.Port = p
+			}
+			if err := smarassh.SaveHost(host); err != nil {
+				return "", fmt.Errorf("gagal menyimpan host: %w", err)
+			}
+			return fmt.Sprintf("Host '%s' (%s@%s) berhasil ditambahkan.", name, user, address), nil
+
+		case "remove":
+			name, _ := args["name"].(string)
+			if name == "" {
+				return "", fmt.Errorf("'name' wajib diisi untuk remove")
+			}
+			if err := smarassh.RemoveHost(name); err != nil {
+				return "", fmt.Errorf("gagal menghapus host: %w", err)
+			}
+			return fmt.Sprintf("Host '%s' berhasil dihapus.", name), nil
+
+		case "list":
+			hosts, err := smarassh.LoadHosts()
+			if err != nil {
+				return "", fmt.Errorf("gagal membaca host: %w", err)
+			}
+			if len(hosts) == 0 {
+				return "Belum ada host SSH tersimpan.", nil
+			}
+			var sb strings.Builder
+			sb.WriteString("Daftar host SSH:\n")
+			for _, h := range hosts {
+				sb.WriteString(fmt.Sprintf("- %s: %s@%s:%s\n", h.Name, h.User, h.Address, h.Port))
+			}
+			return sb.String(), nil
+
+		default:
+			return "", fmt.Errorf("aksi '%s' tidak dikenali (pilih: add, remove, list)", action)
+		}
+
+	case "user_model":
+		action := getStr(args, "action")
+		if BuiltinDB == nil {
+			return "", fmt.Errorf("database belum tersedia")
+		}
+		if action == "read" {
+			profile, err := LoadProfile(BuiltinDB)
+			if err != nil {
+				return "", fmt.Errorf("gagal membaca profil: %w", err)
+			}
+			return profile.ToContext(), nil
+		}
+		if action == "update" {
+			key := getStr(args, "key")
+			value := getStr(args, "value")
+			if key == "" {
+				return "", fmt.Errorf("argumen 'key' wajib diisi untuk action=update")
+			}
+			if err := UpdateFromPreference(BuiltinDB, key, value); err != nil {
+				return "", fmt.Errorf("gagal update profil: %w", err)
+			}
+			return fmt.Sprintf("Profil diupdate: %s = %s", key, value), nil
+		}
+		return "", fmt.Errorf("aksi '%s' tidak dikenali (pilih: read, update)", action)
+
+	case "skill_run":
+		name := getStr(args, "skill_name")
+		if name == "" {
+			return "", fmt.Errorf("argumen 'skill_name' wajib diisi")
+		}
+		sk, err := skill.Load(name)
+		if err != nil {
+			return "", fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+		}
+		res, err := sk.Run(func(toolName string, toolArgs map[string]interface{}) (string, error) {
+			return ExecuteBuiltinTool(toolName, toolArgs, logCallback)
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary), nil
+
+	case "schedule_reminder":
+		promptText := getStr(args, "prompt_text")
+		when := getStr(args, "when")
+		if BuiltinDB == nil {
+			return "", fmt.Errorf("database belum tersedia")
+		}
+		var nextRun *time.Time
+		if when != "" {
+			n, err := nudge.SimpleCron(when, time.Now())
+			if err == nil {
+				nextRun = n
+			}
+		}
+		_, err := nudge.CreateSchedule(BuiltinDB, promptText, when, nextRun)
+		if err != nil {
+			return "", fmt.Errorf("gagal membuat reminder: %w", err)
+		}
+		return fmt.Sprintf("Reminder tersimpan: '%s' (when: %s)", promptText, when), nil
+
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)
 	}
+}
+
+func getStr(args map[string]interface{}, key string) string {
+	if v, ok := args[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// resolveHost attempts to find a host by exact name, then fuzzy search, then raw user@address.
+func resolveHost(hostArg string) (*smarassh.Host, error) {
+	// 1. Exact match from saved config
+	host, err := smarassh.GetHost(hostArg)
+	if err == nil {
+		return host, nil
+	}
+
+	// 2. Fuzzy/partial match
+	found, matches, err := smarassh.FindHost(hostArg)
+	if err == nil && found != nil {
+		return found, nil
+	}
+	if len(matches) > 0 {
+		var sb strings.Builder
+		for _, m := range matches {
+			sb.WriteString(fmt.Sprintf("- %s (%s@%s:%s)\n", m.Name, m.User, m.Address, m.Port))
+		}
+		return nil, fmt.Errorf("multiple hosts cocok dengan '%s':\n%sGunakan nama exact host.", hostArg, sb.String())
+	}
+
+	// 3. Raw user@address
+	if strings.Contains(hostArg, "@") {
+		parts := strings.SplitN(hostArg, "@", 2)
+		return &smarassh.Host{
+			Name:    hostArg,
+			User:    parts[0],
+			Address: parts[1],
+			Port:    "22",
+		}, nil
+	}
+
+	return nil, fmt.Errorf("host '%s' tidak ditemukan. Gunakan 'ssh_manage' dengan action=list untuk melihat host tersimpan, atau gunakan format user@address.", hostArg)
 }
 
 func searchPath(query, root string, logFn func(string, string)) (string, error) {

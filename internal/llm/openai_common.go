@@ -19,10 +19,11 @@ type openAIChatRequest struct {
 }
 
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Role             string           `json:"role"`
+	Content          string           `json:"content,omitempty"`
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
 }
 
 type openAITool struct {
@@ -97,9 +98,10 @@ func convertMessagesToOpenAI(messages []Message) []openAIMessage {
 	om := make([]openAIMessage, len(messages))
 	for i, m := range messages {
 		msg := openAIMessage{
-			Role:       string(m.Role),
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
+			Role:             string(m.Role),
+			Content:          m.Content,
+			ToolCallID:       m.ToolCallID,
+			ReasoningContent: m.ReasoningContent,
 		}
 		for _, tc := range m.ToolCalls {
 			argsJSON, _ := json.Marshal(tc.Args)
@@ -183,14 +185,14 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 			if delta.Content != "" {
 				fullContent.WriteString(delta.Content)
 				if callback != nil {
-					callback(delta.Content, false)
+					callback(delta.Content, false, PhaseGenerating)
 				}
 			}
 
 			if delta.Reasoning != "" {
 				fullThinking.WriteString(delta.Reasoning)
 				if callback != nil {
-					callback(delta.Reasoning, true)
+					callback(delta.Reasoning, true, PhaseThinking)
 				}
 			}
 

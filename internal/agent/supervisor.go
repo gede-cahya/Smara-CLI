@@ -16,6 +16,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
+	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
@@ -55,13 +56,14 @@ type PromptResult struct {
 
 // AgenticCallback defines callbacks for agentic loop events.
 type AgenticCallback struct {
-	OnToolCall   func(server, tool string, args map[string]interface{})
-	OnToolResult func(output string)
-	OnIteration  func(current, max int)
-	OnStream     func(chunk string, isThinking bool)
-	OnLog        func(role, content string)
-	OnConfirm    func(message string) bool
-	OnExplore    func(path string, results string)
+	OnToolCall    func(server, tool string, args map[string]interface{})
+	OnToolResult  func(output string)
+	OnIteration   func(current, max int)
+	OnStream      func(chunk string, isThinking bool)
+	OnPhaseChange func(phase, description string)
+	OnLog         func(role, content string)
+	OnConfirm     func(message string) bool
+	OnExplore     func(path string, results string)
 }
 
 // Supervisor orchestrates multi-agent task execution.
@@ -121,6 +123,10 @@ func NewSupervisor(provider llm.Provider, memStore memory.MemoryStore) *Supervis
 func NewSupervisorWithConfig(provider llm.Provider, providerCfg llm.ProviderConfig, memStore memory.MemoryStore) *Supervisor {
 	s := NewSupervisor(provider, memStore)
 	s.providerConfig = providerCfg
+	// Attempt to wire DB for built-in tools (user_model, schedule_reminder, etc.)
+	if dbStore, ok := memStore.(*memory.SQLiteStore); ok {
+		BuiltinDB = dbStore.DB()
+	}
 	return s
 }
 
@@ -436,10 +442,20 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 	}
 
 	// Cognitive validator: validate tool arguments against registered schemas
+	// Skip validation for builtin tools — their schemas are known and trusted
 	if s.cognitiveValidator != nil {
-		result := s.cognitiveValidator.Validate(tc.Function, tc.Args)
-		if !result.Valid {
-			return "", fmt.Errorf("cognitive validation failed: %s", strings.Join(result.Errors, "; "))
+		isBuiltin := false
+		for _, bt := range GetBuiltinTools() {
+			if bt.Name == tc.Function {
+				isBuiltin = true
+				break
+			}
+		}
+		if !isBuiltin {
+			result := s.cognitiveValidator.Validate(tc.Function, tc.Args)
+			if !result.Valid {
+				return "", fmt.Errorf("cognitive validation failed: %s", strings.Join(result.Errors, "; "))
+			}
 		}
 	}
 
@@ -564,7 +580,7 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 			if s.callback.OnLog != nil {
 				logFn = s.callback.OnLog
 			}
-			return executeBuiltinTool(tc.Function, tc.Args, logFn)
+			return ExecuteBuiltinTool(tc.Function, tc.Args, logFn)
 		}
 	}
 
@@ -743,10 +759,20 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	}
 
 	// 2. Build messages with mode-specific system prompt
+	sysPrompt := modeInfo.SystemPrompt
+	if hostCtx, err := smarassh.AllHosts(); err == nil && hostCtx != "(tidak ada host SSH tersimpan)" {
+		sysPrompt += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx
+	}
+	if BuiltinDB != nil {
+		if profile, err := LoadProfile(BuiltinDB); err == nil {
+			sysPrompt += "\n\n" + profile.ToContext()
+		}
+	}
+
 	messages := []llm.Message{
 		{
 			Role:    llm.RoleSystem,
-			Content: modeInfo.SystemPrompt,
+			Content: sysPrompt,
 		},
 	}
 
@@ -821,7 +847,23 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		var resp *llm.ChatResponse
 		var err error
 		if streamer, ok := s.provider.(llm.Streamer); ok {
-			resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+			// Emit initial Thinking phase before stream starts
+			if s.callback.OnPhaseChange != nil {
+				s.callback.OnPhaseChange("Thinking", "Analyzing the request and planning approach...")
+			}
+			// Wrap stream callback to emit phase changes
+			streamCb := func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
+				if s.callback.OnPhaseChange != nil {
+					phaseName := phaseNameFromHint(phaseHint)
+					if phaseName != "" {
+						s.callback.OnPhaseChange(phaseName, phaseDescFromHint(phaseHint))
+					}
+				}
+				if s.callback.OnStream != nil {
+					s.callback.OnStream(chunk, isThinking)
+				}
+			}
+			resp, err = streamer.ChatStream(messages, streamCb)
 		} else {
 			resp, err = s.provider.Chat(messages)
 		}
@@ -911,10 +953,19 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	}
 
 	// 2. Build initial messages
+	sysPrompt2 := modeInfo.SystemPrompt
+	if hostCtx2, err := smarassh.AllHosts(); err == nil && hostCtx2 != "(tidak ada host SSH tersimpan)" {
+		sysPrompt2 += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx2
+	}
+	if BuiltinDB != nil {
+		if profile, err := LoadProfile(BuiltinDB); err == nil {
+			sysPrompt2 += "\n\n" + profile.ToContext()
+		}
+	}
 	messages := []llm.Message{
 		{
 			Role:    llm.RoleSystem,
-			Content: modeInfo.SystemPrompt,
+			Content: sysPrompt2,
 		},
 	}
 
@@ -967,6 +1018,11 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	var toolsExecuted []string
 	var thoughts []string
 
+	// Emit initial Thinking phase
+	if s.callback.OnPhaseChange != nil {
+		s.callback.OnPhaseChange("Thinking", "Analyzing the request and planning approach...")
+	}
+
 	// 4. Agentic loop
 	for iteration := 0; iteration < s.maxIterations; iteration++ {
 		// Callback: report iteration
@@ -979,11 +1035,31 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		var toolCalls []llm.ToolCall
 		var err error
 
+		// Wrap stream callback to emit phase changes
+		var streamCb llm.StreamCallback
+		if s.callback.OnPhaseChange != nil {
+			streamCb = func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
+				phaseName := phaseNameFromHint(phaseHint)
+				if phaseName != "" {
+					s.callback.OnPhaseChange(phaseName, phaseDescFromHint(phaseHint))
+				}
+				if s.callback.OnStream != nil {
+					s.callback.OnStream(chunk, isThinking)
+				}
+			}
+		} else {
+			streamCb = func(chunk string, isThinking bool, _ llm.PhaseHint) {
+				if s.callback.OnStream != nil {
+					s.callback.OnStream(chunk, isThinking)
+				}
+			}
+		}
+
 		if streamer, ok := s.provider.(llm.Streamer); ok {
 			if len(tools) > 0 {
-				resp, toolCalls, err = streamer.ChatStreamWithTools(messages, tools, s.callback.OnStream)
+				resp, toolCalls, err = streamer.ChatStreamWithTools(messages, tools, streamCb)
 			} else {
-				resp, err = streamer.ChatStream(messages, s.callback.OnStream)
+				resp, err = streamer.ChatStream(messages, streamCb)
 			}
 		} else {
 			if len(tools) > 0 {
@@ -1004,6 +1080,9 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		if len(toolCalls) == 0 {
 			// No tool calls — LLM gave final answer
+			if s.callback.OnPhaseChange != nil {
+				s.callback.OnPhaseChange("Generating", "Formulating final response...")
+			}
 			// Update history and save to memory
 			userMsg := llm.Message{Role: llm.RoleUser, Content: userPrompt}
 			assistantMsg := llm.Message{Role: llm.RoleAssistant, Content: resp.Content}
@@ -1029,6 +1108,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		}
 
 		// If we are here, LLM wants to call tools
+		if s.callback.OnPhaseChange != nil {
+			s.callback.OnPhaseChange("Exploring", "Gathering data with tools...")
+		}
+
 		// Capture this intermediate content as a "Thought"
 		if resp.Content != "" {
 			thoughts = append(thoughts, resp.Content)
@@ -1041,10 +1124,12 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		// LLM requested tool calls — execute them
 		// Add assistant message with tool calls to history
+		// Preserve reasoning content for DeepSeek-style models that require it
 		assistantMsg := llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   resp.Content,
-			ToolCalls: toolCalls,
+			Role:             llm.RoleAssistant,
+			Content:          resp.Content,
+			ToolCalls:        toolCalls,
+			ReasoningContent: resp.Thinking,
 		}
 		messages = append(messages, assistantMsg)
 
@@ -1084,6 +1169,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	}
 
 	// Max iterations reached — try to get a final answer
+	if s.callback.OnPhaseChange != nil {
+		s.callback.OnPhaseChange("Generating", "Max iterations reached. Formulating final response...")
+	}
+
 	messages = append(messages, llm.Message{
 		Role:    llm.RoleSystem,
 		Content: "Maksimal iterasi tool tercapai. Berikan jawaban final berdasarkan informasi yang sudah dikumpulkan.",
@@ -1092,6 +1181,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	resp, err := s.provider.Chat(messages)
 	if err != nil {
 		return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response final: %w", err)
+	}
+
+	if s.callback.OnPhaseChange != nil {
+		s.callback.OnPhaseChange("Done", "Finished")
 	}
 
 	s.history = append(s.history,
@@ -1153,6 +1246,8 @@ func (s *Supervisor) isCriticalCall(mode Mode, name string, args map[string]inte
 		"write_file",
 		"delete_file",
 		"edit_file",
+		"ssh_exec",
+		"skill_run",
 	}
 	for _, c := range critical {
 		if name == c {
@@ -1185,6 +1280,38 @@ func isSensitivePath(path string) bool {
 		}
 	}
 	return false
+}
+
+// phaseNameFromHint maps an llm.PhaseHint to a UI phase name.
+func phaseNameFromHint(hint llm.PhaseHint) string {
+	switch hint {
+	case llm.PhaseThinking:
+		return "Thinking"
+	case llm.PhaseAnalyzing:
+		return "Analyzing"
+	case llm.PhaseExploring:
+		return "Exploring"
+	case llm.PhaseGenerating:
+		return "Generating"
+	default:
+		return ""
+	}
+}
+
+// phaseDescFromHint maps an llm.PhaseHint to a human-readable description.
+func phaseDescFromHint(hint llm.PhaseHint) string {
+	switch hint {
+	case llm.PhaseThinking:
+		return "Reasoning about the problem..."
+	case llm.PhaseAnalyzing:
+		return "Analyzing context and constraints..."
+	case llm.PhaseExploring:
+		return "Gathering data with tools..."
+	case llm.PhaseGenerating:
+		return "Formulating response..."
+	default:
+		return ""
+	}
 }
 
 // ExecuteTask runs a single task with timeout.

@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.8.9**
+**Autonomous Multi-Agent Terminal v1.10.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -16,24 +16,37 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
   - `rush` (⚡): Eksekusi cepat, langsung bertindak menggunakan tools.
   - `plan` (📋): Membuat rencana dan meminta persetujuan sebelum eksekusi.
 - **🎨 Crush TUI Design**: Antarmuka terminal ultra-minimalis dengan palet warna **Pastel Green** yang premium.
-- **🎬 Live Generate Animation**: 
-  - **Animated Thinking**: Spinner dots interaktif dengan rotasi fase (`Thinking` → `Analyzing` → `Planning`).
+- **🎬 Live Generate Animation**:
+  - **Phase Tracking Pipeline**: Visual pipeline fase otomatis (`Thinking` → `Analyzing` → `Exploring` → `Generating`) dengan deskripsi real-time.
+  - **Animated Thinking**: Spinner dots interaktif dengan rotasi fase.
   - **Real-time Stats**: Timer elapsed dan statistik penggunaan token (In/Out) yang persisten.
   - **Streaming Cursor**: Feedback visual real-time saat teks sedang di-generate.
+  - **Tool Call Visualization**: Tampilan langsung saat agen mengeksekusi tool (▸) dan menerima hasil (◂).
+- **🔀 Message Selection & Clipboard**: `Ctrl+S` untuk menyeleksi pesan historis, `Enter/C` untuk copy ke clipboard. `Ctrl+V` untuk paste dari clipboard.
+- **🌐 MCP Auto-Discovery**: Auto-load MCP servers dari konfigurasi **Windsurf IDE**, **OpenCode**, dan file konfigurasi Smara-native secara paralel.
+- **🛜 Remote MCP Support**: Koneksi ke MCP server remote via SSE/WebSocket (`mcp.NewRemoteClient`).
 - **Platform Integration**: Jalankan Smara sebagai bot di **Telegram**, **Discord**, dan **WhatsApp**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
 - **📦 Workspace Management**: Isolasi proyek, memori, dan sesi antar ruang kerja yang berbeda.
 - **🧠 Smart Memory v2**: Hybrid Search, Versioning, dan Categorization untuk basis pengetahuan agen.
 - **📊 Dashboard Monitoring**: TUI real-time untuk memantau metrik platform, LLM, dan MCP.
+- **🖥️ SSH Remote Control**: Kelola VPS/Server langsung dari agen — `ssh_exec`, `ssh_view_file`, `ssh_list_dir` sebagai built-in agent tools.
+- **👤 User Profile**: Profil adaptif pengguna (verbosity, risk tolerance, primary domains) yang diinject ke system prompt.
+- **⏰ Nudge System**: Scheduled prompts/reminders dengan ekspresi cron untuk tugas rutin.
+- **🛡️ Two-Step Safety**: Plan Mode (read-only) vs Build Mode (read-write) dengan Auto-Revert jika eksekusi gagal.
+- **🔍 LSP Integration**: Language Server Protocol untuk Go, TypeScript, Python, dan Rust.
+- **📜 Dedicated Audit Log**: Logging terstruktur JSON Lines untuk semua tindakan agen.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 
 ---
 
 ## 🎨 TUI Experience
-Smara CLI kini menggunakan sistem desain **Crush** yang mengutamakan estetika dan kejelasan informasi:
+Smara CLI menggunakan sistem desain **Crush** yang mengutamakan estetika dan kejelasan informasi:
 - **Pastel Palette**: Dominasi warna hijau muda (`#bef264`) pada background gelap untuk kontras tinggi dan kelelahan mata rendah.
 - **Harmonica Physics**: Sidebar dan transisi UI menggunakan animasi spring physics yang organik.
 - **Completion Footer**: Detail model dan performa (durasi, token) disematkan rapi di bawah setiap respons agen.
+- **Phase Pipeline**: Progress bar visual yang menampilkan fase kognitif agen secara real-time.
+- **Fade Wave Animation**: Efek gelombang transisi antar fase untuk pengalaman visual yang halus.
 
 
 ---
@@ -78,6 +91,29 @@ smara workspace create "Project X"
 smara workspace use "Project X"
 smara workspace list
 ```
+
+---
+
+## 🖥️ SSH Remote Control (Agent Tools)
+Agen dapat mengeksekusi perintah di VPS/Server langsung dari percakapan:
+```bash
+# Tambah host SSH
+smara ssh add-host prod --host 192.168.1.1 --user ubuntu --key ~/.ssh/id_rsa
+
+# Eksekusi perintah remote
+smara ssh exec prod "docker ps -a"
+
+# Sesi SSH interaktif
+smara ssh connect prod
+
+# Generate key pair
+smara ssh keygen --name deploy-key --type ed25519
+
+# Riwayat eksekusi
+smara ssh logs --limit 20
+```
+
+Saat `smara start`, agen otomatis mendapatkan konteks semua host SSH yang tersimpan di system prompt.
 
 ---
 
@@ -136,6 +172,9 @@ smara serve --platform telegram --mode plan
 - `smara config list`: Cek konfigurasi saat ini.
 - `smara update`: Perbarui ke versi terbaru.
 - `smara version`: Tampilkan informasi versi.
+- `smara ssh`: Manajemen VPS via SSH (add-host, exec, connect, keygen, logs).
+- `smara skill`: Kelola reusable automation skill (create, run, list, delete).
+- `smara explore`: Eksplorasi struktur proyek secara visual.
 
 ---
 

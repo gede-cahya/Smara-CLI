@@ -177,7 +177,12 @@ func (c *Client) ServerName() string {
 	if c.serverInfo != nil {
 		return c.serverInfo.Name
 	}
-	return c.config.Name
+	return ""
+}
+
+// GetServerInfo returns the server info from initialization.
+func (c *Client) GetServerInfo() *ServerInfo {
+	return c.serverInfo
 }
 
 // Close terminates the MCP client connection.

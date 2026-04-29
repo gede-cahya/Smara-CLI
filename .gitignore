@@ -15,3 +15,11 @@ go.sum
 # Temporary files
 *.tmp
 temp/
+
+# Compiled test binaries
+*.test
+/smara_test
+
+# Test output
+test-results-*.md
+*.out

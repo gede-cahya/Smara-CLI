@@ -183,14 +183,14 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 			if delta.Content != "" {
 				fullContent.WriteString(delta.Content)
 				if callback != nil {
-					callback(delta.Content, false)
+					callback(delta.Content, false, PhaseGenerating)
 				}
 			}
 
 			if delta.Reasoning != "" {
 				fullThinking.WriteString(delta.Reasoning)
 				if callback != nil {
-					callback(delta.Reasoning, true)
+					callback(delta.Reasoning, true, PhaseThinking)
 				}
 			}
 

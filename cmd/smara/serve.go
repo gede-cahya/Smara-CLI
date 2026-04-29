@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -120,10 +121,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Try to load from OpenCode config
 	ocPath := mcp.OpenCodeConfigPath()
 	if ocPath != "" {
+		ui.PrintInfo("OpenCode config ditemukan: %s", ocPath)
 		ocServers, err := mcp.LoadOpenCodeMCPServers()
 		if err == nil && len(ocServers) > 0 {
 			mcpConfigs = append(mcpConfigs, ocServers...)
 			ui.PrintSuccess("Mengimpor %d MCP server dari OpenCode", len(ocServers))
+		} else if err != nil {
+			ui.PrintWarning("Gagal memuat OpenCode config: %v", err)
+		}
+	}
+
+	// Try to load from Windsurf config
+	wsPath := mcp.WindsurfConfigPath()
+	if wsPath != "" {
+		ui.PrintInfo("Windsurf config ditemukan: %s", wsPath)
+		wsServers, err := mcp.LoadWindsurfMCPServers()
+		if err == nil && len(wsServers) > 0 {
+			mcpConfigs = append(mcpConfigs, wsServers...)
+			ui.PrintSuccess("Mengimpor %d MCP server dari Windsurf", len(wsServers))
+		} else if err != nil {
+			ui.PrintWarning("Gagal memuat Windsurf config: %v", err)
 		}
 	}
 
@@ -135,24 +152,74 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Command: mcpCfg.Command,
 			Args:    mcpCfg.Args,
 			Env:     mcpCfg.Env,
+			Enabled: true,
 		})
 	}
 
-	if len(mcpConfigs) > 0 {
-		ui.PrintInfo("Menghubungkan %d MCP server...", len(mcpConfigs))
-		for _, mcpCfg := range mcpConfigs {
-			client, err := mcp.NewClient(mcpCfg)
-			if err != nil {
-				ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", mcpCfg.Name, err)
+	// Connect to all MCP servers in parallel
+	type mcpConnResult struct {
+		Name   string
+		Client *mcp.Client
+		Tools  []mcp.Tool
+		Err    error
+	}
+
+	var enabledConfigs []mcp.MCPServerConfig
+	for _, cfg := range mcpConfigs {
+		if cfg.Enabled {
+			enabledConfigs = append(enabledConfigs, cfg)
+		}
+	}
+
+	if len(enabledConfigs) > 0 {
+		ui.PrintInfo("Menghubungkan %d MCP server secara paralel...", len(enabledConfigs))
+
+		results := make(chan mcpConnResult, len(enabledConfigs))
+		var wg sync.WaitGroup
+
+		for _, mcpCfg := range enabledConfigs {
+			wg.Add(1)
+			go func(cfg mcp.MCPServerConfig) {
+				defer wg.Done()
+				var client *mcp.Client
+				var err error
+
+				switch cfg.Type {
+				case "remote":
+					client, err = mcp.NewRemoteClient(cfg)
+				default:
+					client, err = mcp.NewClient(cfg)
+				}
+
+				if err != nil {
+					results <- mcpConnResult{Name: cfg.Name, Err: err}
+					return
+				}
+
+				// List available tools
+				tools, _ := client.ListTools()
+				results <- mcpConnResult{Name: cfg.Name, Client: client, Tools: tools}
+			}(mcpCfg)
+		}
+
+		// Close channel when all goroutines finish
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		// Collect results and register to supervisor
+		for res := range results {
+			if res.Err != nil {
+				ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", res.Name, res.Err)
 				continue
 			}
-			supervisor.RegisterMCPClient(mcpCfg.Name, client)
-			tools, err := client.ListTools()
-			if err == nil && len(tools) > 0 {
-				supervisor.UpdateMCPInfo(mcpCfg.Name, tools)
-				ui.PrintSuccess("MCP '%s' terhubung (%d tools)", mcpCfg.Name, len(tools))
+			supervisor.RegisterMCPClient(res.Name, res.Client)
+			if len(res.Tools) > 0 {
+				supervisor.UpdateMCPInfo(res.Name, res.Tools)
+				ui.PrintSuccess("MCP '%s' terhubung (%d tools)", res.Name, len(res.Tools))
 			} else {
-				ui.PrintSuccess("MCP '%s' terhubung", mcpCfg.Name)
+				ui.PrintSuccess("MCP '%s' terhubung", res.Name)
 			}
 		}
 	}

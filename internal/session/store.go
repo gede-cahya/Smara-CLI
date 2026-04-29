@@ -96,6 +96,7 @@ func (s *SQLiteStore) CreateSession(session *Session) error {
 func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 	var session Session
 	var mcpServers, history, tasks, memoryIDs []byte
+	var createdAtStr, updatedAtStr string
 
 	err := s.db.QueryRow(
 		`SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, created_at, updated_at
@@ -105,7 +106,7 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 		&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
 		&mcpServers, &history, &tasks, &memoryIDs,
 		&session.Context, &session.IsAgentic, &session.AutoResume,
-		&session.CreatedAt, &session.UpdatedAt,
+		&createdAtStr, &updatedAtStr,
 	)
 
 	if err == sql.ErrNoRows {
@@ -128,6 +129,8 @@ func (s *SQLiteStore) GetSession(id string) (*Session, error) {
 		json.Unmarshal(memoryIDs, &session.MemoryIDs)
 	}
 
+	session.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+	session.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 	return &session, nil
 }
 
@@ -173,12 +176,13 @@ func (s *SQLiteStore) ListSessionsByWorkspace(workspaceID int64) ([]Session, err
 	for rows.Next() {
 		var session Session
 		var mcpServers, history, tasks, memoryIDs []byte
+		var createdAtStr, updatedAtStr string
 
 		err := rows.Scan(
-			&session.ID, &session.Name, &session.State, &session.Mode,
+			&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
 			&mcpServers, &history, &tasks, &memoryIDs,
 			&session.Context, &session.IsAgentic, &session.AutoResume,
-			&session.CreatedAt, &session.UpdatedAt,
+			&createdAtStr, &updatedAtStr,
 		)
 		if err != nil {
 			return nil, err
@@ -197,6 +201,8 @@ func (s *SQLiteStore) ListSessionsByWorkspace(workspaceID int64) ([]Session, err
 			json.Unmarshal(memoryIDs, &session.MemoryIDs)
 		}
 
+		session.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		session.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		sessions = append(sessions, session)
 	}
 
@@ -205,7 +211,7 @@ func (s *SQLiteStore) ListSessionsByWorkspace(workspaceID int64) ([]Session, err
 
 func (s *SQLiteStore) ListActiveSessions() ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, created_at, updated_at
+		`SELECT id, workspace_id, name, state, mode, mcp_servers, history, tasks, memory_ids, context, is_agentic, auto_resume, created_at, updated_at
 		 FROM sessions WHERE state = 'active' ORDER BY updated_at DESC`,
 	)
 	if err != nil {
@@ -217,12 +223,13 @@ func (s *SQLiteStore) ListActiveSessions() ([]Session, error) {
 	for rows.Next() {
 		var session Session
 		var mcpServers, history, tasks, memoryIDs []byte
+		var createdAtStr, updatedAtStr string
 
 		err := rows.Scan(
 			&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
 			&mcpServers, &history, &tasks, &memoryIDs,
 			&session.Context, &session.IsAgentic, &session.AutoResume,
-			&session.CreatedAt, &session.UpdatedAt,
+			&createdAtStr, &updatedAtStr,
 		)
 		if err != nil {
 			return nil, err
@@ -241,6 +248,8 @@ func (s *SQLiteStore) ListActiveSessions() ([]Session, error) {
 			json.Unmarshal(memoryIDs, &session.MemoryIDs)
 		}
 
+		session.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		session.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		sessions = append(sessions, session)
 	}
 
@@ -264,13 +273,19 @@ func (s *SQLiteStore) GetLastActiveSessionByWorkspace(workspaceID int64) (*Sessi
 	}
 	query += " ORDER BY updated_at DESC LIMIT 1"
 
+	var createdAtStr, updatedAtStr string
+	var archivedAt sql.NullString
 	err := s.db.QueryRow(query, args...).Scan(
 		&session.ID, &session.WorkspaceID, &session.Name, &session.State, &session.Mode,
 		&mcpServers, &history, &tasks, &memoryIDs,
 		&session.Context, &session.IsAgentic, &session.AutoResume,
-		&session.IsArchived, &session.ArchivedAt,
-		&session.CreatedAt, &session.UpdatedAt,
+		&session.IsArchived, &archivedAt,
+		&createdAtStr, &updatedAtStr,
 	)
+	if archivedAt.Valid && archivedAt.String != "" {
+		session.ArchivedAt = new(time.Time)
+		*session.ArchivedAt, _ = time.Parse(time.RFC3339, archivedAt.String)
+	}
 
 	if err == sql.ErrNoRows {
 		return nil, nil

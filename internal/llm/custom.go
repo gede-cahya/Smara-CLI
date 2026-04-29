@@ -104,6 +104,7 @@ func (c *CustomProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 
 	return &ChatResponse{
 		Content:     msg.Content,
+		Thinking:    msg.ReasoningContent,
 		Model:       chatResp.Model,
 		TotalTokens: chatResp.Usage.TotalTokens,
 	}, toolCalls, nil
@@ -230,6 +231,7 @@ func (c *CustomProvider) parseChatResponse(body []byte) (*ChatResponse, error) {
 
 	return &ChatResponse{
 		Content:     chatResp.Choices[0].Message.Content,
+		Thinking:    chatResp.Choices[0].Message.ReasoningContent,
 		Model:       chatResp.Model,
 		TotalTokens: chatResp.Usage.TotalTokens,
 	}, nil

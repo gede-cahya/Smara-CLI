@@ -110,6 +110,80 @@ func (s *SQLiteStore) Init() error {
 
 		`CREATE INDEX IF NOT EXISTS idx_categories_workspace ON categories(workspace_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_memory_versions_memory ON memory_versions(memory_id)`,
+
+		`CREATE TABLE IF NOT EXISTS ssh_hosts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			address TEXT NOT NULL,
+			port TEXT DEFAULT '22',
+			user TEXT NOT NULL,
+			key_path TEXT,
+			password TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS ssh_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			host_name TEXT NOT NULL,
+			address TEXT NOT NULL,
+			command TEXT NOT NULL,
+			stdout TEXT,
+			stderr TEXT,
+			status TEXT DEFAULT 'success',
+			duration_ms INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ssh_logs_host ON ssh_logs(host_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_ssh_logs_created ON ssh_logs(created_at)`,
+
+		`CREATE TABLE IF NOT EXISTS user_profile (
+			id INTEGER PRIMARY KEY,
+			verbosity TEXT DEFAULT 'balanced',
+			risk_tolerance TEXT DEFAULT 'balanced',
+			primary_domains TEXT DEFAULT '[]',
+			preferred_languages TEXT DEFAULT '[]',
+			custom_patterns TEXT DEFAULT '{}',
+			session_count INTEGER DEFAULT 0,
+			total_prompts INTEGER DEFAULT 0,
+			last_active DATETIME,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS skills (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			json TEXT NOT NULL,
+			version INTEGER DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS skill_feedback (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			skill_name TEXT NOT NULL,
+			run_id TEXT,
+			success INTEGER DEFAULT 0,
+			notes TEXT,
+			proposed_json TEXT,
+			approved INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS nudge_schedules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			prompt_text TEXT NOT NULL,
+			cron_expr TEXT,
+			next_run DATETIME,
+			enabled INTEGER DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS nudge_tasks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT,
+			prompt_text TEXT NOT NULL,
+			last_state TEXT DEFAULT '{}',
+			dismissed INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name)`,
+		`CREATE INDEX IF NOT EXISTS idx_nudge_next_run ON nudge_schedules(next_run)`,
+		`CREATE INDEX IF NOT EXISTS idx_nudge_tasks_created ON nudge_tasks(created_at)`,
 	}
 
 	for _, stmt := range statements {
@@ -894,6 +968,11 @@ func (s *SQLiteStore) DeleteWorkspace(id int64) error {
 // Included here to satisfy the MemoryStore interface check.
 func (s *SQLiteStore) Search(embedding []float32, workspaceID int64, topK int) ([]SearchResult, error) {
 	return searchByEmbedding(s.db, embedding, workspaceID, topK)
+}
+
+// DB returns the underlying sql.DB connection.
+func (s *SQLiteStore) DB() *sql.DB {
+	return s.db
 }
 
 // Close closes the database connection.

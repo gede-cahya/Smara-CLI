@@ -74,14 +74,14 @@ func (o *OllamaProvider) ChatStream(messages []Message, callback StreamCallback)
 		if chunk.Message.Thinking != "" {
 			fullThinking.WriteString(chunk.Message.Thinking)
 			if callback != nil {
-				callback(chunk.Message.Thinking, true)
+				callback(chunk.Message.Thinking, true, PhaseThinking)
 			}
 		}
 
 		if chunk.Message.Content != "" {
 			fullContent.WriteString(chunk.Message.Content)
 			if callback != nil {
-				callback(chunk.Message.Content, false)
+				callback(chunk.Message.Content, false, PhaseGenerating)
 			}
 		}
 
@@ -200,14 +200,14 @@ func (o *OllamaProvider) ChatStreamWithTools(messages []Message, tools []ToolFun
 		if chunk.Message.Thinking != "" {
 			fullThinking.WriteString(chunk.Message.Thinking)
 			if callback != nil {
-				callback(chunk.Message.Thinking, true)
+				callback(chunk.Message.Thinking, true, PhaseThinking)
 			}
 		}
 
 		if chunk.Message.Content != "" {
 			fullContent.WriteString(chunk.Message.Content)
 			if callback != nil {
-				callback(chunk.Message.Content, false)
+				callback(chunk.Message.Content, false, PhaseGenerating)
 			}
 		}
 
@@ -221,6 +221,7 @@ func (o *OllamaProvider) ChatStreamWithTools(messages []Message, tools []ToolFun
 		return nil, nil, fmt.Errorf("error saat membaca stream: %w", err)
 	}
 
+	// Parse tool calls from final response
 	return &ChatResponse{
 		Content:     fullContent.String(),
 		Thinking:    fullThinking.String(),

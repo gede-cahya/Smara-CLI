@@ -19,9 +19,21 @@ type Provider interface {
 	GenerateEmbedding(text string) ([]float32, error)
 }
 
+// PhaseHint is a hint about what stage the LLM is currently in.
+type PhaseHint int
+
+const (
+	PhaseUnknown    PhaseHint = iota
+	PhaseThinking             // reasoning / thinking content
+	PhaseAnalyzing            // processing / interpreting context
+	PhaseExploring            // tool calls / external data gathering
+	PhaseGenerating           // final response generation
+)
+
 // StreamCallback is a function called for each streamed chunk.
 // If isThinking is true, the chunk is from the reasoning process (e.g., inside <think> tags).
-type StreamCallback func(chunk string, isThinking bool)
+// phaseHint indicates the current pipeline stage (when detectable).
+type StreamCallback func(chunk string, isThinking bool, phaseHint PhaseHint)
 
 // Streamer is an optional interface for providers that support real-time streaming.
 type Streamer interface {
