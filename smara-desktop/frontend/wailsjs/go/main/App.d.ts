@@ -27,6 +27,8 @@ export function GetArchivedWorkspaces():Promise<Array<memory.Workspace>>;
 
 export function GetConfig():Promise<config.SmaraConfig>;
 
+export function GetMode():Promise<string>;
+
 export function GetSessionHistory():Promise<Array<llm.Message>>;
 
 export function GetSessions():Promise<Array<session.Session>>;
@@ -36,6 +38,8 @@ export function GetTools():Promise<Array<Record<string, any>>>;
 export function GetWorkspaces():Promise<Array<memory.Workspace>>;
 
 export function Greet(arg1:string):Promise<string>;
+
+export function SetMode(arg1:string):Promise<void>;
 
 export function SetWorkspace(arg1:number):Promise<void>;
 

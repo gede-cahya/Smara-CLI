@@ -311,6 +311,13 @@ func (s *Supervisor) GetModel() string {
 	return ""
 }
 
+// GetProvider returns the current LLM provider.
+func (s *Supervisor) GetProvider() llm.Provider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.provider
+}
+
 // GetMode returns the current agent mode.
 func (s *Supervisor) GetMode() Mode {
 	return s.mode
@@ -399,6 +406,17 @@ func (s *Supervisor) GetMCPClient(name string) (*mcp.Client, bool) {
 	defer s.mu.RUnlock()
 	c, ok := s.mcpClients[name]
 	return c, ok
+}
+
+// GetMCPClients returns all connected MCP clients.
+func (s *Supervisor) GetMCPClients() map[string]*mcp.Client {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]*mcp.Client, len(s.mcpClients))
+	for k, v := range s.mcpClients {
+		result[k] = v
+	}
+	return result
 }
 
 // GetMCPInfo returns detailed info for all MCP servers.

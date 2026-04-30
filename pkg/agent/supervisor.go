@@ -661,6 +661,11 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	var finalResp string
 	var finalThinking string
 
+	// If in workflow mode, run the multi-agent workflow engine
+	if s.mode == ModeWorkflow {
+		return s.runWorkflowMode(ctx, userPrompt, startTime)
+	}
+
 	// Use agentic loop if tools are available, regardless of mode (with different behavior)
 	tools := s.ConvertMCPToolsToToolFunctions()
 
@@ -750,6 +755,13 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	}
 
 	return result, nil
+}
+
+// runWorkflowMode signals that the supervisor should run in workflow mode.
+// The actual workflow execution is handled by the application layer (cmd/smara or internal/ui)
+// which imports the workflow package without creating import cycles.
+func (s *Supervisor) runWorkflowMode(ctx context.Context, userPrompt string, startTime time.Time) (*PromptResult, error) {
+	return nil, fmt.Errorf("workflow mode requires external execution: use workflow.RunWorkflow(supervisor, provider, prompt) from the application layer")
 }
 
 // GetModelInfo returns the current provider and model name.

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gede-cahya/Smara-CLI/pkg/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
 )
 
 // Runner executes blueprint tasks in parallel waves based on dependencies.
@@ -186,9 +186,7 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 				// Add small delay between tasks for rate limiting
 				time.Sleep(100 * time.Millisecond)
 
-				result := supervisor.ExecuteTask(ctx, task)
-				// Use the worker directly for specialized execution
-				result = worker.Execute(ctx, task)
+				result := worker.Execute(ctx, task)
 				roleResults = append(roleResults, result)
 
 				if r.OnTaskComplete != nil {

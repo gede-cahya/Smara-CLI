@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gede-cahya/Smara-CLI/pkg/agent"
-	"github.com/gede-cahya/Smara-CLI/pkg/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
 
 // Orchestrator runs the full workflow: blueprint → workers → QA → result.
@@ -104,6 +104,7 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	// 5. Build result
 	result := &WorkflowResult{
 		ProjectPath:  o.ProjectDir,
+		Domain:       bp.Domain,
 		PRD:          bp.PRD,
 		Architecture: bp.Architecture,
 		AgentOutputs: allResults,
@@ -153,6 +154,7 @@ func (o *Orchestrator) saveBlueprint() error {
 // WorkflowResult aggregates all workflow outputs.
 type WorkflowResult struct {
 	ProjectPath   string                            `json:"project_path"`
+	Domain        string                            `json:"domain"`
 	PRD           string                            `json:"prd"`
 	Architecture  string                            `json:"architecture"`
 	AgentOutputs  map[string][]agent.TaskResult       `json:"agent_outputs"`

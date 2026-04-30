@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gede-cahya/Smara-CLI/pkg/agent"
-	"github.com/gede-cahya/Smara-CLI/pkg/llm"
-	"github.com/gede-cahya/Smara-CLI/pkg/mcp"
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 )
 
 // CreateWorkersFromBlueprint spawns specialized workers from a blueprint.

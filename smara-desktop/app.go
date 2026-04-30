@@ -154,6 +154,26 @@ func (a *App) Ask(prompt string) (string, error) {
 	return res.Response, nil
 }
 
+// GetMode returns the current agent mode.
+func (a *App) GetMode() string {
+	if a.supervisor == nil {
+		return string(agent.ModeAsk)
+	}
+	return string(a.supervisor.GetMode())
+}
+
+// SetMode sets the agent operating mode.
+func (a *App) SetMode(mode string) error {
+	if a.supervisor == nil {
+		return fmt.Errorf("supervisor belum siap")
+	}
+	if !agent.ValidMode(mode) {
+		return fmt.Errorf("mode tidak valid: %s", mode)
+	}
+	a.supervisor.SetMode(agent.Mode(mode))
+	return nil
+}
+
 // GetWorkspaces returns all available workspaces
 func (a *App) GetWorkspaces() ([]memory.Workspace, error) {
 	if a.memStore == nil {

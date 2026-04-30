@@ -46,7 +46,9 @@ import {
   ArchiveSession,
   UnarchiveSession,
   GetArchivedSessions,
-  DeleteArchivedSession
+  DeleteArchivedSession,
+  GetMode,
+  SetMode
 } from "../../wailsjs/go/main/App"
 import { EventsOn } from "../../wailsjs/runtime/runtime"
 import { config as configModels, llm as llmModels, session as sessionModels } from "../../wailsjs/go/models"
@@ -93,10 +95,13 @@ export default function App() {
   const [config, setConfig] = useState<configModels.SmaraConfig | null>(null)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('dark')
   const [activeView, setActiveView] = useState<'chat' | 'workspace'>('chat')
+  const [currentMode, setCurrentMode] = useState<string>('ask')
+  const [copyToast, setCopyToast] = useState<string | null>(null)
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const isAutoScrolling = useRef(true)
+  const copyDebounce = useRef<number | null>(null)
 
   useEffect(() => {
     const init = async () => {
@@ -104,6 +109,12 @@ export default function App() {
       await loadHistory()
       await loadTools()
       await loadConfig()
+      try {
+        if (typeof GetMode === 'function') {
+          const mode = await GetMode()
+          if (mode) setCurrentMode(mode)
+        }
+      } catch (err) { console.error('loadMode error:', err) }
     }
 
     init()
@@ -139,6 +150,47 @@ export default function App() {
       loadHistory()
     }
   }, [activeSession])
+
+  // CapsLock toggles view (Chat / Workspace)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'CapsLock') {
+        e.preventDefault()
+        setActiveView(prev => prev === 'chat' ? 'workspace' : 'chat')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Auto-copy on text selection release in chat area
+  useEffect(() => {
+    const onSelectionChange = () => {
+      if (copyDebounce.current) {
+        window.clearTimeout(copyDebounce.current)
+      }
+      copyDebounce.current = window.setTimeout(() => {
+        const sel = window.getSelection()
+        if (!sel || sel.rangeCount === 0) return
+        const text = sel.toString().trim()
+        if (!text) return
+        // Only auto-copy if selection is inside the chat scroll area, not input
+        const anchor = sel.anchorNode as Node | null
+        if (!anchor) return
+        const el = anchor.nodeType === Node.ELEMENT_NODE ? (anchor as Element) : anchor.parentElement
+        const inChat = el?.closest('[data-chat-area]') != null
+        const inInput = el?.closest('textarea') != null || el?.closest('[data-input-area]') != null
+        if (inChat && !inInput && text.length > 0) {
+          navigator.clipboard.writeText(text).then(() => {
+            setCopyToast('Copied to clipboard')
+            window.setTimeout(() => setCopyToast(null), 1500)
+          }).catch(() => {})
+        }
+      }, 200)
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [])
 
   // Robust auto-scroll logic
   useEffect(() => {
@@ -233,10 +285,26 @@ export default function App() {
     }
   }
 
+  const cycleMode = async () => {
+    const modes = ['ask', 'rush', 'plan', 'test']
+    const idx = modes.indexOf(currentMode)
+    const next = modes[(idx + 1) % modes.length]
+    try {
+      if (typeof SetMode === 'function') {
+        await SetMode(next)
+        setCurrentMode(next)
+      }
+    } catch (err) { console.error('setMode error:', err) }
+  }
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      cycleMode()
     }
   }
 
@@ -487,6 +555,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center px-3 py-1.5 bg-muted/40 rounded-xl border border-border/50 gap-2">
+              <span
+                className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 cursor-pointer select-none"
+                onClick={cycleMode}
+                title="Click or press Tab to cycle mode"
+              >
+                {currentMode}
+              </span>
+            </div>
             <div className="hidden md:flex items-center px-4 py-2 bg-muted/40 rounded-xl border border-border/50 gap-3">
               <Search size={14} className="text-muted-foreground" />
               <input
@@ -524,11 +601,17 @@ export default function App() {
           </div>
         </header>
 
+        {copyToast && (
+          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-xs font-bold shadow-lg animate-in-fade pointer-events-none">
+            {copyToast}
+          </div>
+        )}
         {activeView === 'chat' && (
         <>
         <ScrollArea
           className="flex-1 p-8 gpu-accelerated"
           onWheel={() => { isAutoScrolling.current = false }}
+          data-chat-area
         >
           <div className="max-w-3xl mx-auto space-y-8 pb-32">
             {messages.length === 0 && (
@@ -567,7 +650,7 @@ export default function App() {
           </div>
         </ScrollArea>
 
-        <div className="absolute bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-background via-background/95 to-transparent pointer-events-none">
+        <div className="absolute bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-background via-background/95 to-transparent pointer-events-none" data-input-area>
           <div className="max-w-3xl mx-auto relative pointer-events-auto">
             <div className="relative group">
               <div className="absolute inset-0 bg-primary/5 rounded-2xl blur-xl group-focus-within:bg-primary/10 transition-all duration-500" />

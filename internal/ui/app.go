@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/clipboard"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
-	"github.com/gede-cahya/Smara-CLI/pkg/agent/workflow"
+	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -682,6 +683,31 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyTab:
+			// Cycle agent modes: ask -> rush -> plan -> test
+			if m.processing {
+				m.showToast("Tunggu proses selesai sebelum ganti mode.")
+				return m, nil
+			}
+			current := string(m.supervisor.GetMode())
+			idx := -1
+			for i, mode := range ModeOrder {
+				if mode == current {
+					idx = i
+					break
+				}
+			}
+			nextIdx := 0
+			if idx >= 0 {
+				nextIdx = (idx + 1) % len(ModeOrder)
+			}
+			nextMode := agent.Mode(ModeOrder[nextIdx])
+			m.supervisor.SetMode(nextMode)
+			info := agent.GetModeInfo(nextMode)
+			m.showToast(fmt.Sprintf("Mode: %s %s", info.Emoji, info.Label))
+			m.renderMessages()
+			return m, nil
+
+		case tea.KeyF2:
 			// Cycle views: Chat -> NodeGraph -> Help -> Chat
 			switch m.currentView {
 			case viewChat:
@@ -754,7 +780,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Process @mentions
 				processedPrompt := m.processFileMentions(v)
 
-				// Send to supervisor
 				m.processing = true
 				m.statusText = "Memproses..."
 				m.currentStream = ""
@@ -772,12 +797,60 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, dotTickCmd())
-				cmds = append(cmds, cursorBlinkCmd())
-				cmds = append(cmds, waveTickCmd())
-				cmds = append(cmds, func() tea.Msg {
-					result, err := sup.ProcessPrompt(ctx, processedPrompt)
-					return ProcessMsg{Result: result, Err: err}
-				})
+
+				// If in workflow mode, run the multi-agent workflow engine
+				if sup.GetMode() == agent.ModeWorkflow {
+					if agentSup, ok := sup.(*agent.Supervisor); ok {
+						cmds = append(cmds, func() tea.Msg {
+							result, err := workflow.RunWorkflow(agentSup, agentSup.GetProvider(), processedPrompt)
+							if err != nil {
+								return ProcessMsg{Result: nil, Err: err}
+							}
+							var sb strings.Builder
+							sb.WriteString(fmt.Sprintf("# Workflow Complete: %s\n\n", result.FinalSummary))
+							sb.WriteString(fmt.Sprintf("**Domain:** %s\n\n", result.Domain))
+							sb.WriteString("## PRD\n\n")
+							sb.WriteString(result.PRD)
+							sb.WriteString("\n\n## Architecture / Workflow Design\n\n")
+							sb.WriteString(result.Architecture)
+							sb.WriteString("\n\n## QA Result\n\n")
+							sb.WriteString(fmt.Sprintf("- Status: %s\n", result.QAResult.Status))
+							sb.WriteString(fmt.Sprintf("- Score: %d/100\n", result.QAResult.Score))
+							if len(result.QAResult.Issues) > 0 {
+								sb.WriteString("- Issues:\n")
+								for _, issue := range result.QAResult.Issues {
+									sb.WriteString(fmt.Sprintf("  - %s\n", issue))
+								}
+							}
+							sb.WriteString(fmt.Sprintf("\n**Project Directory:** %s\n", result.ProjectPath))
+							thinking := fmt.Sprintf("Domain: %s | Agents: %d | QA: %s", result.Domain, len(result.AgentOutputs), result.QAResult.Status)
+							return ProcessMsg{Result: &agent.PromptResult{
+								Response:      sb.String(),
+								Thinking:      thinking,
+								InputTokens:   0,
+								OutputTokens:  0,
+								TotalTokens:   0,
+								Duration:      0,
+							}, Err: nil}
+						})
+					} else {
+						// Fallback to normal processing if type assertion fails
+						cmds = append(cmds, cursorBlinkCmd())
+						cmds = append(cmds, waveTickCmd())
+						cmds = append(cmds, func() tea.Msg {
+							result, err := sup.ProcessPrompt(ctx, processedPrompt)
+							return ProcessMsg{Result: result, Err: err}
+						})
+					}
+				} else {
+					// Normal supervisor processing
+					cmds = append(cmds, cursorBlinkCmd())
+					cmds = append(cmds, waveTickCmd())
+					cmds = append(cmds, func() tea.Msg {
+						result, err := sup.ProcessPrompt(ctx, processedPrompt)
+						return ProcessMsg{Result: result, Err: err}
+					})
+				}
 			}
 		}
 
@@ -1037,12 +1110,13 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
 	switch cmd {
 	case "help":
 		m.addMessage("System", `Perintah tersedia:
-  [Tab]              — Ganti tampilan (Chat → Node Graph → Help)
-  /mode [ask|rush|plan] — Ganti mode agen
+  [Tab]              — Ganti mode agen (cycle: ask → rush → plan → test)
+  [F2]               — Ganti tampilan (Chat → Node Graph → Help)
+  /mode [ask|rush|plan|test] — Ganti mode agen
   /model [provider] [model] — Ganti LLM provider/model
   /skill [run <nama>] — Lihat atau jalankan skill tersimpan
   /help              — Tampilkan bantuan ini
-  /expand            — Toggle tampilan code blocks (expand/collapse)
+  /expand [n]        — Toggle code blocks pesan Agent ke-n dari bawah (default: 1)
   /memory            — Lihat memori tersimpan
   /mcp               — Lihat MCP servers dan tools
   /mcp add <name> local <cmd> [args...] — Hubungkan MCP local
@@ -1056,68 +1130,39 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
   ssh user@host [cmd] — Eksekusi SSH langsung dari prompt
   exit               — Keluar dari Smara`)
 	case "expand":
-		// Toggle code block expansion for the most recent agent message
-		found := false
-		for i := len(m.messages) - 1; i >= 0; i-- {
-			if m.messages[i].Role == "Agent" {
-				m.messages[i].ExpandedCode = !m.messages[i].ExpandedCode
-				found = true
-				status := "collapsed"
-				if m.messages[i].ExpandedCode {
-					status = "expanded"
-				}
-				m.addMessage("System", fmt.Sprintf("Code blocks %s for latest message.", status))
-				break
+		// Toggle code block expansion for a specific agent message (default: latest)
+		n := 1
+		if len(args) > 0 {
+			if parsed, err := strconv.Atoi(args[0]); err == nil && parsed > 0 {
+				n = parsed
 			}
 		}
-		if !found {
+		found := 0
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == "Agent" {
+				found++
+				if found == n {
+					m.messages[i].ExpandedCode = !m.messages[i].ExpandedCode
+					status := "collapsed"
+					if m.messages[i].ExpandedCode {
+						status = "expanded"
+					}
+					m.addMessage("System", fmt.Sprintf("Code blocks %s for agent message #%d.", status, n))
+					break
+				}
+			}
+		}
+		if found == 0 {
 			m.addMessage("System", "No agent messages to expand.")
+		} else if found < n {
+			m.addMessage("System", fmt.Sprintf("Hanya ditemukan %d pesan Agent (requested #%d).", found, n))
 		}
 		m.renderMessages()
 	case "clear":
 		m.messages = []ChatMessage{}
 		m.renderMessages()
 	case "workflow":
-		if len(args) == 0 {
-			m.addMessage("System", `Perintah Workflow:
-  /workflow list         — Daftar semua workflow aktif
-  /workflow resume <n>   — Lanjutkan workflow ke-n dari list`)
-			return
-		}
-		subcmd := args[0]
-		switch subcmd {
-		case "list":
-			reg, err := workflow.LoadRegistry()
-			if err != nil {
-				m.addMessage("System", fmt.Sprintf("Gagal load registry: %v", err))
-				return
-			}
-			list := reg.FormatList()
-			m.addMessage("System", list)
-		case "resume":
-			if len(args) < 2 {
-				m.addMessage("System", "Gunakan: /workflow resume <nomor>")
-				return
-			}
-			var n int
-			if _, err := fmt.Sscanf(args[1], "%d", &n); err != nil || n < 1 {
-				m.addMessage("System", fmt.Sprintf("Nomor tidak valid: %s", args[1]))
-				return
-			}
-			reg, err := workflow.LoadRegistry()
-			if err != nil {
-				m.addMessage("System", fmt.Sprintf("Gagal load registry: %v", err))
-				return
-			}
-			entry, ok := reg.GetByIndex(n)
-			if !ok {
-				m.addMessage("System", fmt.Sprintf("Workflow #%d tidak ditemukan.", n))
-				return
-			}
-			m.addMessage("System", fmt.Sprintf("Workflow: %s\nPath: %s\nStatus: %s\nUntuk resume dari CLI: smara workflow resume %s", entry.Name, entry.ProjectDir, entry.Status, entry.ProjectDir))
-		default:
-			m.addMessage("System", fmt.Sprintf("Subcommand tidak dikenal: %s. Gunakan 'list' atau 'resume <n>'.", subcmd))
-		}
+		m.addMessage("System", "Workflow management tersedia via CLI: smara workflow <list|resume>")
 	case "ssh":
 		if len(args) == 0 {
 			m.addMessage("System", `Perintah SSH:

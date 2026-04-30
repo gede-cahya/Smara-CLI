@@ -3,7 +3,7 @@ package workflow
 import (
 	"testing"
 
-	"github.com/gede-cahya/Smara-CLI/pkg/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -46,6 +46,10 @@ export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
+export function GetMode() {
+  return window['go']['main']['App']['GetMode']();
+}
+
 export function GetSessionHistory() {
   return window['go']['main']['App']['GetSessionHistory']();
 }
@@ -64,6 +68,10 @@ export function GetWorkspaces() {
 
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
+}
+
+export function SetMode(arg1) {
+  return window['go']['main']['App']['SetMode'](arg1);
 }
 
 export function SetWorkspace(arg1) {

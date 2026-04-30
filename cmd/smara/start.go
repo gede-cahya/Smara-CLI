@@ -45,7 +45,7 @@ Alur: Config → SQLite Init → Sync Daemon → Supervisor Agent → REPL`,
 func init() {
 	startCmd.Flags().StringVarP(&model, "model", "m", "", "model LLM yang digunakan (default: dari config)")
 	startCmd.Flags().BoolVar(&offline, "offline", false, "jalankan tanpa sync daemon")
-	startCmd.Flags().StringVar(&startMode, "mode", "ask", "mode agen: ask, rush, plan, test")
+	startCmd.Flags().StringVar(&startMode, "mode", "ask", "mode agen: ask, rush, plan, test, workflow")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -467,7 +467,7 @@ func handleCommand(cmd string, args []string, supervisor *agent.Supervisor, memS
 		}
 		newMode := args[0]
 		if !agent.ValidMode(newMode) {
-			ui.PrintError("Mode tidak valid: %s (pilih: ask, rush, plan)", newMode)
+			ui.PrintError("Mode tidak valid: %s (pilih: ask, rush, plan, test, workflow)", newMode)
 			return
 		}
 		supervisor.SetMode(agent.Mode(newMode))

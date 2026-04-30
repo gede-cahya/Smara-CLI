@@ -15,9 +15,9 @@ func TestMode_Constants(t *testing.T) {
 
 func TestAllModes_ReturnsAll(t *testing.T) {
 	modes := AllModes()
-	assert.Len(t, modes, 4)
+	assert.Len(t, modes, 5)
 
-	names := make([]Mode, 0, 4)
+	names := make([]Mode, 0, 5)
 	for _, m := range modes {
 		names = append(names, m.Name)
 	}
@@ -25,6 +25,7 @@ func TestAllModes_ReturnsAll(t *testing.T) {
 	assert.Contains(t, names, ModeRush)
 	assert.Contains(t, names, ModePlan)
 	assert.Contains(t, names, ModeTest)
+	assert.Contains(t, names, ModeWorkflow)
 }
 
 func TestAllModes_ModeInfoFields(t *testing.T) {
@@ -39,7 +40,7 @@ func TestAllModes_ModeInfoFields(t *testing.T) {
 }
 
 func TestGetModeInfo_ExistingModes(t *testing.T) {
-	for _, mode := range []Mode{ModeAsk, ModeRush, ModePlan, ModeTest} {
+	for _, mode := range []Mode{ModeAsk, ModeRush, ModePlan, ModeTest, ModeWorkflow} {
 		info := GetModeInfo(mode)
 		assert.Equal(t, mode, info.Name, "GetModeInfo should return correct mode for %s", mode)
 	}
@@ -56,6 +57,7 @@ func TestValidMode(t *testing.T) {
 	assert.True(t, ValidMode("rush"))
 	assert.True(t, ValidMode("plan"))
 	assert.True(t, ValidMode("test"))
+	assert.True(t, ValidMode("workflow"))
 	assert.False(t, ValidMode("unknown"))
 	assert.False(t, ValidMode(""))
 	assert.False(t, ValidMode("ASK")) // case sensitive

@@ -34,6 +34,9 @@ func TestPrompt_NextMode_CyclesCorrectly(t *testing.T) {
 	assert.Equal(t, "test", p.nextMode())
 
 	p.currentMode = "test"
+	assert.Equal(t, "workflow", p.nextMode())
+
+	p.currentMode = "workflow"
 	assert.Equal(t, "ask", p.nextMode()) // wrap around
 }
 
@@ -120,7 +123,7 @@ func TestModeEmojis(t *testing.T) {
 }
 
 func TestModeOrder(t *testing.T) {
-	assert.Equal(t, []string{"ask", "rush", "plan", "test"}, ModeOrder)
+	assert.Equal(t, []string{"ask", "rush", "plan", "test", "workflow"}, ModeOrder)
 }
 
 func TestErrInterrupted(t *testing.T) {

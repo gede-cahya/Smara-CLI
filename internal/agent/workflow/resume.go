@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gede-cahya/Smara-CLI/pkg/agent"
-	"github.com/gede-cahya/Smara-CLI/pkg/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
 
 // Resumer handles resuming interrupted workflows from disk state.
