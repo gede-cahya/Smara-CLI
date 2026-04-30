@@ -11,8 +11,11 @@ import (
 
 // Worker executes individual tasks as delegated by the Supervisor.
 type Worker struct {
-	provider   llm.Provider
-	mcpClients map[string]*mcp.Client
+	provider     llm.Provider
+	mcpClients   map[string]*mcp.Client
+	Role         string
+	AllowedTools []string
+	SystemPrompt string
 }
 
 // NewWorker creates a new worker agent.
@@ -20,6 +23,17 @@ func NewWorker(provider llm.Provider, mcpClients map[string]*mcp.Client) *Worker
 	return &Worker{
 		provider:   provider,
 		mcpClients: mcpClients,
+	}
+}
+
+// NewSpecializedWorker creates a role-specialized worker with custom system prompt and tool filtering.
+func NewSpecializedWorker(provider llm.Provider, mcpClients map[string]*mcp.Client, role string, allowedTools []string, systemPrompt string) *Worker {
+	return &Worker{
+		provider:     provider,
+		mcpClients:   mcpClients,
+		Role:         role,
+		AllowedTools: allowedTools,
+		SystemPrompt: systemPrompt,
 	}
 }
 
@@ -36,6 +50,15 @@ func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
 
 // executeMCPTask runs a task that involves an MCP server tool call.
 func (w *Worker) executeMCPTask(ctx context.Context, task Task) TaskResult {
+	// If this is a specialized worker, check tool permissions
+	if w.Role != "" && len(w.AllowedTools) > 0 && !contains(w.AllowedTools, task.ToolName) {
+		return TaskResult{
+			TaskID: task.ID,
+			Status: TaskFailed,
+			Error:  fmt.Sprintf("tool '%s' tidak diizinkan untuk role '%s'", task.ToolName, w.Role),
+		}
+	}
+
 	client, ok := w.mcpClients[task.MCPServer]
 	if !ok {
 		return TaskResult{
@@ -83,10 +106,15 @@ func (w *Worker) executeMCPTask(ctx context.Context, task Task) TaskResult {
 
 // executeLLMTask runs a task using only the LLM.
 func (w *Worker) executeLLMTask(ctx context.Context, task Task) TaskResult {
+	systemPrompt := "Kamu adalah worker agent yang bertugas menyelesaikan satu tugas spesifik dengan tepat."
+	if w.SystemPrompt != "" {
+		systemPrompt = w.SystemPrompt
+	}
+
 	messages := []llm.Message{
 		{
 			Role:    llm.RoleSystem,
-			Content: "Kamu adalah worker agent yang bertugas menyelesaikan satu tugas spesifik dengan tepat.",
+			Content: systemPrompt,
 		},
 		{
 			Role:    llm.RoleUser,
@@ -108,4 +136,13 @@ func (w *Worker) executeLLMTask(ctx context.Context, task Task) TaskResult {
 		Status: TaskCompleted,
 		Output: resp.Content,
 	}
+}
+
+func contains(list []string, item string) bool {
+	for _, s := range list {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

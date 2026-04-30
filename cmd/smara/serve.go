@@ -146,15 +146,33 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Also add Smara-native configs
 	for _, mcpCfg := range cfg.MCPServers {
+		mcpType := mcpCfg.Type
+		if mcpType == "" {
+			mcpType = "local"
+		}
 		mcpConfigs = append(mcpConfigs, mcp.MCPServerConfig{
 			Name:    mcpCfg.Name,
-			Type:    "local",
+			Type:    mcpType,
 			Command: mcpCfg.Command,
 			Args:    mcpCfg.Args,
+			URL:     mcpCfg.URL,
+			Headers: mcpCfg.Headers,
 			Env:     mcpCfg.Env,
-			Enabled: true,
+			Enabled: mcpCfg.Enabled,
 		})
 	}
+
+	// Deduplicate: keep only the last occurrence of each server name
+	seen := make(map[string]bool)
+	var deduped []mcp.MCPServerConfig
+	for i := len(mcpConfigs) - 1; i >= 0; i-- {
+		if seen[mcpConfigs[i].Name] {
+			continue
+		}
+		seen[mcpConfigs[i].Name] = true
+		deduped = append([]mcp.MCPServerConfig{mcpConfigs[i]}, deduped...)
+	}
+	mcpConfigs = deduped
 
 	// Connect to all MCP servers in parallel
 	type mcpConnResult struct {

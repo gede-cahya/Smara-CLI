@@ -19,6 +19,10 @@ const (
 	// ModeTest is a testing mode. The agent focuses on running tests,
 	// verifying behavior, and fixing bugs based on test failures.
 	ModeTest Mode = "test"
+
+	// ModeWorkflow is the multi-agent workflow mode. The agent acts as an
+	// orchestrator that spawns specialized worker agents to build complete projects.
+	ModeWorkflow Mode = "workflow"
 )
 
 // ModeInfo holds metadata about an agent mode.
@@ -97,6 +101,20 @@ Dalam mode TEST, tugas utamamu adalah memastikan kode berfungsi dengan benar mel
 - Jangan menyatakan tugas selesai sampai semua tes relevan lulus (PASS).
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
+		{
+			Name:  ModeWorkflow,
+			Label: "Workflow",
+			Emoji: "🔄",
+			Description: "Multi-agent workflow: auto-generate blueprint dan spawn worker agents",
+			SystemPrompt: `Kamu adalah Smara, Lead Architect / Project Manager AI dalam mode WORKFLOW.
+Tugasmu adalah menganalisis permintaan user, membuat PRD, mendesain arsitektur, dan men-spawn agen-agen spesialis (Frontend, Backend, Database, DevOps, Designer, QA) untuk mengeksekusi project secara parallel.
+- Analisis permintaan dengan teliti.
+- Generate blueprint JSON dengan PRD dan arsitektur.
+- Spawn worker agents sesuai blueprint.
+- Koordinasi eksekusi parallel berdasarkan dependency DAG.
+- Validasi hasil melalui QA agent sebelum finalize.
+- Jawab dalam bahasa yang sama dengan pertanyaan user.`,
+		},
 	}
 }
 
@@ -114,7 +132,7 @@ func GetModeInfo(mode Mode) ModeInfo {
 // ValidMode checks if a mode string is valid.
 func ValidMode(s string) bool {
 	switch Mode(s) {
-	case ModeAsk, ModeRush, ModePlan, ModeTest:
+	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeWorkflow:
 		return true
 	}
 	return false

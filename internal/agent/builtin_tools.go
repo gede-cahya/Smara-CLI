@@ -483,6 +483,60 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"prompt_text"},
 			},
 		},
+		{
+			Name:        "connect_mcp",
+			Description: "Menghubungkan MCP server secara manual (local atau remote) dan menyimpannya ke config.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama identifier untuk MCP server",
+					},
+					"type": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"local", "remote"},
+						"description": "Tipe koneksi: 'local' (stdio) atau 'remote' (HTTP)",
+					},
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Perintah untuk menjalankan MCP server (wajib untuk type=local)",
+					},
+					"args": map[string]interface{}{
+						"type":        "array",
+						"items": map[string]interface{}{"type": "string"},
+						"description": "Argument untuk perintah (opsional)",
+					},
+					"url": map[string]interface{}{
+						"type":        "string",
+						"description": "URL endpoint untuk remote MCP (wajib untuk type=remote)",
+					},
+					"headers": map[string]interface{}{
+						"type":        "object",
+						"description": "HTTP headers untuk remote MCP (opsional)",
+					},
+					"env": map[string]interface{}{
+						"type":        "object",
+						"description": "Environment variables untuk local MCP (opsional)",
+					},
+				},
+				"required": []string{"name", "type"},
+			},
+		},
+		{
+			Name:        "disconnect_mcp",
+			Description: "Memutuskan koneksi MCP server dan menghapusnya dari config.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama MCP server yang akan diputuskan",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
 	}
 }
 

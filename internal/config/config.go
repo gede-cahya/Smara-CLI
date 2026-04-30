@@ -13,9 +13,13 @@ import (
 // MCPServer represents a configured MCP server endpoint.
 type MCPServer struct {
 	Name    string            `mapstructure:"name" yaml:"name"`
+	Type    string            `mapstructure:"type" yaml:"type"`       // "local" or "remote"
 	Command string            `mapstructure:"command" yaml:"command"`
 	Args    []string          `mapstructure:"args" yaml:"args"`
-	Env     map[string]string `mapstructure:"env" yaml:"env"`
+	URL     string            `mapstructure:"url" yaml:"url,omitempty"` // for remote servers
+	Headers map[string]string `mapstructure:"headers" yaml:"headers,omitempty"`
+	Env     map[string]string `mapstructure:"env" yaml:"env,omitempty"`
+	Enabled bool              `mapstructure:"enabled" yaml:"enabled"`
 }
 
 // PlatformBotConfig holds config for a single platform bot.
@@ -236,6 +240,53 @@ func GetValue(key string) interface{} {
 // AllSettings returns all current settings as a map.
 func AllSettings() map[string]interface{} {
 	return viper.AllSettings()
+}
+
+// AddMCPServer adds or replaces an MCP server in the config and persists it.
+func AddMCPServer(srv MCPServer) error {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	// Deduplicate: replace if exists
+	found := false
+	for i, existing := range cfg.MCPServers {
+		if existing.Name == srv.Name {
+			cfg.MCPServers[i] = srv
+			found = true
+			break
+		}
+	}
+	if !found {
+		cfg.MCPServers = append(cfg.MCPServers, srv)
+	}
+	viper.Set("mcp_servers", cfg.MCPServers)
+	return Save()
+}
+
+// RemoveMCPServer removes an MCP server from config by name and persists it.
+func RemoveMCPServer(name string) error {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	var filtered []MCPServer
+	for _, s := range cfg.MCPServers {
+		if s.Name != name {
+			filtered = append(filtered, s)
+		}
+	}
+	cfg.MCPServers = filtered
+	viper.Set("mcp_servers", cfg.MCPServers)
+	return Save()
+}
+
+// ListMCPServers returns the list of configured MCP servers.
+func ListMCPServers() []MCPServer {
+	if cfg == nil {
+		return []MCPServer{}
+	}
+	result := make([]MCPServer, len(cfg.MCPServers))
+	copy(result, cfg.MCPServers)
+	return result
 }
 
 // Save writes the current configuration to the config file.

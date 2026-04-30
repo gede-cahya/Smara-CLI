@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smara Workspace Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: system-ui, -apple-system, sans-serif; 
+      background: #0a0a0f; 
+      color: #e2e8f0; 
+      height: 100vh; 
+      overflow: hidden;
+    }
+    #root { height: 100vh; width: 100vw; }
+    .loading { 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      height: 100vh; 
+      gap: 12px;
+    }
+    .loading-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #3b82f6;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      <span>Loading Virtual Workspace...</span>
+    </div>
+  </div>
+  
+  <script>
+    // Mock Wails runtime for standalone testing
+    window.runtime = {
+      EventsOn: function(event, callback) {
+        console.log('[Mock] EventsOn registered:', event);
+        window._eventCallbacks = window._eventCallbacks || {};
+        window._eventCallbacks[event] = callback;
+        return function() { delete window._eventCallbacks[event]; };
+      },
+      EventsEmit: function(event, data) {
+        console.log('[Mock] EventsEmit:', event, data);
+      }
+    };
+
+    // Expose mock Go methods
+    window.go = {
+      main: {
+        App: {
+          TriggerWorkspaceDemo: async function() {
+            console.log('[Mock] TriggerWorkspaceDemo called');
+            // Simulate demo events
+            const events = [
+              { type: 'workflow_start', total_waves: 3 },
+              { type: 'wave_start', wave: 1, total_waves: 3 },
+              { type: 'agent_spawn', agent_id: 'orch-1', agent_role: 'orchestrator', to_x: 500, to_y: 300 },
+              { type: 'agent_spawn', agent_id: 'fe-1', agent_role: 'frontend', to_x: -60, to_y: 200 },
+              { type: 'agent_spawn', agent_id: 'be-1', agent_role: 'backend', to_x: 1060, to_y: 200 },
+              { type: 'agent_spawn', agent_id: 'db-1', agent_role: 'database', to_x: 500, to_y: 860 },
+              { type: 'agent_spawn', agent_id: 'qa-1', agent_role: 'qa', to_x: -60, to_y: 650 },
+            ];
+            
+            events.forEach((ev, i) => {
+              setTimeout(() => {
+                const cb = window._eventCallbacks?.['workspace:event'];
+                if (cb) cb(ev);
+              }, i * 300);
+            });
+            
+            // Simulate moves
+            setTimeout(() => {
+              const moves = [
+                { type: 'agent_move', agent_id: 'fe-1', from_x: -60, from_y: 200, to_x: 200, to_y: 200 },
+                { type: 'agent_move', agent_id: 'be-1', from_x: 1060, from_y: 200, to_x: 800, to_y: 200 },
+                { type: 'agent_move', agent_id: 'db-1', from_x: 500, from_y: 860, to_x: 500, to_y: 500 },
+                { type: 'agent_move', agent_id: 'qa-1', from_x: -60, from_y: 650, to_x: 300, to_y: 650 },
+              ];
+              moves.forEach((ev, i) => {
+                setTimeout(() => {
+                  const cb = window._eventCallbacks?.['workspace:event'];
+                  if (cb) cb(ev);
+                }, i * 200);
+              });
+            }, 2500);
+            
+            // Simulate work
+            setTimeout(() => {
+              const works = [
+                { type: 'agent_work', agent_id: 'be-1', message: 'Designing REST API schema...' },
+                { type: 'agent_work', agent_id: 'fe-1', message: 'Building React components...' },
+                { type: 'agent_work', agent_id: 'db-1', message: 'Creating migration files...' },
+              ];
+              works.forEach((ev, i) => {
+                setTimeout(() => {
+                  const cb = window._eventCallbacks?.['workspace:event'];
+                  if (cb) cb(ev);
+                }, i * 400);
+              });
+            }, 4000);
+            
+            // Complete
+            setTimeout(() => {
+              const cb = window._eventCallbacks?.['workspace:event'];
+              if (cb) cb({ type: 'workflow_complete' });
+            }, 10000);
+            
+            return Promise.resolve();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('[Test] Workspace test environment ready');
+    });
+  </script>
+</body>
+</html>

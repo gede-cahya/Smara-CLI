@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
+	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/lsp"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
@@ -18,6 +19,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
+	"github.com/gede-cahya/Smara-CLI/internal/skill"
 )
 
 // MCPServerInfo holds detailed MCP server information.
@@ -318,12 +320,34 @@ func (s *Supervisor) GetMode() Mode {
 func (s *Supervisor) RegisterMCPClient(name string, client *mcp.Client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if old, ok := s.mcpClients[name]; ok {
+		old.Close()
+	}
 	s.mcpClients[name] = client
 	// Initialize basic info
 	s.mcpInfo[name] = MCPServerInfo{
 		Name:      name,
 		Connected: true,
 		Tools:     []mcp.Tool{},
+	}
+}
+
+// UnregisterMCPClient disconnects and removes an MCP server.
+func (s *Supervisor) UnregisterMCPClient(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if client, ok := s.mcpClients[name]; ok {
+		if client != nil {
+			client.Close()
+		}
+		delete(s.mcpClients, name)
+	}
+	delete(s.mcpInfo, name)
+	// Remove all tool routes for this server
+	for key, route := range s.toolRoute {
+		if route.MCPServer == name {
+			delete(s.toolRoute, key)
+		}
 	}
 }
 
@@ -474,6 +498,9 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 				if s.memStore == nil {
 					return "Memory store tidak tersedia.", nil
 				}
+				if s.provider == nil {
+					return "LLM provider tidak tersedia untuk generate embedding.", nil
+				}
 				content, _ := tc.Args["content"].(string)
 				embedding, err := s.provider.GenerateEmbedding(content)
 				if err != nil {
@@ -489,6 +516,9 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 			if tc.Function == "search_memories" {
 				if s.memStore == nil {
 					return "Memory store tidak tersedia.", nil
+				}
+				if s.provider == nil {
+					return "LLM provider tidak tersedia untuk generate embedding.", nil
 				}
 				query, _ := tc.Args["query"].(string)
 				embedding, err := s.provider.GenerateEmbedding(query)
@@ -576,6 +606,98 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 				}
 			}
 
+			// Handle MCP connection/disconnection tools directly in supervisor
+			if tc.Function == "connect_mcp" {
+				name := getStr(tc.Args, "name")
+				mcpType := getStr(tc.Args, "type")
+				if name == "" || mcpType == "" {
+					return "", fmt.Errorf("argumen 'name' dan 'type' wajib diisi")
+				}
+				mcpCfg := mcp.MCPServerConfig{
+					Name:    name,
+					Type:    mcpType,
+					Enabled: true,
+				}
+				if mcpType == "local" {
+					mcpCfg.Command = getStr(tc.Args, "command")
+					if mcpCfg.Command == "" {
+						return "", fmt.Errorf("argumen 'command' wajib diisi untuk type=local")
+					}
+					if argsArr, ok := tc.Args["args"].([]interface{}); ok {
+						for _, a := range argsArr {
+							if s, ok := a.(string); ok {
+								mcpCfg.Args = append(mcpCfg.Args, s)
+							}
+						}
+					}
+					if envObj, ok := tc.Args["env"].(map[string]interface{}); ok {
+						mcpCfg.Env = make(map[string]string)
+						for k, v := range envObj {
+							if s, ok := v.(string); ok {
+								mcpCfg.Env[k] = s
+							}
+						}
+					}
+				} else if mcpType == "remote" {
+					mcpCfg.URL = getStr(tc.Args, "url")
+					if mcpCfg.URL == "" {
+						return "", fmt.Errorf("argumen 'url' wajib diisi untuk type=remote")
+					}
+					if headersObj, ok := tc.Args["headers"].(map[string]interface{}); ok {
+						mcpCfg.Headers = make(map[string]string)
+						for k, v := range headersObj {
+							if s, ok := v.(string); ok {
+								mcpCfg.Headers[k] = s
+							}
+						}
+					}
+				}
+				var client *mcp.Client
+				var err error
+				switch mcpType {
+				case "remote":
+					client, err = mcp.NewRemoteClient(mcpCfg)
+				default:
+					client, err = mcp.NewClient(mcpCfg)
+				}
+				if err != nil {
+					return "", fmt.Errorf("gagal menghubungkan MCP '%s': %w", name, err)
+				}
+				tools, err := client.ListTools()
+				if err != nil {
+					client.Close()
+					return "", fmt.Errorf("gagal list tools dari MCP '%s': %w", name, err)
+				}
+				s.RegisterMCPClient(name, client)
+				s.UpdateMCPInfo(name, tools)
+				// Persist to config
+				if err := config.AddMCPServer(config.MCPServer{
+					Name:    mcpCfg.Name,
+					Type:    mcpCfg.Type,
+					Command: mcpCfg.Command,
+					Args:    mcpCfg.Args,
+					URL:     mcpCfg.URL,
+					Headers: mcpCfg.Headers,
+					Env:     mcpCfg.Env,
+					Enabled: true,
+				}); err != nil {
+					return fmt.Sprintf("MCP '%s' terhubung dengan %d tools (gagal menyimpan config: %v)", name, len(tools), err), nil
+				}
+				return fmt.Sprintf("MCP '%s' terhubung dengan %d tools", name, len(tools)), nil
+			}
+
+			if tc.Function == "disconnect_mcp" {
+				name := getStr(tc.Args, "name")
+				if name == "" {
+					return "", fmt.Errorf("argumen 'name' wajib diisi")
+				}
+				s.UnregisterMCPClient(name)
+				if err := config.RemoveMCPServer(name); err != nil {
+					return fmt.Sprintf("MCP '%s' diputuskan (gagal menghapus config: %v)", name, err), nil
+				}
+				return fmt.Sprintf("MCP '%s' diputuskan dan dihapus dari config", name), nil
+			}
+
 			var logFn func(string, string)
 			if s.callback.OnLog != nil {
 				logFn = s.callback.OnLog
@@ -630,6 +752,18 @@ func (s *Supervisor) ListMCPServers() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// SkillExecutor returns a StepExecutor that routes tool calls through
+// the supervisor's existing tool routing (built-in + MCP).
+func (s *Supervisor) SkillExecutor() skill.StepExecutor {
+	return func(toolName string, args map[string]interface{}) (string, error) {
+		tc := llm.ToolCall{
+			Function: toolName,
+			Args:     args,
+		}
+		return s.executeToolCall(tc)
+	}
 }
 
 // --- Session Management ---
@@ -1078,32 +1212,20 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			allThinking = append(allThinking, resp.Thinking)
 		}
 
+		// Fallback: some LLMs emit tool calls as DSML/XML inside content instead of native tool_calls field
+		if len(toolCalls) == 0 && resp != nil && strings.Contains(resp.Content, "<| DSML |") {
+			extracted, cleaned := llm.ExtractToolCallsFromContent(resp.Content)
+			if len(extracted) > 0 {
+				toolCalls = extracted
+				resp.Content = cleaned
+			}
+		}
+
 		if len(toolCalls) == 0 {
 			// No tool calls — LLM gave final answer
 			if s.callback.OnPhaseChange != nil {
 				s.callback.OnPhaseChange("Generating", "Formulating final response...")
 			}
-			// Update history and save to memory
-			userMsg := llm.Message{Role: llm.RoleUser, Content: userPrompt}
-			assistantMsg := llm.Message{Role: llm.RoleAssistant, Content: resp.Content}
-
-			s.history = append(s.history, userMsg, assistantMsg)
-
-			if sess := s.sessionRegistry.Current(); sess != nil {
-				sess.History = append(sess.History, userMsg, assistantMsg)
-				sess.UpdatedAt = time.Now()
-				if s.sessionStore != nil {
-					s.sessionStore.UpdateSession(sess)
-				}
-			}
-
-			if s.memStore != nil {
-				tag := fmt.Sprintf("mode:%s", s.mode)
-				content := fmt.Sprintf("Q: %s\nA: %s", userPrompt, truncate(resp.Content, 500))
-				embedding, _ := s.provider.GenerateEmbedding(content)
-				s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
-			}
-
 			return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 		}
 
@@ -1186,11 +1308,6 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	if s.callback.OnPhaseChange != nil {
 		s.callback.OnPhaseChange("Done", "Finished")
 	}
-
-	s.history = append(s.history,
-		llm.Message{Role: llm.RoleUser, Content: userPrompt},
-		llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-	)
 
 	return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 }

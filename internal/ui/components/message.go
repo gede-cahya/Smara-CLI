@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func (r *MessageRenderer) SetWidth(width int) {
 
 // RenderMessage renders a single chat message as a styled bubble.
 func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts, tools []string,
-	inTokens, outTokens int, duration time.Duration, mode string, modelName string) string {
+	inTokens, outTokens int, duration time.Duration, mode string, modelName string, expandedCode bool) string {
 
 	var sb strings.Builder
 	contentWidth := r.width - 8 // padding + border margins
@@ -81,7 +82,7 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 	}
 
 	// Build content with processing
-	renderedContent := r.processContent(content, contentWidth)
+	renderedContent := r.processContent(content, contentWidth, expandedCode)
 
 	// Thinking block (if expanded)
 	var thinkingBlock string
@@ -229,7 +230,7 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 			sb.WriteString("\n")
 		} else if content != "" {
 			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
-			streamContent := r.processContent(content, contentWidth)
+			streamContent := r.processContent(content, contentWidth, true)
 			if cursorVisible {
 				streamContent += r.theme.StreamCursor.Render("▌")
 			}
@@ -245,7 +246,7 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 		}
 		if content != "" {
 			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
-			streamContent := r.processContent(content, contentWidth)
+			streamContent := r.processContent(content, contentWidth, true)
 			if cursorVisible {
 				streamContent += r.theme.StreamCursor.Render("▌")
 			}
@@ -296,8 +297,12 @@ func thinkingPhase(elapsed time.Duration) string {
 	return phases[idx]
 }
 
-// processContent handles markdown rendering via glamour.
-func (r *MessageRenderer) processContent(content string, width int) string {
+// processContent handles markdown rendering via glamour, with optional code block collapsing.
+func (r *MessageRenderer) processContent(content string, width int, expandedCode bool) string {
+	if !expandedCode {
+		content = collapseCodeBlocks(content)
+	}
+
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStylePath("dark"),
 		glamour.WithWordWrap(width),
@@ -315,10 +320,31 @@ func (r *MessageRenderer) processContent(content string, width int) string {
 	return strings.TrimRight(out, "\n")
 }
 
+// collapseCodeBlocks replaces fenced code blocks with a compact indicator line.
+func collapseCodeBlocks(content string) string {
+	re := regexp.MustCompile("(?s)```(\\w*)\\n(.*?)```")
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		groups := re.FindStringSubmatch(match)
+		if len(groups) < 3 {
+			return match
+		}
+		lang := groups[1]
+		code := groups[2]
+		lines := strings.Count(code, "\n")
+		if !strings.HasSuffix(code, "\n") && code != "" {
+			lines++
+		}
+		if lang == "" {
+			lang = "text"
+		}
+		return fmt.Sprintf("▶ *Code: `%s` (%d lines) — press `/expand` to view*", lang, lines)
+	})
+}
+
 func (r *MessageRenderer) renderThinking(thinking string, width int) string {
-	header := r.theme.ThinkingHeader.Render("💭 Thinking...")
-	content := r.theme.ThinkingContent.Width(width - 6).Render(thinking)
-	return r.theme.ThinkingBlock.Width(width - 2).Render(header + "\n" + content)
+	toggle := NewThinkingToggle(width)
+	toggle.SetContent(thinking)
+	return toggle.Render()
 }
 
 func (r *MessageRenderer) renderAnalysisPreview(analysis string, width int) string {

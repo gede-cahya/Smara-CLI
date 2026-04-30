@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -123,4 +124,63 @@ func TestPlatformBotConfig_Struct(t *testing.T) {
 	assert.Equal(t, []string{"guild1"}, pb.GuildIDs)
 	assert.Equal(t, 10, pb.RateLimit)
 	assert.Equal(t, 3, pb.RateBurst)
+}
+
+func TestAddMCPServer_AddsNew(t *testing.T) {
+	cfg = DefaultConfig()
+	require.NotNil(t, cfg)
+	assert.Empty(t, cfg.MCPServers)
+
+	err := AddMCPServer(MCPServer{Name: "server-a", Type: "local", Command: "cmd-a"})
+	require.NoError(t, err)
+	assert.Len(t, cfg.MCPServers, 1)
+	assert.Equal(t, "server-a", cfg.MCPServers[0].Name)
+}
+
+func TestAddMCPServer_ReplaceExisting(t *testing.T) {
+	cfg = DefaultConfig()
+	cfg.MCPServers = []MCPServer{{Name: "server-a", Type: "local", Command: "old-cmd"}}
+
+	err := AddMCPServer(MCPServer{Name: "server-a", Type: "remote", URL: "http://x"})
+	require.NoError(t, err)
+	assert.Len(t, cfg.MCPServers, 1)
+	assert.Equal(t, "remote", cfg.MCPServers[0].Type)
+	assert.Equal(t, "http://x", cfg.MCPServers[0].URL)
+}
+
+func TestRemoveMCPServer_RemovesByName(t *testing.T) {
+	cfg = DefaultConfig()
+	cfg.MCPServers = []MCPServer{
+		{Name: "a"},
+		{Name: "b"},
+		{Name: "c"},
+	}
+
+	err := RemoveMCPServer("b")
+	require.NoError(t, err)
+	assert.Len(t, cfg.MCPServers, 2)
+	assert.Equal(t, "a", cfg.MCPServers[0].Name)
+	assert.Equal(t, "c", cfg.MCPServers[1].Name)
+}
+
+func TestRemoveMCPServer_NonExistent(t *testing.T) {
+	cfg = DefaultConfig()
+	cfg.MCPServers = []MCPServer{{Name: "a"}}
+
+	err := RemoveMCPServer("z")
+	require.NoError(t, err)
+	assert.Len(t, cfg.MCPServers, 1)
+}
+
+func TestListMCPServers(t *testing.T) {
+	cfg = DefaultConfig()
+	cfg.MCPServers = []MCPServer{{Name: "s1"}, {Name: "s2"}}
+
+	list := ListMCPServers()
+	assert.Len(t, list, 2)
+	assert.Equal(t, "s1", list[0].Name)
+	assert.Equal(t, "s2", list[1].Name)
+	// Ensure copy (mutating list should not affect cfg)
+	list[0].Name = "modified"
+	assert.Equal(t, "s1", cfg.MCPServers[0].Name)
 }

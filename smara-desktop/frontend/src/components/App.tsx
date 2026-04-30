@@ -32,6 +32,8 @@ import {
 } from "@/components/ui/dialog"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import CollapsibleMarkdown from './CollapsibleMarkdown'
+import VirtualWorkspace from './VirtualWorkspace'
 import {
   Ask,
   GetSessions,
@@ -48,13 +50,6 @@ import {
 } from "../../wailsjs/go/main/App"
 import { EventsOn } from "../../wailsjs/runtime/runtime"
 import { config as configModels, llm as llmModels, session as sessionModels } from "../../wailsjs/go/models"
-import { marked } from 'marked'
-
-// Configure marked for performance
-marked.setOptions({
-  breaks: true,
-  gfm: true
-})
 
 interface Message {
   role: string
@@ -64,12 +59,6 @@ interface Message {
 // Memoized Message Item to prevent redundant re-renders and re-parsing
 const MessageItem = memo(({ msg }: { msg: Message }) => {
   const isAssistant = msg.role === 'assistant'
-
-  // Memoize markdown parsing to avoid heavy computation during scrolls/streams
-  const contentHtml = React.useMemo(() => {
-    if (!isAssistant) return null
-    return marked.parse(msg.content) as string
-  }, [msg.content, isAssistant])
 
   return (
     <div className={cn(
@@ -83,10 +72,7 @@ const MessageItem = memo(({ msg }: { msg: Message }) => {
           : "bg-card text-card-foreground border-border/50 hover:border-primary/20 prose prose-sm dark:prose-invert max-w-full"
       )}>
         {isAssistant ? (
-          <div
-            className="markdown-content leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: contentHtml || '' }}
-          />
+          <CollapsibleMarkdown content={msg.content} />
         ) : (
           <div className="whitespace-pre-wrap font-medium">{msg.content}</div>
         )}
@@ -106,6 +92,7 @@ export default function App() {
   const [archiveTab, setArchiveTab] = useState<'active' | 'archived'>('active')
   const [config, setConfig] = useState<configModels.SmaraConfig | null>(null)
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('dark')
+  const [activeView, setActiveView] = useState<'chat' | 'workspace'>('chat')
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -508,14 +495,37 @@ export default function App() {
                 className="bg-transparent border-none text-xs focus:ring-0 w-32 placeholder:text-muted-foreground/50"
               />
             </div>
-            <div className="h-6 w-[1px] bg-border mx-2" />
-            <Button variant="outline" size="sm" className="gap-2 text-xs font-bold uppercase tracking-widest px-4 rounded-full border-primary/20 hover:border-primary/50 transition-colors">
-              <Terminal size={14} className="text-primary" />
-              Ask Mode
-            </Button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setActiveView('chat')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all border",
+                  activeView === 'chat'
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border/30 text-muted-foreground hover:text-foreground hover:border-primary/20'
+                )}
+              >
+                <Terminal size={14} />
+                Chat
+              </button>
+              <button
+                onClick={() => setActiveView('workspace')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all border",
+                  activeView === 'workspace'
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border/30 text-muted-foreground hover:text-foreground hover:border-primary/20'
+                )}
+              >
+                <LayoutDashboard size={14} />
+                Workspace
+              </button>
+            </div>
           </div>
         </header>
 
+        {activeView === 'chat' && (
+        <>
         <ScrollArea
           className="flex-1 p-8 gpu-accelerated"
           onWheel={() => { isAutoScrolling.current = false }}
@@ -600,6 +610,10 @@ export default function App() {
             </p>
           </div>
         </div>
+        </>
+        )}
+
+        {activeView === 'workspace' && <VirtualWorkspace />}
       </main>
 
       <Dialog open={showSettings} onOpenChange={setShowSettings}>

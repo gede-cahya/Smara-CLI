@@ -16,6 +16,7 @@ type mockSSHProvider struct {
 	lastMessages    []llm.Message
 	toolCalls       []llm.ToolCall
 	returnToolCall  bool
+	dsmlContent     string // simulates LLM writing DSML inside content instead of native tool_calls
 	finalContent    string
 }
 
@@ -30,6 +31,11 @@ func (m *mockSSHProvider) Chat(messages []llm.Message) (*llm.ChatResponse, error
 func (m *mockSSHProvider) ChatWithTools(messages []llm.Message, tools []llm.ToolFunction) (*llm.ChatResponse, []llm.ToolCall, error) {
 	m.calls++
 	m.lastMessages = messages
+	if m.dsmlContent != "" {
+		content := m.dsmlContent
+		m.dsmlContent = "" // consume so next call returns finalContent
+		return &llm.ChatResponse{Content: content}, nil, nil
+	}
 	if m.returnToolCall {
 		m.returnToolCall = false
 		tc := m.toolCalls[0]
@@ -151,4 +157,63 @@ func TestSupervisor_MockLLM_SSHViewFileToolCalled(t *testing.T) {
 
 	require.Len(t, executedTools, 1)
 	assert.Equal(t, "ssh_view_file", executedTools[0])
+}
+
+func TestSupervisor_MockLLM_DSMLToolCallExtracted(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, smarassh.EnsureDir())
+
+	host := smarassh.Host{
+		Name:    "vps-cahya",
+		Address: "129.226.222.242",
+		User:    "ubuntu",
+		Port:    "22",
+		KeyPath: "/dev/null/nonexistent", // forces fast failure, we only care about extraction
+	}
+	require.NoError(t, smarassh.SaveHost(host))
+
+	dsml := `<| DSML | tool_calls>
+<| DSML | invoke name="ssh_exec">
+<| DSML | parameter name="host" string="true">vps-cahya</| DSML | parameter>
+<| DSML | parameter name="command" string="true">uptime</| DSML | parameter>
+</| DSML | invoke>
+</| DSML | tool_calls>`
+
+	mock := &mockSSHProvider{
+		dsmlContent:  dsml,
+		finalContent: "VPS uptime: 15 hari.",
+	}
+
+	s := NewSupervisor(mock, nil)
+	s.SetMode(ModeRush)
+
+	var executedTools []string
+	var toolArgs []map[string]interface{}
+	s.callback = AgenticCallback{
+		OnToolCall: func(server, tool string, args map[string]interface{}) {
+			executedTools = append(executedTools, tool)
+			toolArgs = append(toolArgs, args)
+		},
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnIteration:   func(current, max int) {},
+		OnStream:      func(chunk string, isThinking bool) {},
+		OnConfirm:     func(message string) bool { return true },
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "cek status vps cahya")
+	require.NoError(t, err)
+
+	// DSML should have been extracted and ssh_exec attempted (will fail due to bad key, but tool is called)
+	require.GreaterOrEqual(t, len(executedTools), 1, "DSML tool call should have been extracted and OnToolCall fired")
+	assert.Equal(t, "ssh_exec", executedTools[0])
+	assert.Equal(t, "vps-cahya", toolArgs[0]["host"])
+	assert.Equal(t, "uptime", toolArgs[0]["command"])
+
+	// At least 2 LLM calls: 1st returns DSML, 2nd returns final answer after tool result
+	assert.GreaterOrEqual(t, mock.calls, 2, "should call LLM at least twice: DSML iteration + final answer")
+
+	// Final content should contain the final answer, not raw DSML
+	assert.Contains(t, result.Response, "VPS uptime: 15 hari.")
+	assert.NotContains(t, result.Response, "<| DSML |")
 }

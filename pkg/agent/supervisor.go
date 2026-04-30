@@ -325,12 +325,30 @@ func (s *Supervisor) UpdateMCPError(name string, errMsg string) {
 	}
 }
 
+// GetProvider returns the LLM provider used by the supervisor.
+func (s *Supervisor) GetProvider() llm.Provider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.provider
+}
+
 // GetMCPClient retrieves an MCP client by name.
 func (s *Supervisor) GetMCPClient(name string) (*mcp.Client, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c, ok := s.mcpClients[name]
 	return c, ok
+}
+
+// GetMCPClients returns a copy of all MCP clients.
+func (s *Supervisor) GetMCPClients() map[string]*mcp.Client {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]*mcp.Client, len(s.mcpClients))
+	for k, v := range s.mcpClients {
+		result[k] = v
+	}
+	return result
 }
 
 // GetMCPInfo returns detailed info for all MCP servers.
@@ -541,10 +559,36 @@ func (s *Supervisor) IsCurrentSession(id string) bool {
 	return s.sessionRegistry.IsCurrent(id)
 }
 
+// DetectWorkflowIntent checks if the user prompt indicates a multi-agent workflow request.
+func DetectWorkflowIntent(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	keywords := []string{
+		"buatkan", "buat", "bikin", "create", "build", "generate",
+		"web", "app", "saas", "project", "aplikasi", "website",
+		"platform", "system", "service",
+	}
+	matches := 0
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			matches++
+		}
+	}
+	return matches >= 2
+}
+
 // ProcessPrompt handles a user prompt using the current agent mode.
 func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*PromptResult, error) {
 	s.discoverProjectContext()
 	startTime := time.Now()
+
+	// Auto-detect workflow intent and switch mode if appropriate
+	if s.mode != ModeWorkflow && DetectWorkflowIntent(userPrompt) {
+		s.mode = ModeWorkflow
+		if s.callback.OnLog != nil {
+			s.callback.OnLog("system", "Mode auto-switched to Workflow based on prompt intent")
+		}
+	}
+
 	modeInfo := GetModeInfo(s.mode)
 
 	// 1. Search memory for relevant context

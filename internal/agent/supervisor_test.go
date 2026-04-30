@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
 )
 
@@ -417,4 +418,31 @@ func TestMCPServerInfo_Struct(t *testing.T) {
 	assert.Equal(t, "test-server", info.Name)
 	assert.True(t, info.Connected)
 	assert.Empty(t, info.Error)
+}
+
+func TestSupervisor_UnregisterMCPClient(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+	require.NotNil(t, s)
+
+	// Register via public API and verify via GetMCPInfo
+	s.RegisterMCPClient("test-server", nil) // nil client is fine for this test
+	s.UpdateMCPInfo("test-server", []mcp.Tool{{Name: "tool-a", Description: "desc"}})
+
+	info := s.GetMCPInfo()
+	assert.Contains(t, info, "test-server")
+
+	// Unregister
+	s.UnregisterMCPClient("test-server")
+
+	info = s.GetMCPInfo()
+	assert.NotContains(t, info, "test-server")
+}
+
+func TestSupervisor_UnregisterMCPClient_NonExistent(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+	require.NotNil(t, s)
+
+	// Should not panic
+	s.UnregisterMCPClient("missing-server")
+	assert.Empty(t, s.GetMCPInfo())
 }

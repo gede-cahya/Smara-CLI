@@ -30,10 +30,21 @@ type Session struct {
 	Context     string        `json:"context"`               // Session context/summary
 	IsAgentic   bool          `json:"is_agentic"`            // Whether session uses agentic AI
 	AutoResume  bool          `json:"auto_resume"`           // Auto-continue from last state
-	IsArchived  bool          `json:"is_archived"`           // NEW: soft-archive flag
-	ArchivedAt  *time.Time    `json:"archived_at,omitempty"` // NEW: archive timestamp
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
+	IsArchived    bool            `json:"is_archived"`             // NEW: soft-archive flag
+	ArchivedAt    *time.Time      `json:"archived_at,omitempty"`   // NEW: archive timestamp
+	WorkflowState *WorkflowState  `json:"workflow_state,omitempty"` // Active workflow state
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+}
+
+// WorkflowState stores the current state of an active or completed workflow.
+type WorkflowState struct {
+	ProjectDir    string                 `json:"project_dir"`
+	BlueprintJSON []byte                 `json:"blueprint_json,omitempty"`
+	AgentOutputs  map[string][]Result      `json:"agent_outputs,omitempty"`
+	QAResult      map[string]interface{} `json:"qa_result,omitempty"`
+	Status        string                 `json:"status"` // "running", "paused", "completed", "failed"
+	UpdatedAt     time.Time              `json:"updated_at"`
 }
 
 // Config holds configuration for creating a new session.

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smara Virtual Workspace — Real Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/framer-motion@11/dist/framer-motion.js"></script>
+  <style>
+    body { background: #050508; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    .glass-card {
+      background: rgba(255,255,255,0.03);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .glass {
+      background: rgba(255,255,255,0.02);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-4px); }
+    }
+    .animate-float { animation: float 2s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+    const { motion, AnimatePresence } = window.Motion;
+
+    const DESK_POSITIONS = [
+      { x: 500, y: 300, label: 'Orchestrator', role: 'orchestrator', color: '#8b5cf6' },
+      { x: 200, y: 200, label: 'Frontend', role: 'frontend', color: '#3b82f6' },
+      { x: 800, y: 200, label: 'Backend', role: 'backend', color: '#ef4444' },
+      { x: 500, y: 500, label: 'Database', role: 'database', color: '#10b981' },
+      { x: 300, y: 650, label: 'QA Zone', role: 'qa', color: '#f59e0b' },
+    ];
+
+    const ROLE_ICONS = {
+      orchestrator: '✨', frontend: '🎨', backend: '⚙️', database: '🗄️', qa: '🔍'
+    };
+
+    const ROLE_COLORS = {
+      orchestrator: '#8b5cf6', frontend: '#3b82f6', backend: '#ef4444', database: '#10b981', qa: '#f59e0b'
+    };
+
+    const STATUS_COLORS = {
+      idle: '#6b7280', walking: '#3b82f6', working: '#22c55e', thinking: '#eab308', celebrating: '#a855f7'
+    };
+
+    function OfficeBackground() {
+      return (
+        <svg viewBox="0 0 1000 800" className="w-full h-full" preserveAspectRatio="xMidYMid slice" style={{position:'absolute',inset:0}}>
+          <defs>
+            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
+            </pattern>
+          </defs>
+          <rect width="1000" height="800" fill="url(#grid)" />
+          <rect width="1000" height="800" fill="url(#grad)" opacity="0.3">
+            <defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.03" />
+              <stop offset="100%" stopColor="transparent" />
+            </linearGradient></defs>
+          </rect>
+
+          {DESK_POSITIONS.map(desk => (
+            <g key={desk.role}>
+              <rect x={desk.x-60} y={desk.y-40} width="120" height="80" rx="12" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
+              <rect x={desk.x-60} y={desk.y-40} width="120" height="6" rx="3" fill={desk.color} opacity="0.5" />
+              <rect x={desk.x-25} y={desk.y-55} width="50" height="32" rx="3" fill="#1a1a2e" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+              <rect x={desk.x-22} y={desk.y-52} width="44" height="26" rx="2" fill={desk.color} opacity="0.1" />
+              <rect x={desk.x-20} y={desk.y-10} width="40" height="8" rx="2" fill="rgba(255,255,255,0.06)" />
+              <text x={desk.x} y={desk.y+55} textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="10" fontWeight="bold" style={{textTransform:'uppercase',letterSpacing:'0.05em'}}>{desk.label}</text>
+            </g>
+          ))}
+
+          <g stroke="rgba(255,255,255,0.04)" strokeWidth="1" strokeDasharray="4 4">
+            <line x1="500" y1="300" x2="200" y2="200" />
+            <line x1="500" y1="300" x2="800" y2="200" />
+            <line x1="500" y1="300" x2="500" y2="500" />
+            <line x1="200" y1="200" x2="300" y2="650" />
+            <line x1="800" y1="200" x2="300" y2="650" />
+            <line x1="500" y1="500" x2="300" y2="650" />
+          </g>
+        </svg>
+      );
+    }
+
+    function AgentAvatar({ agent }) {
+      const color = ROLE_COLORS[agent.role];
+      return (
+        <motion.div
+          className="absolute flex flex-col items-center"
+          animate={{ x: agent.x - 20, y: agent.y - 20 }}
+          transition={{ type: agent.status === 'walking' ? 'spring' : 'tween', stiffness: 60, damping: 15 }}
+          style={{ willChange: 'transform', zIndex: 10 }}
+        >
+          {agent.currentTask && (agent.status === 'working' || agent.status === 'thinking') && (
+            <motion.div
+              initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="absolute -top-10 whitespace-nowrap"
+            >
+              <div className="bg-gray-900/90 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white/80 shadow-lg">
+                {agent.currentTask}
+                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900/90 border-r border-b border-white/10 rotate-45" />
+              </div>
+            </motion.div>
+          )}
+          
+          <motion.div
+            className="w-10 h-10 rounded-full flex items-center justify-center text-lg border-2 relative"
+            style={{ borderColor: color, backgroundColor: color + '22' }}
+            animate={{ scale: agent.status === 'celebrating' ? [1, 1.15, 1] : 1 }}
+            transition={{ repeat: agent.status === 'celebrating' ? Infinity : 0, duration: 0.5 }}
+          >
+            <motion.div animate={{ y: agent.status === 'walking' ? [0, -3, 0] : 0 }} transition={{ repeat: agent.status === 'walking' ? Infinity : 0, duration: 0.4 }}>
+              {ROLE_ICONS[agent.role]}
+            </motion.div>
+            
+            {agent.status === 'working' && (
+              <div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 flex gap-0.5">
+                <span className="w-1 h-1 rounded-full animate-bounce" style={{backgroundColor:color}} />
+                <span className="w-1 h-1 rounded-full animate-bounce" style={{backgroundColor:color,animationDelay:'0.15s'}} />
+                <span className="w-1 h-1 rounded-full animate-bounce" style={{backgroundColor:color,animationDelay:'0.3s'}} />
+              </div>
+            )}
+            
+            <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-gray-900"
+              style={{ backgroundColor: STATUS_COLORS[agent.status] || '#6b7280' }} />
+          </motion.div>
+          
+          <span className="text-[9px] font-bold text-white/40 mt-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/5">{agent.id}</span>
+        </motion.div>
+      );
+    }
+
+    function WorkspaceHUD({ state }) {
+      const agents = Object.values(state.agents);
+      const progress = state.totalWaves > 0 ? (state.wave / state.totalWaves) * 100 : 0;
+      
+      return (
+        <div className="absolute inset-x-0 top-0 z-20 pointer-events-none">
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-2">
+              <div className="glass-card px-3 py-1.5 rounded-lg flex items-center gap-2">
+                <span className="text-xs font-bold text-white/60">Wave {state.wave}/{state.totalWaves || '?'}</span>
+                <div className="w-20 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <motion.div className="h-full bg-blue-500 rounded-full" initial={{width:0}} animate={{width:`${progress}%`}} transition={{duration:0.5}} />
+                </div>
+              </div>
+              <div className="glass-card px-2 py-1.5 rounded-lg text-xs font-bold text-white/60">
+                {agents.length} Agents
+              </div>
+            </div>
+            <div className="glass-card px-2 py-1.5 rounded-lg text-xs font-bold" style={{color: state.isActive ? '#22c55e' : 'rgba(255,255,255,0.4)'}}>
+              {state.isActive ? '● Running' : '○ Idle'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function VirtualWorkspace() {
+      const [state, setState] = useState({ isActive: false, wave: 0, totalWaves: 0, agents: {}, events: [] });
+      const eventQueue = useRef([]);
+      const processing = useRef(false);
+
+      const processNext = useCallback(() => {
+        if (eventQueue.current.length === 0) { processing.current = false; return; }
+        processing.current = true;
+        const ev = eventQueue.current.shift();
+        
+        setState(prev => {
+          const newState = { ...prev, events: [...prev.events, ev].slice(-20) };
+          switch (ev.type) {
+            case 'workflow_start':
+              newState.isActive = true; newState.wave = 0; newState.totalWaves = ev.total_waves || 1; newState.agents = {}; break;
+            case 'wave_start':
+              newState.wave = ev.wave || prev.wave + 1; break;
+            case 'agent_spawn': {
+              const spawns = { orchestrator:{x:500,y:400}, frontend:{x:-60,y:200}, backend:{x:1060,y:200}, database:{x:500,y:860}, qa:{x:-60,y:650} };
+              const pos = spawns[ev.agent_role] || {x:500,y:400};
+              const id = ev.agent_id;
+              newState.agents = { ...prev.agents, [id]: { id, role: ev.agent_role, x: ev.to_x ?? pos.x, y: ev.to_y ?? pos.y, status: 'idle' }};
+              break;
+            }
+            case 'agent_move': {
+              const id = ev.agent_id;
+              if (!id || !prev.agents[id]) break;
+              newState.agents = { ...prev.agents, [id]: { ...prev.agents[id], x: ev.to_x, y: ev.to_y, status: 'walking' }};
+              setTimeout(() => setState(p => ({...p, agents: {...p.agents, [id]: {...p.agents[id], status:'idle'}}} )), 800);
+              break;
+            }
+            case 'agent_work': {
+              const id = ev.agent_id;
+              if (!id || !prev.agents[id]) break;
+              newState.agents = { ...prev.agents, [id]: { ...prev.agents[id], status: 'working', currentTask: ev.message }};
+              break;
+            }
+            case 'workflow_complete':
+              newState.isActive = false;
+              Object.keys(newState.agents).forEach(k => newState.agents[k] = { ...newState.agents[k], status: 'celebrating' });
+              break;
+          }
+          return newState;
+        });
+        setTimeout(processNext, 150);
+      }, []);
+
+      const queueEvent = useCallback((ev) => {
+        eventQueue.current.push(ev);
+        if (!processing.current) processNext();
+      }, [processNext]);
+
+      const runDemo = useCallback(() => {
+        const events = [
+          { type: 'workflow_start', total_waves: 3 },
+          { type: 'wave_start', wave: 1, total_waves: 3 },
+          { type: 'agent_spawn', agent_id: 'orch-1', agent_role: 'orchestrator', to_x: 500, to_y: 300 },
+          { type: 'agent_spawn', agent_id: 'fe-1', agent_role: 'frontend', to_x: -60, to_y: 200 },
+          { type: 'agent_spawn', agent_id: 'be-1', agent_role: 'backend', to_x: 1060, to_y: 200 },
+          { type: 'agent_spawn', agent_id: 'db-1', agent_role: 'database', to_x: 500, to_y: 860 },
+          { type: 'agent_spawn', agent_id: 'qa-1', agent_role: 'qa', to_x: -60, to_y: 650 },
+          { type: 'agent_move', agent_id: 'fe-1', from_x: -60, from_y: 200, to_x: 200, to_y: 200 },
+          { type: 'agent_move', agent_id: 'be-1', from_x: 1060, from_y: 200, to_x: 800, to_y: 200 },
+          { type: 'agent_move', agent_id: 'db-1', from_x: 500, from_y: 860, to_x: 500, to_y: 500 },
+          { type: 'agent_move', agent_id: 'qa-1', from_x: -60, from_y: 650, to_x: 300, to_y: 650 },
+          { type: 'agent_work', agent_id: 'be-1', message: 'Designing REST API schema...' },
+          { type: 'agent_work', agent_id: 'fe-1', message: 'Building React components...' },
+          { type: 'agent_work', agent_id: 'db-1', message: 'Creating migration files...' },
+          { type: 'agent_move', agent_id: 'be-1', from_x: 800, from_y: 200, to_x: 500, to_y: 300 },
+          { type: 'agent_move', agent_id: 'be-1', from_x: 500, from_y: 300, to_x: 800, to_y: 200 },
+          { type: 'agent_move', agent_id: 'qa-1', from_x: 300, from_y: 650, to_x: 200, to_y: 200 },
+          { type: 'agent_move', agent_id: 'qa-1', from_x: 200, from_y: 200, to_x: 800, to_y: 200 },
+          { type: 'agent_move', agent_id: 'qa-1', from_x: 800, from_y: 200, to_x: 500, to_y: 500 },
+          { type: 'agent_move', agent_id: 'qa-1', from_x: 500, from_y: 500, to_x: 300, to_y: 650 },
+          { type: 'wave_complete', wave: 1, total_waves: 3 },
+          { type: 'wave_start', wave: 2, total_waves: 3 },
+          { type: 'wave_complete', wave: 2, total_waves: 3 },
+          { type: 'wave_start', wave: 3, total_waves: 3 },
+          { type: 'wave_complete', wave: 3, total_waves: 3 },
+          { type: 'workflow_complete' },
+        ];
+        events.forEach((ev, i) => setTimeout(() => queueEvent(ev), i * 600));
+      }, [queueEvent]);
+
+      const reset = useCallback(() => {
+        eventQueue.current = [];
+        processing.current = false;
+        setState({ isActive: false, wave: 0, totalWaves: 0, agents: {}, events: [] });
+      }, []);
+
+      return (
+        <div className="flex flex-col h-screen w-full relative overflow-hidden" style={{background:'#050508'}}>
+          <div className="h-14 flex items-center justify-between px-6 border-b border-white/5 glass z-10">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">🖥️</span>
+              <h2 className="text-sm font-bold text-white/80">Virtual Workspace</h2>
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">Workflow Visualization</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={state.isActive ? reset : runDemo}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                  state.isActive 
+                    ? 'border-red-500/30 text-red-400 hover:bg-red-500/10' 
+                    : 'border-green-500/30 text-green-400 hover:bg-green-500/10'
+                }`}>
+                {state.isActive ? '⏹ Stop' : '▶ Run Demo'}
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex-1 relative overflow-hidden">
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="relative w-full h-full max-w-[1200px] max-h-[800px]">
+                <OfficeBackground />
+                <div className="absolute inset-0" style={{zIndex:10}}>
+                  {Object.values(state.agents).map(agent => (
+                    <AgentAvatar key={agent.id} agent={agent} />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <WorkspaceHUD state={state} />
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<VirtualWorkspace />);
+  </script>
+</body>
+</html>

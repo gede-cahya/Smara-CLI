@@ -35,7 +35,7 @@ type shortcut struct {
 }
 
 var shortcuts = []shortcut{
-	{"Tab", "Cycle mode (ask → rush → plan → test)"},
+	{"Tab", "Cycle view (Chat → Node Graph → Help)"},
 	{"↑ / ↓", "Navigate command history"},
 	{"Enter", "Send message / confirm / copy selected"},
 	{"Ctrl+C", "Cancel processing / copy last response"},
@@ -48,6 +48,13 @@ var shortcuts = []shortcut{
 	{"Ctrl+U", "Clear current line"},
 	{"Ctrl+W", "Delete last word"},
 	{"Ctrl+?", "Show / hide this help"},
+}
+
+var nodeGraphShortcuts = []shortcut{
+	{"↑↓←→", "Navigate nodes"},
+	{"Enter", "Show node detail popup"},
+	{"r", "Reset layout to default"},
+	{"q / Esc", "Back to Chat view"},
 }
 
 var commandShortcuts = []shortcut{
@@ -73,6 +80,17 @@ func (h *HelpOverlay) Render() string {
 	sb.WriteString(h.theme.HelpOverlayTitle.Render("Navigation"))
 	sb.WriteString("\n")
 	for _, s := range shortcuts {
+		key := h.theme.HelpOverlayKey.Render(fmt.Sprintf("%-12s", s.Key))
+		desc := h.theme.HelpOverlayDesc.Render(s.Desc)
+		sb.WriteString(fmt.Sprintf("  %s %s\n", key, desc))
+	}
+
+	sb.WriteString("\n")
+
+	// Node Graph section
+	sb.WriteString(h.theme.HelpOverlayTitle.Render("Node Graph"))
+	sb.WriteString("\n")
+	for _, s := range nodeGraphShortcuts {
 		key := h.theme.HelpOverlayKey.Render(fmt.Sprintf("%-12s", s.Key))
 		desc := h.theme.HelpOverlayDesc.Render(s.Desc)
 		sb.WriteString(fmt.Sprintf("  %s %s\n", key, desc))

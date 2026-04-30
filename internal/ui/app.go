@@ -19,8 +19,10 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/nudge"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/gede-cahya/Smara-CLI/internal/skill"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/clipboard"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
+	"github.com/gede-cahya/Smara-CLI/pkg/agent/workflow"
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -102,28 +104,44 @@ type ChatMessage struct {
 	OutputTokens  int
 	Duration      time.Duration
 	ModelName     string
+	ExpandedCode  bool // Toggle to expand collapsed code blocks in this message
 }
 
-// Supervisor interface to avoid circular dependency
+type viewMode int
+
+const (
+	viewChat viewMode = iota
+	viewNodeGraph
+	viewHelp
+)
+
+// AppSupervisor interface to avoid circular dependency
 type AppSupervisor interface {
 	ProcessPrompt(ctx context.Context, prompt string) (*agent.PromptResult, error)
 	GetMode() agent.Mode
 	SetMode(mode agent.Mode)
-	GetModelInfo() (string, string)
+	GetModelInfo() (provider, model string)
+	GetProviderName() string
+	SkillExecutor() skill.StepExecutor
+	GetMCPInfo() map[string]agent.MCPServerInfo
 }
 
 // AppModel is the Bubbletea model for our TUI
 type AppModel struct {
-	viewport   viewport.Model
-	textarea   textarea.Model
-	messages   []ChatMessage
-	err        error
-	width      int
-	height     int
-	supervisor AppSupervisor
-	ctx        context.Context
-	cancel     context.CancelFunc
-	processing bool
+	viewport    viewport.Model
+	textarea    textarea.Model
+	messages    []ChatMessage
+	err         error
+	width       int
+	height      int
+	supervisor  AppSupervisor
+	ctx         context.Context
+	cancel      context.CancelFunc
+	processing  bool
+
+	// View mode
+	currentView viewMode
+	nodeGraph   components.NodeGraphModel
 
 	// Streaming state
 	currentStream   string
@@ -238,6 +256,8 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string), stor
 		showSidebar:     false, // Default: sidebar hidden
 		sidebarWidth:    0,
 		// ─── NEW ─────────────────────────────────────────────────
+		currentView:   viewChat,
+		nodeGraph:     components.NewNodeGraph(),
 		theme:         theme,
 		headerComp:    components.NewHeader(80),
 		sidebarComp:   components.NewSidebar(28, 20),
@@ -368,6 +388,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateLayout()
 			m.renderMessages()
 		}
+		return m, tea.Batch(cmds...)
+	case components.NodeGraphTickMsg:
+		var ngCmd tea.Cmd
+		m.nodeGraph, ngCmd = m.nodeGraph.Update(msg)
+		cmds = append(cmds, ngCmd)
 		return m, tea.Batch(cmds...)
 	}
 
@@ -540,6 +565,48 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// ─── Node Graph view key handling ────────────────────────
+		if m.currentView == viewNodeGraph {
+			switch msg.Type {
+			case tea.KeyUp:
+				m.nodeGraph.FocusPrev()
+				return m, nil
+			case tea.KeyDown:
+				m.nodeGraph.FocusNext()
+				return m, nil
+			case tea.KeyLeft:
+				m.nodeGraph.FocusPrev()
+				return m, nil
+			case tea.KeyRight:
+				m.nodeGraph.FocusNext()
+				return m, nil
+			case tea.KeyEnter:
+				m.nodeGraph.TogglePopup()
+				return m, nil
+			case tea.KeyEsc:
+				if m.nodeGraph.IsPopupOpen() {
+					m.nodeGraph.ClosePopup()
+				} else {
+					m.currentView = viewChat
+				}
+				return m, nil
+			}
+			switch msg.String() {
+			case "q":
+				if m.nodeGraph.IsPopupOpen() {
+					m.nodeGraph.ClosePopup()
+				} else {
+					m.currentView = viewChat
+				}
+				return m, nil
+			case "r", "R":
+				m.nodeGraph.ResetLayout()
+				return m, nil
+			}
+			// Block other keys in node graph view
+			return m, nil
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.processing {
@@ -615,23 +682,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyTab:
-			// Cycle modes
-			if m.supervisor != nil {
-				currentMode := m.supervisor.GetMode()
-				var nextMode agent.Mode
-				switch currentMode {
-				case "ask":
-					nextMode = "rush"
-				case "rush":
-					nextMode = "plan"
-				case "plan":
-					nextMode = "test"
-				case "test":
-					nextMode = "ask"
-				default:
-					nextMode = "ask"
-				}
-				m.supervisor.SetMode(nextMode)
+			// Cycle views: Chat -> NodeGraph -> Help -> Chat
+			switch m.currentView {
+			case viewChat:
+				m.currentView = viewNodeGraph
+				m.nodeGraph.SetSize(m.layout.ContentW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
+				return m, components.NodeGraphTickCmd()
+			case viewNodeGraph:
+				m.currentView = viewHelp
+				return m, nil
+			case viewHelp:
+				m.currentView = viewChat
+				return m, nil
 			}
 
 		case tea.KeyUp:
@@ -921,7 +983,7 @@ func (m *AppModel) renderMessages() {
 			msg.Role, msg.Content, thinking,
 			msg.Thoughts, msg.ToolsExecuted,
 			msg.InputTokens, msg.OutputTokens, msg.Duration,
-			mode, msg.ModelName,
+			mode, msg.ModelName, msg.ExpandedCode,
 		)
 		sb.WriteString(rendered)
 		sb.WriteString("\n")
@@ -975,12 +1037,17 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
 	switch cmd {
 	case "help":
 		m.addMessage("System", `Perintah tersedia:
-  [Tab]              — Ganti mode agen (cycle: ask → rush → plan)
+  [Tab]              — Ganti tampilan (Chat → Node Graph → Help)
   /mode [ask|rush|plan] — Ganti mode agen
   /model [provider] [model] — Ganti LLM provider/model
+  /skill [run <nama>] — Lihat atau jalankan skill tersimpan
   /help              — Tampilkan bantuan ini
+  /expand            — Toggle tampilan code blocks (expand/collapse)
   /memory            — Lihat memori tersimpan
   /mcp               — Lihat MCP servers dan tools
+  /mcp add <name> local <cmd> [args...] — Hubungkan MCP local
+  /mcp add <name> remote <url> — Hubungkan MCP remote
+  /mcp remove <name> — Putuskan dan hapus MCP server
   /session [list|new|info|switch|end] — Kelola sessions
   /clear             — Bersihkan layar
   /ssh               — Lihat perintah SSH management
@@ -988,9 +1055,69 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
   /remind <teks>     — Buat reminder nudge manual
   ssh user@host [cmd] — Eksekusi SSH langsung dari prompt
   exit               — Keluar dari Smara`)
+	case "expand":
+		// Toggle code block expansion for the most recent agent message
+		found := false
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == "Agent" {
+				m.messages[i].ExpandedCode = !m.messages[i].ExpandedCode
+				found = true
+				status := "collapsed"
+				if m.messages[i].ExpandedCode {
+					status = "expanded"
+				}
+				m.addMessage("System", fmt.Sprintf("Code blocks %s for latest message.", status))
+				break
+			}
+		}
+		if !found {
+			m.addMessage("System", "No agent messages to expand.")
+		}
+		m.renderMessages()
 	case "clear":
 		m.messages = []ChatMessage{}
 		m.renderMessages()
+	case "workflow":
+		if len(args) == 0 {
+			m.addMessage("System", `Perintah Workflow:
+  /workflow list         — Daftar semua workflow aktif
+  /workflow resume <n>   — Lanjutkan workflow ke-n dari list`)
+			return
+		}
+		subcmd := args[0]
+		switch subcmd {
+		case "list":
+			reg, err := workflow.LoadRegistry()
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Gagal load registry: %v", err))
+				return
+			}
+			list := reg.FormatList()
+			m.addMessage("System", list)
+		case "resume":
+			if len(args) < 2 {
+				m.addMessage("System", "Gunakan: /workflow resume <nomor>")
+				return
+			}
+			var n int
+			if _, err := fmt.Sscanf(args[1], "%d", &n); err != nil || n < 1 {
+				m.addMessage("System", fmt.Sprintf("Nomor tidak valid: %s", args[1]))
+				return
+			}
+			reg, err := workflow.LoadRegistry()
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Gagal load registry: %v", err))
+				return
+			}
+			entry, ok := reg.GetByIndex(n)
+			if !ok {
+				m.addMessage("System", fmt.Sprintf("Workflow #%d tidak ditemukan.", n))
+				return
+			}
+			m.addMessage("System", fmt.Sprintf("Workflow: %s\nPath: %s\nStatus: %s\nUntuk resume dari CLI: smara workflow resume %s", entry.Name, entry.ProjectDir, entry.Status, entry.ProjectDir))
+		default:
+			m.addMessage("System", fmt.Sprintf("Subcommand tidak dikenal: %s. Gunakan 'list' atau 'resume <n>'.", subcmd))
+		}
 	case "ssh":
 		if len(args) == 0 {
 			m.addMessage("System", `Perintah SSH:
@@ -1021,16 +1148,181 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
 			when = strings.TrimSpace(text[idx+6:])
 			text = strings.TrimSpace(text[:idx])
 		}
+		if when == "" {
+			when = "hourly"
+		}
 		if dbStore, ok := m.store.(*memory.SQLiteStore); ok {
-			nextRun, _ := nudge.SimpleCron(when, time.Now())
-			_, err := nudge.CreateSchedule(dbStore.DB(), text, when, nextRun)
-			if err != nil {
-				m.addMessage("System", fmt.Sprintf("Gagal membuat reminder: %v", err))
+			_, err := nudge.CreateSchedule(dbStore.DB(), text, when, nil)
+			if err == nil {
+				m.addMessage("System", fmt.Sprintf("Reminder ditambahkan: '%s' (jadwal: %s)", text, when))
 			} else {
-				m.addMessage("System", fmt.Sprintf("Reminder tersimpan: '%s' (when: %s)", text, when))
+				m.addMessage("System", fmt.Sprintf("Gagal menambahkan reminder: %v", err))
 			}
 		} else {
-			m.addMessage("System", "Reminder tidak tersedia (DB belum siap).")
+			m.addMessage("System", "Nudge tidak tersedia (DB belum siap).")
+		}
+	case "skill":
+		if len(args) == 0 {
+			names, err := skill.List()
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Gagal list skill: %v", err))
+				return
+			}
+			if len(names) == 0 {
+				m.addMessage("System", "Belum ada skill tersimpan.\nGunakan: smara skill create <nama> untuk membuat skill baru.")
+				return
+			}
+			var sb strings.Builder
+			sb.WriteString("Skill tersimpan:\n")
+			for _, n := range names {
+				sk, _ := skill.Load(n)
+				if sk != nil {
+					sb.WriteString(fmt.Sprintf("  - %s: %s (%d steps)\n", n, sk.Description, len(sk.Steps)))
+				} else {
+					sb.WriteString(fmt.Sprintf("  - %s\n", n))
+				}
+			}
+			sb.WriteString("\nGunakan: /skill run <nama> untuk menjalankan.")
+			m.addMessage("System", sb.String())
+			return
+		}
+		subcmd := args[0]
+		switch subcmd {
+		case "run":
+			if len(args) < 2 {
+				m.addMessage("System", "Gunakan: /skill run <nama-skill>")
+				return
+			}
+			name := args[1]
+			sk, err := skill.Load(name)
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Skill '%s' tidak ditemukan: %v", name, err))
+				return
+			}
+			m.addMessage("System", fmt.Sprintf("Menjalankan skill: %s (%d steps)", sk.Name, len(sk.Steps)))
+			if m.supervisor == nil {
+				m.addMessage("System", "Supervisor tidak tersedia (LLM belum diinisialisasi).")
+				return
+			}
+			executor := m.supervisor.SkillExecutor()
+			result, err := sk.Run(executor)
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Skill gagal: %v", err))
+				return
+			}
+			var sb strings.Builder
+			if result.Success {
+				sb.WriteString(fmt.Sprintf("Skill '%s' berhasil!\n", result.SkillName))
+			} else {
+				sb.WriteString(fmt.Sprintf("Skill '%s' gagal pada step:\n", result.SkillName))
+			}
+			for i, sr := range result.StepResults {
+				status := "OK"
+				if sr.Error != nil {
+					status = fmt.Sprintf("ERROR: %v", sr.Error)
+				}
+				out := sr.Output
+				if len(out) > 100 {
+					out = out[:100] + "..."
+				}
+				sb.WriteString(fmt.Sprintf("  Step %d: %s → %s\n    Output: %s\n", i+1, sr.Tool, status, out))
+			}
+			m.addMessage("System", sb.String())
+		default:
+			m.addMessage("System", fmt.Sprintf("Subcommand tidak dikenal: %s. Gunakan 'run <nama>'.", subcmd))
+		}
+	case "mcp":
+		if len(args) == 0 {
+			// List connected servers
+			mcpInfo := m.supervisor.GetMCPInfo()
+			if len(mcpInfo) == 0 {
+				m.addMessage("System", "Belum ada MCP server yang terhubung.")
+				return
+			}
+			var msgParts []string
+			for name, info := range mcpInfo {
+				status := "connected"
+				if !info.Connected {
+					status = "error"
+				}
+				msgParts = append(msgParts, fmt.Sprintf("%s — %s", name, status))
+				if len(info.Tools) > 0 {
+					for _, tool := range info.Tools {
+						desc := tool.Description
+						if len(desc) > 60 {
+							desc = desc[:60] + "..."
+						}
+						msgParts = append(msgParts, fmt.Sprintf("  ├── %s: %s", tool.Name, desc))
+					}
+				} else if info.Error != "" {
+					msgParts = append(msgParts, fmt.Sprintf("  └── Error: %s", info.Error))
+				}
+			}
+			m.addMessage("System", "MCP Servers:\n"+strings.Join(msgParts, "\n"))
+			return
+		}
+		subcmd := args[0]
+		switch subcmd {
+		case "add":
+			if len(args) < 3 {
+				m.addMessage("System", "Gunakan: /mcp add <name> local <command> [args...]\n        /mcp add <name> remote <url>")
+				return
+			}
+			name := args[1]
+			mcpType := args[2]
+			if mcpType != "local" && mcpType != "remote" {
+				m.addMessage("System", "Type harus 'local' atau 'remote'")
+				return
+			}
+			if m.supervisor == nil {
+				m.addMessage("System", "Supervisor tidak tersedia.")
+				return
+			}
+			// Use connect_mcp tool through supervisor executor
+			toolArgs := map[string]interface{}{
+				"name": name,
+				"type": mcpType,
+			}
+			if mcpType == "local" {
+				if len(args) < 4 {
+					m.addMessage("System", "Gunakan: /mcp add <name> local <command> [args...]")
+					return
+				}
+				toolArgs["command"] = args[3]
+				if len(args) > 4 {
+					toolArgs["args"] = args[4:]
+				}
+			} else {
+				if len(args) < 4 {
+					m.addMessage("System", "Gunakan: /mcp add <name> remote <url>")
+					return
+				}
+				toolArgs["url"] = args[3]
+			}
+			result, err := m.supervisor.SkillExecutor()("connect_mcp", toolArgs)
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Gagal menghubungkan MCP '%s': %v", name, err))
+				return
+			}
+			m.addMessage("System", result)
+		case "remove":
+			if len(args) < 2 {
+				m.addMessage("System", "Gunakan: /mcp remove <name>")
+				return
+			}
+			name := args[1]
+			if m.supervisor == nil {
+				m.addMessage("System", "Supervisor tidak tersedia.")
+				return
+			}
+			result, err := m.supervisor.SkillExecutor()("disconnect_mcp", map[string]interface{}{"name": name})
+			if err != nil {
+				m.addMessage("System", fmt.Sprintf("Gagal memutuskan MCP '%s': %v", name, err))
+				return
+			}
+			m.addMessage("System", result)
+		default:
+			m.addMessage("System", fmt.Sprintf("Subcommand tidak dikenal: %s. Gunakan 'add' atau 'remove'.", subcmd))
 		}
 	default:
 		if m.onCommand != nil {
@@ -1081,6 +1373,51 @@ func (m AppModel) View() string {
 	if m.supervisor != nil {
 		mode = string(m.supervisor.GetMode())
 		provider, modelName = m.supervisor.GetModelInfo()
+	}
+
+	// ─── Node Graph View ──────────────────────────────────────
+	if m.currentView == viewNodeGraph {
+		header := m.headerComp.Render(mode, provider, modelName, m.processing, m.spinner.View(), m.statusText)
+		ngContent := m.nodeGraph.View()
+		statusBar := m.statusBarComp.Render(components.StatusContext{
+			Mode:       mode,
+			Provider:   provider,
+			Model:      modelName,
+			Processing: m.processing,
+		})
+		var sidebar string
+		if m.layout.SidebarW > 0 {
+			m.sidebarComp.SetSize(m.layout.SidebarW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
+			sidebar = m.sidebarComp.Render(m.buildSidebarData())
+		}
+		mainColumn := fmt.Sprintf("%s\n%s\n%s", header, ngContent, statusBar)
+		if m.layout.SidebarW > 0 {
+			return components.JoinHorizontal(mainColumn, sidebar, m.layout.ContentW)
+		}
+		return mainColumn
+	}
+
+	// ─── Help View ────────────────────────────────────────────
+	if m.currentView == viewHelp {
+		header := m.headerComp.Render(mode, provider, modelName, m.processing, m.spinner.View(), m.statusText)
+		helpContent := m.helpOverlay.Render()
+		helpCentered := m.helpOverlay.Center(helpContent, m.width, m.height-m.layout.HeaderH-m.layout.StatusH)
+		statusBar := m.statusBarComp.Render(components.StatusContext{
+			Mode:       mode,
+			Provider:   provider,
+			Model:      modelName,
+			Processing: m.processing,
+		})
+		var sidebar string
+		if m.layout.SidebarW > 0 {
+			m.sidebarComp.SetSize(m.layout.SidebarW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
+			sidebar = m.sidebarComp.Render(m.buildSidebarData())
+		}
+		mainColumn := fmt.Sprintf("%s\n%s\n%s", header, helpCentered, statusBar)
+		if m.layout.SidebarW > 0 {
+			return components.JoinHorizontal(mainColumn, sidebar, m.layout.ContentW)
+		}
+		return mainColumn
 	}
 
 	// ─── Header ────────────────────────────────────────────────

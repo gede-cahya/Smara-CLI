@@ -15,10 +15,11 @@ import (
 
 // App struct
 type App struct {
-	ctx        context.Context
-	supervisor *agent.Supervisor
-	memStore   memory.MemoryStore
-	sessStore  session.Store
+	ctx          context.Context
+	supervisor   *agent.Supervisor
+	memStore     memory.MemoryStore
+	sessStore    session.Store
+	eventEmitter func(ctx context.Context, event string, data ...interface{})
 }
 
 // NewApp creates a new App application struct
@@ -134,11 +135,22 @@ func (a *App) Ask(prompt string) (string, error) {
 		return "", fmt.Errorf("supervisor belum siap")
 	}
 
+	// Emit workflow visualization start
+	a.EmitWorkflowStart(3)
+	a.EmitWaveStart(1, 3)
+	a.EmitAgentSpawn("orch-1", "orchestrator", 500, 300)
+	a.EmitAgentSpawn("fe-1", "frontend", -60, 200)
+	a.EmitAgentSpawn("be-1", "backend", 1060, 200)
+	a.EmitAgentSpawn("db-1", "database", 500, 860)
+	a.EmitAgentSpawn("qa-1", "qa", -60, 650)
+
 	res, err := a.supervisor.ProcessPrompt(a.ctx, prompt)
 	if err != nil {
+		a.EmitWorkflowComplete()
 		return "", err
 	}
 
+	a.EmitWorkflowComplete()
 	return res.Response, nil
 }
 
