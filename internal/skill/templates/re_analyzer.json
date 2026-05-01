@@ -1,0 +1,43 @@
+{
+  "name": "re_analyzer",
+  "description": "Multi-step reverse engineering analysis: binary identification → string extraction → signature scan → dependency mapping → call graph generation.",
+  "version": 1,
+  "steps": [
+    {
+      "tool": "analyze_binary",
+      "args": {
+        "file_path": "{{target_binary}}"
+      }
+    },
+    {
+      "tool": "extract_strings",
+      "args": {
+        "file_path": "{{target_binary}}",
+        "min_length": 4,
+        "max_results": 500
+      }
+    },
+    {
+      "tool": "scan_signature",
+      "args": {
+        "file_path": "{{target_binary}}",
+        "patterns": ["UPX", "48 89 E5", "regex:https?://[a-zA-Z0-9.-]+", "regex:[A-Fa-f0-9]{32}"]
+      }
+    },
+    {
+      "tool": "analyze_dependencies",
+      "args": {
+        "source_path": "{{target_source}}",
+        "language": "auto"
+      }
+    },
+    {
+      "tool": "generate_call_graph",
+      "args": {
+        "source_path": "{{target_source}}",
+        "language": "auto",
+        "max_depth": 3
+      }
+    }
+  ]
+}

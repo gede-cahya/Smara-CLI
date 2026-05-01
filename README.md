@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.10.0**
+**Autonomous Multi-Agent Terminal v1.13.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -25,6 +25,8 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **🔀 Message Selection & Clipboard**: `Ctrl+S` untuk menyeleksi pesan historis, `Enter/C` untuk copy ke clipboard. `Ctrl+V` untuk paste dari clipboard.
 - **🌐 MCP Auto-Discovery**: Auto-load MCP servers dari konfigurasi **Windsurf IDE**, **OpenCode**, dan file konfigurasi Smara-native secara paralel.
 - **🛜 Remote MCP Support**: Koneksi ke MCP server remote via SSE/WebSocket (`mcp.NewRemoteClient`).
+- **🧩 Skill Ecosystem v2**: Buat, install dari URL, cari, publikasikan ke registry, dan jalankan reusable automation skills. Support format JSON dan Markdown.
+- **📁 SSH File Transfer**: Upload/download file dan direktori via SFTP/SCP langsung dari CLI.
 - **Platform Integration**: Jalankan Smara sebagai bot di **Telegram**, **Discord**, dan **WhatsApp**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
 - **📦 Workspace Management**: Isolasi proyek, memori, dan sesi antar ruang kerja yang berbeda.
@@ -62,6 +64,16 @@ curl -fsSL https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.s
 ```powershell
 irm https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.ps1 | iex
 ```
+
+### Desktop (Wails)
+Smara juga tersedia dalam bentuk aplikasi desktop modern:
+```bash
+cd smara-desktop
+wails build
+# atau untuk development
+wails dev
+```
+*Memerlukan Go 1.23+, Node.js, dan Wails CLI terinstall.*
 
 ---
 
@@ -106,11 +118,18 @@ smara ssh exec prod "docker ps -a"
 # Sesi SSH interaktif
 smara ssh connect prod
 
+# Upload file ke remote
+smara ssh upload prod ./local-file.txt /home/ubuntu/
+
+# Download file dari remote
+smara ssh download prod /var/log/app.log ./logs/
+
 # Generate key pair
 smara ssh keygen --name deploy-key --type ed25519
 
-# Riwayat eksekusi
+# Riwayat eksekusi & transfer
 smara ssh logs --limit 20
+smara ssh transfer-logs --limit 20
 ```
 
 Saat `smara start`, agen otomatis mendapatkan konteks semua host SSH yang tersimpan di system prompt.
@@ -126,7 +145,36 @@ smara dashboard
 
 ---
 
-## 🧠 Manajemen Memori
+## � Skill Ecosystem
+
+Kelola reusable automation skills dan marketplace:
+
+```bash
+# Jalankan skill tersimpan
+smara skill run deploy-backend
+
+# Install skill dari URL
+smara skill install https://example.com/skills/deploy.json
+
+# Buat skill baru dari stdin (JSON atau Markdown)
+smara skill create deploy-backend --format json
+
+# Cari skill di registry
+smara skill search "deploy"
+
+# Info detail skill
+smara skill info deploy-backend
+
+# Publikasikan ke registry
+smara skill publish deploy-backend
+
+# Sync cache registry
+smara skill registry sync
+```
+
+---
+
+## �� Manajemen Memori
 Kelola basis pengetahuan agen Anda:
 ```bash
 # Pencarian Hybrid (Semantic + Keyword)
@@ -172,9 +220,12 @@ smara serve --platform telegram --mode plan
 - `smara config list`: Cek konfigurasi saat ini.
 - `smara update`: Perbarui ke versi terbaru.
 - `smara version`: Tampilkan informasi versi.
-- `smara ssh`: Manajemen VPS via SSH (add-host, exec, connect, keygen, logs).
-- `smara skill`: Kelola reusable automation skill (create, run, list, delete).
+- `smara ssh`: Manajemen VPS via SSH (add-host, exec, connect, upload, download, keygen, logs).
+- `smara skill`: Kelola reusable automation skill (create, run, install, search, publish, info, delete).
 - `smara explore`: Eksplorasi struktur proyek secara visual.
+- `smara guide`: Panduan interaktif langsung di terminal.
+- `smara dashboard`: Monitoring real-time TUI.
+- `smara serve`: Jalankan platform bot (Telegram, Discord, WhatsApp).
 
 ---
 
@@ -194,6 +245,30 @@ platforms:
     allowed_roles: ["smara-user"]
   whatsapp:
     enabled: true
+
+skill_registries:
+  - name: default
+    url: https://raw.githubusercontent.com/gede-cahya/Smara-Skills/main/registry.json
+```
+
+---
+
+## 🧪 Testing
+
+Jalankan suite unit test lengkap:
+```bash
+go test ./...
+```
+
+Test spesifik package:
+```bash
+go test ./pkg/agent/... ./internal/agent/... ./internal/memory/... ./internal/audit/...
+```
+
+Build & release cross-platform:
+```bash
+make test
+make release
 ```
 
 ---

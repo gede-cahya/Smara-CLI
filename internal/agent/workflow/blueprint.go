@@ -72,6 +72,11 @@ var DomainRegistry = map[string]Domain{
 		Description: "Brand identity, logo design, illustration, UI/UX design, typography, dan visual design.",
 		TypicalRoles: []string{"brand_strategist", "illustrator", "typography_expert", "ux_researcher"},
 	},
+	"reverse_engineering": {
+		Name:        "reverse_engineering",
+		Description: "Binary analysis, malware research, firmware reverse engineering, source-code archaeology, dan static analysis.",
+		TypicalRoles: []string{"binary_analyst", "code_archaeologist"},
+	},
 }
 
 // DetectDomain attempts to classify the user's prompt into a professional domain.
@@ -120,6 +125,14 @@ func DetectDomain(prompt string) Domain {
 		}
 	}
 
+	// Reverse engineering keywords
+	reKWs := []string{"reverse engineering", "reverse-engineer", "firmware", "binary", "malware", "disassembly", "decompile", "elf", "pe ", "mach-o", "static analysis", "call graph", "dependency map", "string extraction", "entropy", "packer", "signature scan", "yara", "hex dump", "code archaeology"}
+	for _, kw := range reKWs {
+		if strings.Contains(lower, kw) {
+			domainScores["reverse_engineering"] += 2
+		}
+	}
+
 	// Find highest scoring domain
 	var bestDomain string
 	var bestScore int
@@ -150,7 +163,7 @@ func DetectDomain(prompt string) Domain {
 const blueprintSchema = `{
   "project_name": "string",
   "description": "string",
-  "domain": "string (software_engineering|marketing|legal|data_analysis|graphic_design|general)",
+  "domain": "string (software_engineering|marketing|legal|data_analysis|graphic_design|reverse_engineering|general)",
   "prd": "string (markdown)",
   "architecture": "string (markdown - workflow design for the domain)",
   "agents": [
@@ -188,6 +201,7 @@ DOMAIN YANG DIDUKUNG:
 - legal: contracts, compliance, legal research, drafting
 - data_analysis: data processing, visualization, BI, reporting
 - graphic_design: brand identity, logo, illustration, UI/UX
+- reverse_engineering: binary/firmware analysis, malware research, source-code archaeology, static analysis
 - general: multi-disciplinary projects
 
 FORMAT OUTPUT (JSON sesuai schema):
@@ -211,6 +225,7 @@ Marketing: ContentStrategist, Copywriter, VisualDesigner, SEOAnalyst, CampaignMa
 Legal: LegalResearcher, ContractDrafter, ComplianceChecker, LitigationAnalyst
 Data: DataEngineer, DataScientist, VisualizationExpert, BIAnalyst
 Design: BrandStrategist, Illustrator, TypographyExpert, UXResearcher
+Reverse Engineering: BinaryAnalyst, CodeArchaeologist
 
 Output HANYA JSON valid sesuai schema. Tidak ada teks di luar JSON.`
 

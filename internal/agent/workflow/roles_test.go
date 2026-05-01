@@ -36,7 +36,7 @@ func TestGenerateDynamicRole(t *testing.T) {
 
 func TestAllRoleNames(t *testing.T) {
 	names := AllRoleNames()
-	assert.Len(t, names, 19)
+	assert.Len(t, names, 21)
 	assert.Contains(t, names, "frontend")
 	assert.Contains(t, names, "backend")
 	assert.Contains(t, names, "database")
@@ -56,6 +56,8 @@ func TestAllRoleNames(t *testing.T) {
 	assert.Contains(t, names, "brand_strategist")
 	assert.Contains(t, names, "illustrator")
 	assert.Contains(t, names, "typography_expert")
+	assert.Contains(t, names, "binary_analyst")
+	assert.Contains(t, names, "code_archaeologist")
 }
 
 func TestRoleDefinition_Fields(t *testing.T) {

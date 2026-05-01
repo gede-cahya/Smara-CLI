@@ -242,9 +242,7 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		return g.sendReply(ctx, msg, sb.String())
 
 	case "clear":
-		// Reset conversation history via mode reset
-		currentMode := g.supervisor.GetMode()
-		g.supervisor.SetMode(currentMode) // SetMode clears history
+		g.supervisor.ClearHistory()
 		return g.sendReply(ctx, msg, "🗑️ Percakapan direset.")
 
 	default:

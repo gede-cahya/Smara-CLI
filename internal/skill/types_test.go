@@ -47,3 +47,51 @@ func TestValidate_Ok(t *testing.T) {
 	s := Skill{Name: "test", Steps: []Step{{Tool: "echo", Args: map[string]interface{}{"msg": "hi"}}}}
 	assert.NoError(t, s.Validate())
 }
+
+func TestWithArgs_SubstitutesExistingKeys(t *testing.T) {
+	s := &Skill{
+		Name: "deploy",
+		Steps: []Step{
+			{Tool: "deploy_web", Args: map[string]interface{}{"site": "default", "env": "prod"}},
+		},
+	}
+	result := s.WithArgs(map[string]interface{}{"site": "myapp"})
+	assert.Equal(t, "myapp", result.Steps[0].Args["site"])
+	assert.Equal(t, "prod", result.Steps[0].Args["env"])
+	// Original should be unchanged
+	assert.Equal(t, "default", s.Steps[0].Args["site"])
+}
+
+func TestWithArgs_ParamDefaults(t *testing.T) {
+	s := &Skill{
+		Name: "deploy",
+		Params: []ParamDef{
+			{Name: "env", Type: "string", Default: "staging"},
+		},
+		Steps: []Step{
+			{Tool: "deploy", Args: map[string]interface{}{"env": "__PARAM__"}},
+		},
+	}
+	result := s.WithArgs(map[string]interface{}{})
+	assert.Equal(t, "staging", result.Steps[0].Args["env"])
+}
+
+func TestWithArgs_RuntimeOverridesDefault(t *testing.T) {
+	s := &Skill{
+		Name: "deploy",
+		Params: []ParamDef{
+			{Name: "env", Type: "string", Default: "staging"},
+		},
+		Steps: []Step{
+			{Tool: "deploy", Args: map[string]interface{}{"env": "__PARAM__"}},
+		},
+	}
+	result := s.WithArgs(map[string]interface{}{"env": "production"})
+	assert.Equal(t, "production", result.Steps[0].Args["env"])
+}
+
+func TestWithArgs_NoArgsNoParams(t *testing.T) {
+	s := &Skill{Name: "test", Steps: []Step{{Tool: "echo"}}}
+	result := s.WithArgs(nil)
+	assert.Equal(t, s, result)
+}

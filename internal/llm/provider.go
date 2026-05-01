@@ -82,8 +82,8 @@ func AvailableProviders() map[string]ProviderInfo {
 		},
 		"custom": {
 			Name:        "custom",
-			Description: "Custom OpenAI-compatible API (requires base URL & API key)",
-			Models:      []string{"custom", "minimax-auto"},
+			Description: "CLIProxyAPI (OpenAI-compatible) via local proxy at localhost:8317",
+			Models:      []string{"deepseek-v4-pro", "deepseek-v4-flash", "minimax-m2.7", "minimax-auto"},
 			NeedsAPIKey: true,
 		},
 	}

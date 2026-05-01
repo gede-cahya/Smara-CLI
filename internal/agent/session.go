@@ -40,15 +40,16 @@ func (r *SessionRegistry) Create(cfg SessionConfig) (*session.Session, error) {
 	now := time.Now()
 
 	s := &session.Session{
-		ID:         id,
-		Name:       cfg.Name,
-		State:      session.StateActive,
-		Mode:       cfg.Mode,
-		MCPServers: cfg.MCPServers,
-		History:    make([]llm.Message, 0),
-		Tasks:      make([]session.Task, 0),
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:          id,
+		Name:        cfg.Name,
+		WorkspaceID: cfg.WorkspaceID,
+		State:       session.StateActive,
+		Mode:        cfg.Mode,
+		MCPServers:  cfg.MCPServers,
+		History:     make([]llm.Message, 0),
+		Tasks:       make([]session.Task, 0),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	r.mu.Lock()

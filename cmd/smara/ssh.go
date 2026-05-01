@@ -13,15 +13,18 @@ import (
 )
 
 var (
-	sshHost     string
-	sshUser     string
-	sshKey      string
-	sshPassword string
-	sshPort     string
-	sshKeyName  string
-	sshKeyType  string
-	sshKeyBits  int
-	sshLogLimit int
+	sshHost           string
+	sshUser           string
+	sshKey            string
+	sshPassword       string
+	sshPort           string
+	sshKeyName        string
+	sshKeyType        string
+	sshKeyBits        int
+	sshLogLimit       int
+	sshTransferMethod string
+	sshRecursive      bool
+	sshPreserve       bool
 )
 
 var sshCmd = &cobra.Command{
@@ -31,12 +34,15 @@ var sshCmd = &cobra.Command{
 dan lihat log eksekusi langsung dari Smara.
 
 Subcommands:
-  add-host <nama>   Tambah host baru
-  list              Daftar host tersimpan
-  exec <nama> <cmd> Eksekusi perintah ke remote host
-  connect <nama>    Buka sesi SSH interaktif
-  keygen            Generate SSH key pair baru
-  logs              Lihat riwayat eksekusi`,
+  add-host <nama>    Tambah host baru
+  list               Daftar host tersimpan
+  exec <nama> <cmd>  Eksekusi perintah ke remote host
+  connect <nama>     Buka sesi SSH interaktif
+  upload <host> <local> <remote>    Upload file/direktori ke remote
+  download <host> <remote> <local> Download file/direktori dari remote
+  keygen             Generate SSH key pair baru
+  logs               Lihat riwayat eksekusi
+  transfer-logs      Lihat riwayat transfer file`,
 }
 
 var sshAddHostCmd = &cobra.Command{
@@ -271,6 +277,267 @@ var sshLogsCmd = &cobra.Command{
 	},
 }
 
+var sshUploadCmd = &cobra.Command{
+	Use:   "upload <host> <local> <remote>",
+	Short: "Upload file atau direktori ke remote host via SFTP/SCP",
+	Args:  cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		hostName := args[0]
+		localPath := args[1]
+		remotePath := args[2]
+
+		var host *ssh.Host
+		var err error
+
+		host, err = ssh.GetHost(hostName)
+		if err != nil {
+			if strings.Contains(hostName, "@") {
+				parts := strings.SplitN(hostName, "@", 2)
+				host = &ssh.Host{
+					Name:    hostName,
+					User:    parts[0],
+					Address: parts[1],
+					Port:    "22",
+					KeyPath: sshKey,
+				}
+			} else {
+				return fmt.Errorf("host '%s' tidak ditemukan", hostName)
+			}
+		}
+		if sshKey != "" {
+			host.KeyPath = sshKey
+		}
+
+		fmt.Printf("Menghubungkan ke %s@%s:%s ...\n", host.User, host.Address, host.Port)
+		client, err := ssh.Connect(host)
+		if err != nil {
+			return fmt.Errorf("gagal koneksi: %w", err)
+		}
+		defer client.Close()
+
+		method := ssh.TransferMethodSFTP
+		if sshTransferMethod == "scp" {
+			method = ssh.TransferMethodSCP
+		}
+
+		cfg := config.Get()
+		store, _ := ssh.NewStore(cfg.DBPath)
+		if store != nil {
+			defer store.Close()
+		}
+
+		start := time.Now()
+		var results []ssh.TransferResult
+
+		if sshRecursive {
+			if method == ssh.TransferMethodSCP {
+				return fmt.Errorf("SCP tidak mendukung transfer rekursif")
+			}
+			fmt.Printf("Upload direktori %s -> %s via SFTP ...\n", localPath, remotePath)
+			results, err = ssh.UploadDir(client, localPath, remotePath, sshPreserve)
+		} else {
+			if method == ssh.TransferMethodSCP {
+				res, e2 := ssh.UploadFileSCP(client, localPath, remotePath, sshPreserve)
+				results = append(results, *res)
+				err = e2
+			} else {
+				res, e2 := ssh.UploadFile(client, localPath, remotePath, sshPreserve)
+				results = append(results, *res)
+				err = e2
+			}
+		}
+
+		duration := time.Since(start).Milliseconds()
+		if store != nil {
+			for _, r := range results {
+				status := "success"
+				errMsg := ""
+				if r.Status != "success" {
+					status = "error"
+					if r.Error != nil {
+						errMsg = r.Error.Error()
+					}
+				}
+				_ = store.SaveTransferLog(ssh.TransferLogEntry{
+					HostName:   host.Name,
+					Address:    host.Address,
+					LocalPath:  r.LocalPath,
+					RemotePath: r.RemotePath,
+					Direction:  "upload",
+					Bytes:      r.Bytes,
+					Method:     string(method),
+					Status:     status,
+					ErrorMsg:   errMsg,
+					Duration:   duration,
+				})
+			}
+		}
+
+		if err != nil {
+			return fmt.Errorf("upload gagal: %w", err)
+		}
+
+		var totalBytes int64
+		for _, r := range results {
+			if r.Status == "success" {
+				totalBytes += r.Bytes
+			}
+		}
+		fmt.Printf("Upload selesai: %d file, %d bytes dalam %d ms\n", len(results), totalBytes, duration)
+		return nil
+	},
+}
+
+var sshDownloadCmd = &cobra.Command{
+	Use:   "download <host> <remote> <local>",
+	Short: "Download file atau direktori dari remote host via SFTP/SCP",
+	Args:  cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		hostName := args[0]
+		remotePath := args[1]
+		localPath := args[2]
+
+		var host *ssh.Host
+		var err error
+
+		host, err = ssh.GetHost(hostName)
+		if err != nil {
+			if strings.Contains(hostName, "@") {
+				parts := strings.SplitN(hostName, "@", 2)
+				host = &ssh.Host{
+					Name:    hostName,
+					User:    parts[0],
+					Address: parts[1],
+					Port:    "22",
+					KeyPath: sshKey,
+				}
+			} else {
+				return fmt.Errorf("host '%s' tidak ditemukan", hostName)
+			}
+		}
+		if sshKey != "" {
+			host.KeyPath = sshKey
+		}
+
+		fmt.Printf("Menghubungkan ke %s@%s:%s ...\n", host.User, host.Address, host.Port)
+		client, err := ssh.Connect(host)
+		if err != nil {
+			return fmt.Errorf("gagal koneksi: %w", err)
+		}
+		defer client.Close()
+
+		method := ssh.TransferMethodSFTP
+		if sshTransferMethod == "scp" {
+			method = ssh.TransferMethodSCP
+		}
+
+		cfg := config.Get()
+		store, _ := ssh.NewStore(cfg.DBPath)
+		if store != nil {
+			defer store.Close()
+		}
+
+		start := time.Now()
+		var results []ssh.TransferResult
+
+		if sshRecursive {
+			if method == ssh.TransferMethodSCP {
+				return fmt.Errorf("SCP tidak mendukung transfer rekursif")
+			}
+			fmt.Printf("Download direktori %s -> %s via SFTP ...\n", remotePath, localPath)
+			results, err = ssh.DownloadDir(client, remotePath, localPath, sshPreserve)
+		} else {
+			if method == ssh.TransferMethodSCP {
+				res, e2 := ssh.DownloadFileSCP(client, remotePath, localPath, sshPreserve)
+				results = append(results, *res)
+				err = e2
+			} else {
+				res, e2 := ssh.DownloadFile(client, remotePath, localPath, sshPreserve)
+				results = append(results, *res)
+				err = e2
+			}
+		}
+
+		duration := time.Since(start).Milliseconds()
+		if store != nil {
+			for _, r := range results {
+				status := "success"
+				errMsg := ""
+				if r.Status != "success" {
+					status = "error"
+					if r.Error != nil {
+						errMsg = r.Error.Error()
+					}
+				}
+				_ = store.SaveTransferLog(ssh.TransferLogEntry{
+					HostName:   host.Name,
+					Address:    host.Address,
+					LocalPath:  r.LocalPath,
+					RemotePath: r.RemotePath,
+					Direction:  "download",
+					Bytes:      r.Bytes,
+					Method:     string(method),
+					Status:     status,
+					ErrorMsg:   errMsg,
+					Duration:   duration,
+				})
+			}
+		}
+
+		if err != nil {
+			return fmt.Errorf("download gagal: %w", err)
+		}
+
+		var totalBytes int64
+		for _, r := range results {
+			if r.Status == "success" {
+				totalBytes += r.Bytes
+			}
+		}
+		fmt.Printf("Download selesai: %d file, %d bytes dalam %d ms\n", len(results), totalBytes, duration)
+		return nil
+	},
+}
+
+var sshTransferLogsCmd = &cobra.Command{
+	Use:   "transfer-logs",
+	Short: "Lihat riwayat transfer file SSH",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg := config.Get()
+		store, err := ssh.NewStore(cfg.DBPath)
+		if err != nil {
+			return fmt.Errorf("gagal membuka database: %w", err)
+		}
+		defer store.Close()
+
+		logs, err := store.ListTransferLogs(sshLogLimit)
+		if err != nil {
+			return fmt.Errorf("gagal membaca transfer logs: %w", err)
+		}
+
+		if len(logs) == 0 {
+			fmt.Println("Belum ada log transfer file SSH.")
+			return nil
+		}
+
+		fmt.Printf("%-5s %-12s %-10s %-20s %-20s %-10s %-8s %-10s\n", "ID", "HOST", "DIRECTION", "LOCAL", "REMOTE", "BYTES", "STATUS", "DUR(ms)")
+		fmt.Println(strings.Repeat("-", 110))
+		for _, l := range logs {
+			localPreview := l.LocalPath
+			if len(localPreview) > 20 {
+				localPreview = localPreview[:17] + "..."
+			}
+			remotePreview := l.RemotePath
+			if len(remotePreview) > 20 {
+				remotePreview = remotePreview[:17] + "..."
+			}
+			fmt.Printf("%-5d %-12s %-10s %-20s %-20s %-10d %-8s %-10d\n",
+				l.ID, l.HostName, l.Direction, localPreview, remotePreview, l.Bytes, l.Status, l.Duration)
+		}
+		return nil
+	},
+}
+
 func init() {
 	// Flags for add-host
 	sshAddHostCmd.Flags().StringVar(&sshHost, "host", "", "Alamat IP atau hostname VPS (wajib)")
@@ -283,6 +550,16 @@ func init() {
 	sshExecCmd.Flags().StringVar(&sshKey, "key", "", "Override private key path")
 	sshConnectCmd.Flags().StringVar(&sshKey, "key", "", "Override private key path")
 
+	// Flags for upload/download
+	sshUploadCmd.Flags().StringVar(&sshKey, "key", "", "Override private key path")
+	sshUploadCmd.Flags().StringVar(&sshTransferMethod, "method", "sftp", "Metode transfer: sftp atau scp")
+	sshUploadCmd.Flags().BoolVarP(&sshRecursive, "recursive", "r", false, "Transfer direktori rekursif (hanya SFTP)")
+	sshUploadCmd.Flags().BoolVarP(&sshPreserve, "preserve", "p", false, "Pertahankan permission file")
+	sshDownloadCmd.Flags().StringVar(&sshKey, "key", "", "Override private key path")
+	sshDownloadCmd.Flags().StringVar(&sshTransferMethod, "method", "sftp", "Metode transfer: sftp atau scp")
+	sshDownloadCmd.Flags().BoolVarP(&sshRecursive, "recursive", "r", false, "Transfer direktori rekursif (hanya SFTP)")
+	sshDownloadCmd.Flags().BoolVarP(&sshPreserve, "preserve", "p", false, "Pertahankan permission file")
+
 	// Flags for keygen
 	sshKeygenCmd.Flags().StringVar(&sshKeyName, "name", "", "Nama file key (wajib)")
 	sshKeygenCmd.Flags().StringVar(&sshKeyType, "type", "ed25519", "Tipe key: ed25519 atau rsa")
@@ -290,12 +567,16 @@ func init() {
 
 	// Flags for logs
 	sshLogsCmd.Flags().IntVar(&sshLogLimit, "limit", 50, "Jumlah log yang ditampilkan")
+	sshTransferLogsCmd.Flags().IntVar(&sshLogLimit, "limit", 50, "Jumlah log yang ditampilkan")
 
 	// Register subcommands
 	sshCmd.AddCommand(sshAddHostCmd)
 	sshCmd.AddCommand(sshListCmd)
 	sshCmd.AddCommand(sshExecCmd)
 	sshCmd.AddCommand(sshConnectCmd)
+	sshCmd.AddCommand(sshUploadCmd)
+	sshCmd.AddCommand(sshDownloadCmd)
 	sshCmd.AddCommand(sshKeygenCmd)
 	sshCmd.AddCommand(sshLogsCmd)
+	sshCmd.AddCommand(sshTransferLogsCmd)
 }

@@ -125,6 +125,8 @@ type AppSupervisor interface {
 	GetProviderName() string
 	SkillExecutor() skill.StepExecutor
 	GetMCPInfo() map[string]agent.MCPServerInfo
+	ClearHistory()
+	SaveSession() error
 }
 
 // AppModel is the Bubbletea model for our TUI
@@ -203,7 +205,11 @@ type AppModel struct {
 	phaseContents map[string]string // phase name → accumulated live content
 	phaseDescs    map[string]string // phase name → description
 	phaseSeen     []string          // ordered list of phases that became active
+	phaseSeenSet  map[string]bool   // dedup set for phaseSeen
 	fadeWave      *components.FadeWave
+
+	// Cancellation guard — drop stale stream/phase/process messages after cancel
+	cancelled bool
 
 	// Copy / paste & selection state
 	selectionMode    bool          // Ctrl+S message selection mode
@@ -272,6 +278,7 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string), stor
 		store:         store,
 		phaseContents: make(map[string]string),
 		phaseDescs:    make(map[string]string),
+		phaseSeenSet:  make(map[string]bool),
 		fadeWave:      components.NewFadeWave(80),
 	}
 }
@@ -418,6 +425,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							cmdName, cmdArgs := ParseCommand(v)
 							m.handleCommand(cmdName, cmdArgs)
 						} else {
+							m.cancelled = false
 							m.processing = true
 							m.statusText = "Memproses..."
 							m.currentStream = ""
@@ -614,15 +622,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel() // Cancel the current process
 				m.ctx, m.cancel = context.WithCancel(context.Background())
 				m.processing = false
+				m.cancelled = true
 				m.addMessage("System", "Proses dibatalkan.")
 			} else {
+				_ = m.supervisor.SaveSession()
 				return m, tea.Quit
 			}
 
 		case tea.KeyCtrlQ:
+			_ = m.supervisor.SaveSession()
 			return m, tea.Quit
 
 		case tea.KeyCtrlD:
+			_ = m.supervisor.SaveSession()
 			return m, tea.Quit
 
 		case tea.KeyCtrlV:
@@ -757,6 +769,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textarea.Reset()
 
 			if IsExitCommand(v) {
+				_ = m.supervisor.SaveSession()
 				return m, tea.Quit
 			}
 
@@ -769,6 +782,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if isDirectSSHCommand(v) {
 				// Intercept raw SSH commands like "ssh -i key.pem user@host"
 				m.addMessage("System", fmt.Sprintf("Eksekusi SSH langsung: %s", v))
+				m.cancelled = false
 				m.processing = true
 				m.statusText = "SSH..."
 				cmds = append(cmds, m.spinner.Tick)
@@ -780,6 +794,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Process @mentions
 				processedPrompt := m.processFileMentions(v)
 
+				m.cancelled = false
 				m.processing = true
 				m.statusText = "Memproses..."
 				m.currentStream = ""
@@ -888,10 +903,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, animTickCmd())
 
 	case PhaseMsg:
-		// Track phases in order
+		if m.cancelled {
+			return m, nil
+		}
+		// Track phases in order (deduped so each phase appears only once)
 		if m.currentPhase != msg.Phase {
 			m.currentPhase = msg.Phase
-			if msg.Phase != "" {
+			if msg.Phase != "" && !m.phaseSeenSet[msg.Phase] {
+				m.phaseSeenSet[msg.Phase] = true
 				m.phaseSeen = append(m.phaseSeen, msg.Phase)
 				m.phaseDescs[msg.Phase] = msg.Description
 			}
@@ -899,6 +918,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderMessages()
 
 	case StreamMsg:
+		if m.cancelled {
+			return m, nil
+		}
 		// Route content to the correct phase bucket
 		if msg.IsThinking {
 			m.currentThinking += msg.Chunk
@@ -916,7 +938,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Phase != "" && m.currentPhase != msg.Phase {
 			m.currentPhase = msg.Phase
-			m.phaseSeen = append(m.phaseSeen, msg.Phase)
+			if !m.phaseSeenSet[msg.Phase] {
+				m.phaseSeenSet[msg.Phase] = true
+				m.phaseSeen = append(m.phaseSeen, msg.Phase)
+			}
 		}
 		m.renderMessages()
 
@@ -925,6 +950,21 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderMessages()
 
 	case ProcessMsg:
+		if m.cancelled {
+			m.cancelled = false
+			m.processing = false
+			m.statusText = ""
+			m.currentStream = ""
+			m.currentThinking = ""
+			m.currentExplore = ""
+			m.currentPhase = ""
+			m.phaseSeen = nil
+			m.phaseSeenSet = make(map[string]bool)
+			m.phaseContents = make(map[string]string)
+			m.phaseDescs = make(map[string]string)
+			m.fadeWave.Reset()
+			return m, nil
+		}
 		m.processing = false
 		m.statusText = ""
 		m.currentStream = ""
@@ -932,6 +972,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentExplore = ""
 		m.currentPhase = ""
 		m.phaseSeen = nil
+		m.phaseSeenSet = make(map[string]bool)
 		m.phaseContents = make(map[string]string)
 		m.phaseDescs = make(map[string]string)
 		m.fadeWave.Reset()

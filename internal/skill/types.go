@@ -5,6 +5,15 @@ import (
 	"fmt"
 )
 
+// ParamDef defines a configurable parameter for a skill.
+type ParamDef struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`        // string, number, boolean
+	Description string      `json:"description"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default,omitempty"`
+}
+
 // Step is one tool call inside a skill recipe.
 type Step struct {
 	Tool string                 `json:"tool"`
@@ -13,10 +22,65 @@ type Step struct {
 
 // Skill is a reusable automation recipe.
 type Skill struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Steps       []Step `json:"steps"`
-	Version     int    `json:"version"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Steps       []Step     `json:"steps"`
+	Version     int        `json:"version"`
+	Tags        []string   `json:"tags,omitempty"`
+	Author      string     `json:"author,omitempty"`
+	SourceURL   string     `json:"source_url,omitempty"`
+	Params      []ParamDef `json:"params,omitempty"`
+}
+
+// WithArgs returns a copy of the skill with parameter substitution applied.
+// Runtime args override default skill args, and param defaults are applied.
+func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
+	if len(runtimeArgs) == 0 && len(s.Params) == 0 {
+		return s
+	}
+
+	// Build merged args: param defaults -> skill step args -> runtime args
+	merged := make(map[string]interface{})
+
+	// Apply param defaults
+	for _, p := range s.Params {
+		if p.Default != nil {
+			merged[p.Name] = p.Default
+		}
+	}
+
+	// Override with runtime args
+	for k, v := range runtimeArgs {
+		merged[k] = v
+	}
+
+	// Create a deep copy of the skill with substituted args
+	newSkill := &Skill{
+		Name:        s.Name,
+		Description: s.Description,
+		Steps:       make([]Step, len(s.Steps)),
+		Version:     s.Version,
+		Tags:        append([]string(nil), s.Tags...),
+		Author:      s.Author,
+		SourceURL:   s.SourceURL,
+		Params:      append([]ParamDef(nil), s.Params...),
+	}
+
+	for i, step := range s.Steps {
+		newArgs := make(map[string]interface{})
+		for k, v := range step.Args {
+			newArgs[k] = v
+		}
+		// Override with merged runtime args where keys match
+		for k, v := range merged {
+			if _, exists := newArgs[k]; exists {
+				newArgs[k] = v
+			}
+		}
+		newSkill.Steps[i] = Step{Tool: step.Tool, Args: newArgs}
+	}
+
+	return newSkill
 }
 
 // ToJSON serializes the skill.

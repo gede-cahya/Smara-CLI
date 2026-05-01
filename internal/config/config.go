@@ -78,9 +78,17 @@ type SmaraConfig struct {
 	SmaraMCPAPIKey     string         `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
 	Verbose            bool           `mapstructure:"verbose" yaml:"verbose"`
 	DBPath             string         `mapstructure:"db_path" yaml:"db_path"`
-	ActiveWorkspace    string         `mapstructure:"active_workspace" yaml:"active_workspace"`
-	ActiveWorkspaceID  int64          `mapstructure:"-"` // runtime only
-	Platforms          PlatformConfig `mapstructure:"platforms" yaml:"platforms"`
+	ActiveWorkspace    string           `mapstructure:"active_workspace" yaml:"active_workspace"`
+	ActiveWorkspaceID  int64              `mapstructure:"-"` // runtime only
+	Platforms          PlatformConfig   `mapstructure:"platforms" yaml:"platforms"`
+	SkillRegistries    []RegistryConfig `mapstructure:"skill_registries" yaml:"skill_registries"`
+}
+
+// RegistryConfig defines a configured skill marketplace/registry source.
+type RegistryConfig struct {
+	Name      string `mapstructure:"name" yaml:"name"`
+	URL       string `mapstructure:"url" yaml:"url"`
+	AuthToken string `mapstructure:"auth_token,omitempty" yaml:"auth_token,omitempty"`
 }
 
 var (
@@ -94,8 +102,8 @@ func DefaultConfig() *SmaraConfig {
 	home, _ := os.UserHomeDir()
 	smaraDir := filepath.Join(home, ".smara")
 	return &SmaraConfig{
-		Provider:           "ollama",
-		Model:              "minimax-m2.5:cloud",
+		Provider:           "custom",
+		Model:              "deepseek-v4-pro",
 		OllamaHost:         "http://localhost:11434",
 		OpenAIAPIKey:       "",
 		OpenAIModel:        "gpt-4o",
@@ -104,10 +112,10 @@ func DefaultConfig() *SmaraConfig {
 		OpenRouterModel:    "anthropic/claude-sonnet-4",
 		AnthropicAPIKey:    "",
 		AnthropicModel:     "claude-sonnet-4-20250514",
-		CustomProviderName: "",
-		CustomAPIKey:       "",
-		CustomBaseURL:      "https://api.openai.com/v1",
-		CustomModel:        "",
+		CustomProviderName: "CLIProxyAPI",
+		CustomAPIKey:       "your-api-key-1",
+		CustomBaseURL:      "http://localhost:8317/v1",
+		CustomModel:        "deepseek-v4-pro",
 		SyncDir:            filepath.Join(smaraDir, "sync"),
 		SyncInterval:       15,
 		MCPServers:         []MCPServer{},
@@ -123,6 +131,12 @@ func DefaultConfig() *SmaraConfig {
 			},
 			MaxResponseLen:  4000,
 			TypingIndicator: true,
+		},
+		SkillRegistries: []RegistryConfig{
+			{
+				Name: "smara-official",
+				URL:  "https://raw.githubusercontent.com/gede-cahya/smara-skills/main/skill-registry.json",
+			},
 		},
 	}
 }
@@ -179,6 +193,7 @@ func Init(configPath string) error {
 	viper.SetDefault("smara_mcp_command", defaults.SmaraMCPCommand)
 	viper.SetDefault("smara_mcp_args", defaults.SmaraMCPArgs)
 	viper.SetDefault("smara_mcp_api_key", defaults.SmaraMCPAPIKey)
+	viper.SetDefault("skill_registries", defaults.SkillRegistries)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")

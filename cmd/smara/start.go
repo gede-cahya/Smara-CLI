@@ -25,6 +25,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 	"github.com/gede-cahya/Smara-CLI/internal/sync"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
+	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
 )
 
 var (
@@ -189,9 +190,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 			// No active session found, create a new one automatically
 			ui.PrintInfo("Tidak ada session aktif, membuat session baru...")
 			newSess, err := supervisor.CreateSession(agent.SessionConfig{
-				Name:       "Auto Session",
-				Mode:       string(agent.ModeAsk),
-				MCPServers: supervisor.ListMCPServers(),
+				Name:        "Auto Session",
+				WorkspaceID: supervisor.GetWorkspaceID(),
+				Mode:        string(agent.ModeAsk),
+				MCPServers:  supervisor.ListMCPServers(),
 			})
 			if err == nil {
 				ui.PrintSuccess("Session baru dibuat: %s (%s)", newSess.Name, newSess.ID[:8])
@@ -398,7 +400,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		OnToolResult: func(output string) {
 			p := ui.GetGlobalProgram()
 			if p != nil {
-				content := fmt.Sprintf("◂ result: %s\n", truncateStr(output, 300))
+				content := fmt.Sprintf("◂ result: %s\n", components.HyperlinkURLs(truncateStr(output, 300)))
 				p.Send(ui.StreamMsg{Chunk: content, IsThinking: false, Phase: "Exploring"})
 			}
 		},

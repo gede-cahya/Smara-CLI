@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -310,6 +313,60 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "ssh_upload",
+			Description: "Upload file ke remote VPS/Server melalui SSH (SFTP/SCP). Gunakan untuk deploy file, konfigurasi, atau asset ke server.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama host yang tersimpan atau format user@address",
+					},
+					"local_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file lokal yang akan diupload",
+					},
+					"remote_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path tujuan di remote server (misal: /opt/app.tar.gz, /var/www/index.html)",
+					},
+					"method": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"sftp", "scp"},
+						"description": "Metode transfer: sftp (default) atau scp",
+					},
+				},
+				"required": []string{"host", "local_path", "remote_path"},
+			},
+		},
+		{
+			Name:        "ssh_download",
+			Description: "Download file dari remote VPS/Server melalui SSH (SFTP/SCP). Gunakan untuk mengambil log, backup, atau file konfigurasi dari server.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"host": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama host yang tersimpan atau format user@address",
+					},
+					"remote_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file di remote server yang akan didownload",
+					},
+					"local_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path tujuan lokal (default: nama file yang sama di cwd)",
+					},
+					"method": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"sftp", "scp"},
+						"description": "Metode transfer: sftp (default) atau scp",
+					},
+				},
+				"required": []string{"host", "remote_path"},
+			},
+		},
+		{
 			Name:        "ssh_manage",
 			Description: "Mengelola konfigurasi host SSH (VPS). Bisa menambah, menghapus, atau melihat daftar host tersimpan.",
 			Parameters: map[string]interface{}{
@@ -535,6 +592,104 @@ func GetBuiltinTools() []llm.ToolFunction {
 					},
 				},
 				"required": []string{"name"},
+			},
+		},
+		// ─── Reverse Engineering Tools ────────────────────────────
+		{
+			Name:        "analyze_binary",
+			Description: "Menganalisis file binary (firmware, executable, library) secara read-only untuk mendeteksi format, arsitektur, entropy, dan packer indicators. Tidak pernah mengeksekusi file target.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path absolut atau relatif ke file binary yang akan dianalisis",
+					},
+				},
+				"required": []string{"file_path"},
+			},
+		},
+		{
+			Name:        "extract_strings",
+			Description: "Mengekstrak strings ASCII/Unicode dari file binary atau teks. Berguna untuk menemukan hardcoded URL, API keys, nama fungsi, dan pesan debug.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke file yang akan diekstrak strings-nya",
+					},
+					"min_length": map[string]interface{}{
+						"type":        "integer",
+						"description": "Panjang minimum string (default: 4)",
+					},
+					"max_results": map[string]interface{}{
+						"type":        "integer",
+						"description": "Jumlah maksimum string yang dikembalikan (default: 500, cap: 2000)",
+					},
+				},
+				"required": []string{"file_path"},
+			},
+		},
+		{
+			Name:        "scan_signature",
+			Description: "Melakukan pattern/signature matching (YARA-lite) terhadap byte sequence file. Mendukung hex patterns dan regex sederhana untuk mendeteksi known signatures.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke file yang akan di-scan",
+					},
+					"patterns": map[string]interface{}{
+						"type":        "array",
+						"items": map[string]interface{}{"type": "string"},
+						"description": "Daftar pattern: hex (e.g., '48 89 E5'), regex (e.g., 'regex:https?://.*'), atau plain string",
+					},
+				},
+				"required": []string{"file_path", "patterns"},
+			},
+		},
+		{
+			Name:        "analyze_dependencies",
+			Description: "Menganalisis tree source code (Go, JavaScript/TypeScript, Python) untuk memetakan imports, internal package dependencies, dan external libraries.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"source_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke direktori root source code",
+					},
+					"language": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"go", "javascript", "typescript", "python", "auto"},
+						"description": "Bahasa pemrograman (default: auto-detect)",
+					},
+				},
+				"required": []string{"source_path"},
+			},
+		},
+		{
+			Name:        "generate_call_graph",
+			Description: "Membuat static call-graph outline dari source code. Melakukan scan sederhana berbasis AST/token/regex untuk memetakan function definitions dan callers. Bukan full compiler.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"source_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke direktori root source code",
+					},
+					"language": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"go", "javascript", "typescript", "python", "auto"},
+						"description": "Bahasa pemrograman (default: auto-detect)",
+					},
+					"max_depth": map[string]interface{}{
+						"type":        "integer",
+						"description": "Kedalaman maksimum call chain (default: 3)",
+					},
+				},
+				"required": []string{"source_path"},
 			},
 		},
 	}
@@ -962,6 +1117,80 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 		return stdout, nil
 
+	case "ssh_upload":
+		hostArg, _ := args["host"].(string)
+		localPath, _ := args["local_path"].(string)
+		remotePath, _ := args["remote_path"].(string)
+		method := "sftp"
+		if m, ok := args["method"].(string); ok && m != "" {
+			method = m
+		}
+		if hostArg == "" || localPath == "" || remotePath == "" {
+			return "", fmt.Errorf("argumen 'host', 'local_path', dan 'remote_path' wajib diisi")
+		}
+
+		host, err := resolveHost(hostArg)
+		if err != nil {
+			return "", err
+		}
+
+		client, err := smarassh.Connect(host)
+		if err != nil {
+			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
+		}
+		defer client.Close()
+
+		var res *smarassh.TransferResult
+		if method == "scp" {
+			res, err = smarassh.UploadFileSCP(client, localPath, remotePath, false)
+		} else {
+			res, err = smarassh.UploadFile(client, localPath, remotePath, false)
+		}
+		if err != nil {
+			return "", fmt.Errorf("upload gagal: %w", err)
+		}
+		return fmt.Sprintf("Upload berhasil: %s -> %s (%d bytes, %v)", res.LocalPath, res.RemotePath, res.Bytes, res.Duration), nil
+
+	case "ssh_download":
+		hostArg, _ := args["host"].(string)
+		remotePath, _ := args["remote_path"].(string)
+		localPath := ""
+		if lp, ok := args["local_path"].(string); ok {
+			localPath = lp
+		}
+		if localPath == "" {
+			localPath = filepath.Base(remotePath)
+		}
+		method := "sftp"
+		if m, ok := args["method"].(string); ok && m != "" {
+			method = m
+		}
+		if hostArg == "" || remotePath == "" {
+			return "", fmt.Errorf("argumen 'host' dan 'remote_path' wajib diisi")
+		}
+
+		host, err := resolveHost(hostArg)
+		if err != nil {
+			return "", err
+		}
+
+		client, err := smarassh.Connect(host)
+		if err != nil {
+			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
+		}
+		defer client.Close()
+
+		var res *smarassh.TransferResult
+		if method == "scp" {
+			res, err = smarassh.DownloadFileSCP(client, remotePath, localPath, false)
+		} else {
+			res, err = smarassh.DownloadFile(client, remotePath, localPath, false)
+		}
+		if err != nil {
+			return "", fmt.Errorf("download gagal: %w", err)
+		}
+		return fmt.Sprintf("Download berhasil: %s -> %s (%d bytes, %v)", res.RemotePath, res.LocalPath, res.Bytes, res.Duration), nil
+
 	case "ssh_manage":
 		action, _ := args["action"].(string)
 		switch action {
@@ -1080,6 +1309,75 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("gagal membuat reminder: %w", err)
 		}
 		return fmt.Sprintf("Reminder tersimpan: '%s' (when: %s)", promptText, when), nil
+
+	// ─── Reverse Engineering Tools ────────────────────────────
+	case "analyze_binary":
+		filePath := getStr(args, "file_path")
+		if filePath == "" {
+			return "", fmt.Errorf("argumen 'file_path' wajib diisi")
+		}
+		return analyzeBinaryFile(filePath)
+
+	case "extract_strings":
+		filePath := getStr(args, "file_path")
+		if filePath == "" {
+			return "", fmt.Errorf("argumen 'file_path' wajib diisi")
+		}
+		minLen := 4
+		if ml, ok := args["min_length"].(float64); ok {
+			minLen = int(ml)
+		}
+		maxResults := 500
+		if mr, ok := args["max_results"].(float64); ok {
+			maxResults = int(mr)
+		}
+		if maxResults > 2000 {
+			maxResults = 2000
+		}
+		return extractStringsFromFile(filePath, minLen, maxResults)
+
+	case "scan_signature":
+		filePath := getStr(args, "file_path")
+		if filePath == "" {
+			return "", fmt.Errorf("argumen 'file_path' wajib diisi")
+		}
+		patternsRaw, ok := args["patterns"].([]interface{})
+		if !ok || len(patternsRaw) == 0 {
+			return "", fmt.Errorf("argumen 'patterns' wajib berupa array non-kosong")
+		}
+		patterns := make([]string, 0, len(patternsRaw))
+		for _, p := range patternsRaw {
+			if s, ok := p.(string); ok {
+				patterns = append(patterns, s)
+			}
+		}
+		return scanSignature(filePath, patterns)
+
+	case "analyze_dependencies":
+		sourcePath := getStr(args, "source_path")
+		if sourcePath == "" {
+			return "", fmt.Errorf("argumen 'source_path' wajib diisi")
+		}
+		lang := getStr(args, "language")
+		if lang == "" {
+			lang = "auto"
+		}
+		return analyzeDependencies(sourcePath, lang)
+
+	case "generate_call_graph":
+		sourcePath := getStr(args, "source_path")
+		if sourcePath == "" {
+			return "", fmt.Errorf("argumen 'source_path' wajib diisi")
+		}
+		lang := getStr(args, "language")
+		if lang == "" {
+			lang = "auto"
+		}
+		maxDepth := 3
+		if md, ok := args["max_depth"].(float64); ok {
+			maxDepth = int(md)
+		}
+		return generateCallGraph(sourcePath, lang, maxDepth)
 
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)
@@ -1245,4 +1543,803 @@ func cleanHTML(s string) string {
 	s = strings.ReplaceAll(s, "&lt;", "<")
 	s = strings.ReplaceAll(s, "&gt;", ">")
 	return strings.TrimSpace(s)
+}
+
+// ─── Reverse Engineering Helpers ──────────────────────────
+
+// analyzeBinaryFile performs read-only static analysis on a binary file.
+func analyzeBinaryFile(filePath string) (string, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengakses file: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path adalah direktori, bukan file")
+	}
+
+	const maxSize = 50 * 1024 * 1024 // 50 MB cap
+	if info.Size() > maxSize {
+		return "", fmt.Errorf("file terlalu besar (max 50 MB)")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Binary Analysis Report: %s\n\n", filepath.Base(filePath)))
+	sb.WriteString(fmt.Sprintf("- **Path:** %s\n", filePath))
+	sb.WriteString(fmt.Sprintf("- **Size:** %d bytes (%.2f MB)\n", info.Size(), float64(info.Size())/(1024*1024)))
+
+	// Attempt 'file' command first
+	if out, err := exec.Command("file", filePath).CombinedOutput(); err == nil {
+		sb.WriteString(fmt.Sprintf("- **File Command:** %s\n", strings.TrimSpace(string(out))))
+	} else {
+		sb.WriteString("- **File Command:** not available (fallback to magic bytes)\n")
+	}
+
+	// Read first 64 bytes for magic bytes
+	f, err := os.Open(filePath)
+	if err != nil {
+		return sb.String(), nil
+	}
+	defer f.Close()
+
+	magic := make([]byte, 64)
+	n, _ := f.Read(magic)
+	magic = magic[:n]
+
+	// Identify common formats by magic bytes
+	format, arch := identifyFormatByMagic(magic)
+	sb.WriteString(fmt.Sprintf("- **Detected Format:** %s\n", format))
+	if arch != "" {
+		sb.WriteString(fmt.Sprintf("- **Architecture Hint:** %s\n", arch))
+	}
+
+	// Entropy of first 8KB
+	entBuf := make([]byte, 8192)
+	f.Seek(0, 0)
+	en, _ := f.Read(entBuf)
+	if en > 0 {
+		entropy := calculateEntropy(entBuf[:en])
+		sb.WriteString(fmt.Sprintf("- **Entropy (first 8KB):** %.4f", entropy))
+		if entropy > 7.5 {
+			sb.WriteString(" (high — possible encryption/packing/compression)")
+		} else if entropy > 6.5 {
+			sb.WriteString(" (moderate — mixed content)")
+		} else {
+			sb.WriteString(" (low — structured/plain)")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Packer indicators from strings
+	f.Seek(0, 0)
+	packers := detectPackerIndicators(f)
+	if len(packers) > 0 {
+		sb.WriteString(fmt.Sprintf("- **Packer/Compiler Indicators:** %s\n", strings.Join(packers, ", ")))
+	}
+
+	return sb.String(), nil
+}
+
+func identifyFormatByMagic(magic []byte) (format, arch string) {
+	if len(magic) < 4 {
+		return "unknown", ""
+	}
+	switch {
+	case magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F':
+		format = "ELF (Executable and Linkable Format)"
+		if len(magic) > 18 {
+			switch magic[4] {
+			case 1:
+				arch = "32-bit"
+			case 2:
+				arch = "64-bit"
+			}
+			// e_machine at offset 18 (32-bit) or 18 (64-bit same for first field)
+			if len(magic) > 19 {
+				machine := uint16(magic[18]) | uint16(magic[19])<<8
+				switch machine {
+				case 0x03:
+					arch += ", x86"
+				case 0x3E:
+					arch += ", x86-64"
+				case 0xB7:
+					arch += ", AArch64"
+				case 0x28:
+					arch += ", ARM"
+				}
+			}
+		}
+	case magic[0] == 'M' && magic[1] == 'Z':
+		format = "PE (Portable Executable) / DOS executable"
+		arch = "Windows"
+	case magic[0] == 0xCF && magic[1] == 0xFA && magic[2] == 0xED && magic[3] == 0xFE:
+		format = "Mach-O (64-bit)"
+		arch = "macOS/iOS"
+	case magic[0] == 0xFE && magic[1] == 0xED && magic[2] == 0xFA && magic[3] == 0xCF:
+		format = "Mach-O (64-bit, reversed)"
+		arch = "macOS/iOS"
+	case magic[0] == 0xCA && magic[1] == 0xFE && magic[2] == 0xBA && magic[3] == 0xBE:
+		format = "Mach-O Universal Binary"
+		arch = "macOS/iOS"
+	case magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04:
+		format = "ZIP / JAR / APK / DOCX (PKZIP)"
+	case magic[0] == 0x1F && (magic[1] == 0x8B || magic[1] == 0x9E):
+		format = "GZIP compressed"
+	case magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h':
+		format = "BZIP2 compressed"
+	case magic[0] == 0xFD && magic[1] == 0x37 && magic[2] == 0x7A && magic[3] == 0x58 && magic[4] == 0x5A && magic[5] == 0x00:
+		format = "XZ compressed"
+	case len(magic) > 7 && string(magic[:8]) == "\x89PNG\r\n\x1a\n":
+		format = "PNG image"
+	case len(magic) > 2 && magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF:
+		format = "JPEG image"
+	default:
+		format = "unknown / raw binary"
+	}
+	return format, arch
+}
+
+func calculateEntropy(data []byte) float64 {
+	if len(data) == 0 {
+		return 0
+	}
+	var freq [256]int
+	for _, b := range data {
+		freq[b]++
+	}
+	var entropy float64
+	ln2 := 1.4426950408889634 // 1/log(2)
+	for _, count := range freq {
+		if count == 0 {
+			continue
+		}
+		p := float64(count) / float64(len(data))
+		entropy -= p * math.Log(p) * ln2
+	}
+	return entropy
+}
+
+func detectPackerIndicators(r io.Reader) []string {
+	var indicators []string
+	scanner := bufio.NewScanner(r)
+	scanner.Split(bufio.ScanBytes)
+	var buf []byte
+	for scanner.Scan() {
+		b := scanner.Bytes()[0]
+		if b >= 32 && b <= 126 {
+			buf = append(buf, b)
+		} else {
+			if len(buf) >= 4 {
+				s := string(buf)
+				lower := strings.ToLower(s)
+				switch {
+				case strings.Contains(lower, "upx"):
+					indicators = append(indicators, "UPX")
+				case strings.Contains(lower, "aspack"):
+					indicators = append(indicators, "ASPack")
+				case strings.Contains(lower, "petite"):
+					indicators = append(indicators, "PEtite")
+				case strings.Contains(lower, "vmprotect"):
+					indicators = append(indicators, "VMProtect")
+				case strings.Contains(lower, "themida"):
+					indicators = append(indicators, "Themida")
+				case strings.Contains(lower, "enigma"):
+					indicators = append(indicators, "Enigma")
+				case strings.Contains(lower, "mingw"):
+					indicators = append(indicators, "MinGW")
+				case strings.Contains(lower, "visual c++"):
+					indicators = append(indicators, "MSVC")
+				case strings.Contains(lower, "gcc"):
+					indicators = append(indicators, "GCC")
+				case strings.Contains(lower, "go.build") || strings.Contains(lower, "runtime.go"):
+					indicators = append(indicators, "Go binary")
+				case strings.Contains(lower, "rust"):
+					indicators = append(indicators, "Rust binary")
+				}
+			}
+			if len(indicators) >= 5 {
+				break
+			}
+			buf = buf[:0]
+		}
+	}
+	return dedupStrings(indicators)
+}
+
+func dedupStrings(ss []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// extractStringsFromFile extracts printable ASCII strings from a file.
+func extractStringsFromFile(filePath string, minLen, maxResults int) (string, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengakses file: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path adalah direktori")
+	}
+	const maxSize = 50 * 1024 * 1024
+	if info.Size() > maxSize {
+		return "", fmt.Errorf("file terlalu besar (max 50 MB)")
+	}
+
+	// Try 'strings' command first
+	if _, err := exec.LookPath("strings"); err == nil {
+		cmd := exec.Command("strings", "-n", fmt.Sprintf("%d", minLen), filePath)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) > maxResults {
+				lines = lines[:maxResults]
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("### Extracted Strings from %s (min_length=%d, top %d results via 'strings' CLI)\n\n", filepath.Base(filePath), minLen, len(lines)))
+			for i, line := range lines {
+				if line == "" {
+					continue
+				}
+				sb.WriteString(fmt.Sprintf("%d. `%s`\n", i+1, line))
+			}
+			return sb.String(), nil
+		}
+	}
+
+	// Fallback: pure Go implementation
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var results []string
+	var buf []byte
+	scanner := bufio.NewScanner(f)
+	scanner.Split(bufio.ScanBytes)
+	for scanner.Scan() {
+		b := scanner.Bytes()[0]
+		if (b >= 32 && b <= 126) || (b >= 0xC0 && b <= 0xFD) { // printable ASCII + UTF-8 lead bytes
+			buf = append(buf, b)
+		} else {
+			if len(buf) >= minLen {
+				results = append(results, string(buf))
+				if len(results) >= maxResults {
+					break
+				}
+			}
+			buf = buf[:0]
+		}
+	}
+	if len(buf) >= minLen && len(results) < maxResults {
+		results = append(results, string(buf))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Extracted Strings from %s (min_length=%d, top %d results, pure-Go fallback)\n\n", filepath.Base(filePath), minLen, len(results)))
+	for i, s := range results {
+		sb.WriteString(fmt.Sprintf("%d. `%s`\n", i+1, s))
+	}
+	return sb.String(), nil
+}
+
+// scanSignature performs pattern matching against file bytes.
+func scanSignature(filePath string, patterns []string) (string, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengakses file: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path adalah direktori")
+	}
+	const maxSize = 50 * 1024 * 1024
+	if info.Size() > maxSize {
+		return "", fmt.Errorf("file terlalu besar (max 50 MB)")
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("gagal membaca file: %w", err)
+	}
+
+	type match struct {
+		pattern     string
+		occurrences int
+		offsets     []int
+		confidence  string
+	}
+
+	var matches []match
+
+	for _, pat := range patterns {
+		m := match{pattern: pat, confidence: "medium"}
+		if strings.HasPrefix(pat, "regex:") {
+			reStr := strings.TrimPrefix(pat, "regex:")
+			re, err := regexp.Compile(reStr)
+			if err != nil {
+				m.confidence = "invalid-pattern"
+				matches = append(matches, m)
+				continue
+			}
+			for _, loc := range re.FindAllIndex(data, -1) {
+				m.occurrences++
+				if len(m.offsets) < 5 {
+					m.offsets = append(m.offsets, loc[0])
+				}
+			}
+			m.confidence = "regex-match"
+		} else {
+			// Hex pattern or plain string
+			hexPat := strings.ReplaceAll(pat, " ", "")
+			var search []byte
+			if regexp.MustCompile(`^[0-9A-Fa-f]+$`).MatchString(hexPat) && len(hexPat)%2 == 0 {
+				search, err = hexDecodeString(hexPat)
+				if err != nil {
+					search = []byte(pat)
+				}
+				m.confidence = "hex-match"
+			} else {
+				search = []byte(pat)
+				m.confidence = "plain-match"
+			}
+			for i := 0; i <= len(data)-len(search); i++ {
+				if bytesEqual(data[i:i+len(search)], search) {
+					m.occurrences++
+					if len(m.offsets) < 5 {
+						m.offsets = append(m.offsets, i)
+					}
+				}
+			}
+		}
+		matches = append(matches, m)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Signature Scan Report: %s\n\n", filepath.Base(filePath)))
+	sb.WriteString(fmt.Sprintf("- **File Size:** %d bytes\n", len(data)))
+	sb.WriteString(fmt.Sprintf("- **Patterns Scanned:** %d\n\n", len(patterns)))
+
+	foundCount := 0
+	for _, m := range matches {
+		if m.occurrences > 0 {
+			foundCount++
+		}
+		sb.WriteString(fmt.Sprintf("**Pattern:** `%s`\n", m.pattern))
+		sb.WriteString(fmt.Sprintf("- Confidence: %s\n", m.confidence))
+		sb.WriteString(fmt.Sprintf("- Occurrences: %d\n", m.occurrences))
+		if len(m.offsets) > 0 {
+			offStrs := make([]string, 0, len(m.offsets))
+			for _, off := range m.offsets {
+				offStrs = append(offStrs, fmt.Sprintf("0x%08X", off))
+			}
+			sb.WriteString(fmt.Sprintf("- Sample Offsets: %s\n", strings.Join(offStrs, ", ")))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("**Summary:** %d/%d patterns matched.\n", foundCount, len(patterns)))
+	return sb.String(), nil
+}
+
+func hexDecodeString(s string) ([]byte, error) {
+	if len(s)%2 != 0 {
+		return nil, fmt.Errorf("invalid hex string length")
+	}
+	b := make([]byte, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		v, err := strconv.ParseUint(s[i:i+2], 16, 8)
+		if err != nil {
+			return nil, err
+		}
+		b[i/2] = byte(v)
+	}
+	return b, nil
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// analyzeDependencies maps imports and package dependencies in source code.
+func analyzeDependencies(sourcePath, lang string) (string, error) {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengakses path: %w", err)
+	}
+
+	// Auto-detect language by file extensions
+	if lang == "auto" || lang == "" {
+		lang = detectLanguage(sourcePath, info.IsDir())
+	}
+
+	var files []string
+	if info.IsDir() {
+		err = filepath.Walk(sourcePath, func(path string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if fi.IsDir() {
+				if strings.HasPrefix(fi.Name(), ".") || fi.Name() == "node_modules" || fi.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			switch lang {
+			case "go":
+				if ext == ".go" {
+					files = append(files, path)
+				}
+			case "javascript":
+				if ext == ".js" || ext == ".mjs" || ext == ".cjs" {
+					files = append(files, path)
+				}
+			case "typescript":
+				if ext == ".ts" || ext == ".tsx" || ext == ".js" || ext == ".jsx" {
+					files = append(files, path)
+				}
+			case "python":
+				if ext == ".py" {
+					files = append(files, path)
+				}
+			default:
+				files = append(files, path)
+			}
+			if len(files) > 500 {
+				return io.EOF
+			}
+			return nil
+		})
+		if err != nil && err != io.EOF {
+			return "", err
+		}
+	} else {
+		files = append(files, sourcePath)
+		if lang == "auto" {
+			lang = detectLanguage(sourcePath, false)
+		}
+	}
+
+	internalSet := make(map[string]bool)
+	externalSet := make(map[string]bool)
+	internalPrefix := ""
+	if lang == "go" {
+		internalPrefix = guessGoModulePrefix(sourcePath)
+	}
+
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			switch lang {
+			case "go":
+				if strings.HasPrefix(line, "import (") || strings.HasPrefix(line, "import ") {
+					imp := extractGoImport(line, string(data))
+					if imp != "" {
+						if internalPrefix != "" && strings.HasPrefix(imp, internalPrefix) {
+							internalSet[imp] = true
+						} else {
+							externalSet[imp] = true
+						}
+					}
+				}
+			case "javascript", "typescript":
+				if strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "require(") || strings.HasPrefix(line, "from ") {
+					imp := extractJSImport(line)
+					if imp != "" {
+						if strings.HasPrefix(imp, ".") || strings.HasPrefix(imp, "@/") || strings.HasPrefix(imp, "~/") {
+							internalSet[imp] = true
+						} else {
+							externalSet[imp] = true
+						}
+					}
+				}
+			case "python":
+				if strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "from ") {
+					imp := extractPyImport(line)
+					if imp != "" {
+						if strings.HasPrefix(imp, ".") {
+							internalSet[imp] = true
+						} else {
+							externalSet[imp] = true
+						}
+					}
+				}
+			default:
+				// Generic regex-based import extraction
+				re := regexp.MustCompile(`(?:import|require|from)\s+["']([^"']+)["']`)
+				m := re.FindStringSubmatch(line)
+				if len(m) > 1 {
+					externalSet[m[1]] = true
+				}
+			}
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Dependency Analysis: %s (%s, %d files scanned)\n\n", filepath.Base(sourcePath), lang, len(files)))
+
+	internals := sortedKeys(internalSet)
+	if len(internals) > 0 {
+		sb.WriteString(fmt.Sprintf("**Internal Dependencies (%d):**\n", len(internals)))
+		for _, imp := range internals {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", imp))
+		}
+		sb.WriteString("\n")
+	}
+
+	externals := sortedKeys(externalSet)
+	if len(externals) > 0 {
+		sb.WriteString(fmt.Sprintf("**External Dependencies (%d):**\n", len(externals)))
+		for _, imp := range externals {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", imp))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("**Summary:** %d internal, %d external dependencies across %d files.\n", len(internals), len(externals), len(files)))
+	return sb.String(), nil
+}
+
+func detectLanguage(path string, isDir bool) string {
+	if !isDir {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".go":
+			return "go"
+		case ".js", ".mjs", ".cjs":
+			return "javascript"
+		case ".ts", ".tsx":
+			return "typescript"
+		case ".py":
+			return "python"
+		default:
+			return "unknown"
+		}
+	}
+	// Heuristic: count file extensions in directory
+	exts := make(map[string]int)
+	filepath.Walk(path, func(p string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() {
+			return nil
+		}
+		exts[strings.ToLower(filepath.Ext(p))]++
+		return nil
+	})
+	type extCount struct {
+		ext   string
+		count int
+	}
+	var ecs []extCount
+	for e, c := range exts {
+		ecs = append(ecs, extCount{e, c})
+	}
+	sort.Slice(ecs, func(i, j int) bool { return ecs[i].count > ecs[j].count })
+	if len(ecs) == 0 {
+		return "unknown"
+	}
+	switch ecs[0].ext {
+	case ".go":
+		return "go"
+	case ".js", ".mjs", ".cjs":
+		return "javascript"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".py":
+		return "python"
+	default:
+		return "unknown"
+	}
+}
+
+func guessGoModulePrefix(sourcePath string) string {
+	modPath := filepath.Join(sourcePath, "go.mod")
+	if _, err := os.Stat(modPath); err == nil {
+		data, _ := os.ReadFile(modPath)
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "module ") {
+				mod := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+				return mod
+			}
+		}
+	}
+	return ""
+}
+
+func extractGoImport(line, fullData string) string {
+	// Handle single-line import: import "path" or import alias "path"
+	re := regexp.MustCompile(`import\s+(?:\S+\s+)?"([^"]+)"`)
+	m := re.FindStringSubmatch(line)
+	if len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func extractJSImport(line string) string {
+	re := regexp.MustCompile(`(?:import\s+.*?\s+from\s+["']([^"']+)["']|require\s*\(\s*["']([^"']+)["']\s*\)|from\s+["']([^"']+)["'])`)
+	m := re.FindStringSubmatch(line)
+	for i := 1; i < len(m); i++ {
+		if m[i] != "" {
+			return m[i]
+		}
+	}
+	return ""
+}
+
+func extractPyImport(line string) string {
+	re := regexp.MustCompile(`(?:import|from)\s+([\w.]+)`)
+	m := re.FindStringSubmatch(line)
+	if len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// generateCallGraph creates a simple static call-graph outline from source code.
+func generateCallGraph(sourcePath, lang string, maxDepth int) (string, error) {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengakses path: %w", err)
+	}
+
+	if lang == "auto" || lang == "" {
+		lang = detectLanguage(sourcePath, info.IsDir())
+	}
+
+	var files []string
+	if info.IsDir() {
+		err = filepath.Walk(sourcePath, func(path string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if fi.IsDir() {
+				if strings.HasPrefix(fi.Name(), ".") || fi.Name() == "node_modules" || fi.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			switch lang {
+			case "go":
+				if ext == ".go" {
+					files = append(files, path)
+				}
+			case "javascript":
+				if ext == ".js" || ext == ".mjs" || ext == ".cjs" {
+					files = append(files, path)
+				}
+			case "typescript":
+				if ext == ".ts" || ext == ".tsx" || ext == ".js" || ext == ".jsx" {
+					files = append(files, path)
+				}
+			case "python":
+				if ext == ".py" {
+					files = append(files, path)
+				}
+			default:
+				files = append(files, path)
+			}
+			if len(files) > 500 {
+				return io.EOF
+			}
+			return nil
+		})
+		if err != nil && err != io.EOF {
+			return "", err
+		}
+	} else {
+		files = append(files, sourcePath)
+	}
+
+	functions := make(map[string][]string) // function name -> callers
+	var funcNames []string
+	var funcRegex *regexp.Regexp
+
+	switch lang {
+	case "go":
+		funcRegex = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s+)?(\w+)`)
+	case "javascript", "typescript":
+		funcRegex = regexp.MustCompile(`(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:function|.*?=>))`)
+	case "python":
+		funcRegex = regexp.MustCompile(`^def\s+(\w+)\s*\(`)
+	default:
+		funcRegex = regexp.MustCompile(`(?:function|func|def|void|int|String)\s+(\w+)\s*\(`)
+	}
+
+	// Collect function definitions
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			m := funcRegex.FindStringSubmatch(line)
+			for i := 1; i < len(m); i++ {
+				if m[i] != "" {
+					name := m[i]
+					if _, exists := functions[name]; !exists {
+						functions[name] = []string{}
+						funcNames = append(funcNames, name)
+					}
+				}
+			}
+		}
+	}
+
+	// Find callers (naive regex scan)
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		for _, fn := range funcNames {
+			// Simple caller search: fnName( or fnName ( with preceding non-word char
+			re := regexp.MustCompile(`\b` + regexp.QuoteMeta(fn) + `\s*\(`)
+			if re.MatchString(content) {
+				// Avoid self-count from definition line
+				count := len(re.FindAllString(content, -1))
+				if count > 0 {
+					functions[fn] = append(functions[fn], fmt.Sprintf("%s (%dx)", filepath.Base(f), count))
+				}
+			}
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Static Call Graph Outline: %s (%s, %d files, depth=%d)\n\n", filepath.Base(sourcePath), lang, len(files), maxDepth))
+
+	for _, fn := range funcNames {
+		callers := functions[fn]
+		sb.WriteString(fmt.Sprintf("**%s()**\n", fn))
+		if len(callers) == 0 {
+			sb.WriteString("- (no external callers detected — may be entry point / unused)\n")
+		} else {
+			// Deduplicate callers
+			seen := make(map[string]bool)
+			var uniq []string
+			for _, c := range callers {
+				if !seen[c] {
+					seen[c] = true
+					uniq = append(uniq, c)
+				}
+			}
+			for _, c := range uniq {
+				sb.WriteString(fmt.Sprintf("- Called from: %s\n", c))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("**Summary:** %d functions analyzed across %d source files.\n", len(funcNames), len(files)))
+	return sb.String(), nil
 }

@@ -226,7 +226,7 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 		// Fade-wave animated text
 		if fadeText != "" {
 			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
-			sb.WriteString(bubbleStyle.Render(fadeText))
+			sb.WriteString(HyperlinkURLs(bubbleStyle.Render(fadeText)))
 			sb.WriteString("\n")
 		} else if content != "" {
 			bubbleStyle := r.theme.MessageAgent.Width(contentWidth)
@@ -234,7 +234,7 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 			if cursorVisible {
 				streamContent += r.theme.StreamCursor.Render("▌")
 			}
-			sb.WriteString(bubbleStyle.Render(streamContent))
+			sb.WriteString(HyperlinkURLs(bubbleStyle.Render(streamContent)))
 			sb.WriteString("\n")
 		}
 	default:
@@ -250,7 +250,7 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 			if cursorVisible {
 				streamContent += r.theme.StreamCursor.Render("▌")
 			}
-			sb.WriteString(bubbleStyle.Render(streamContent))
+			sb.WriteString(HyperlinkURLs(bubbleStyle.Render(streamContent)))
 			sb.WriteString("\n")
 		}
 	}
@@ -317,7 +317,7 @@ func (r *MessageRenderer) processContent(content string, width int, expandedCode
 		return content
 	}
 
-	return strings.TrimRight(out, "\n")
+	return HyperlinkURLs(strings.TrimRight(out, "\n"))
 }
 
 // collapseCodeBlocks replaces fenced code blocks with a compact indicator line.

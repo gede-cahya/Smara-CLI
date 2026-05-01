@@ -23,6 +23,9 @@ var skillCmd = &cobra.Command{
 }
 
 var skillRunArgs string
+var skillInstallAlias string
+var skillInstallOverwrite bool
+var skillCreateFormat string
 
 var skillRunCmd = &cobra.Command{
 	Use:   "run [nama-skill]",
@@ -280,12 +283,18 @@ var skillDeleteCmd = &cobra.Command{
 
 var skillCreateCmd = &cobra.Command{
 	Use:   "create [nama-skill]",
-	Short: "Buat skill baru dari file JSON",
+	Short: "Buat skill baru dari file JSON atau Markdown",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
-		// Read JSON from stdin
-		fmt.Println("Tempel JSON skill (Ctrl+D untuk selesai):")
+		format := strings.ToLower(skillCreateFormat)
+		if format != "json" && format != "md" && format != "markdown" {
+			fmt.Fprintf(os.Stderr, "Format tidak valid: %s (pilih: json, md)\n", skillCreateFormat)
+			os.Exit(1)
+		}
+
+		// Read from stdin
+		fmt.Printf("Tempel %s skill (Ctrl+D untuk selesai):\n", strings.ToUpper(format))
 		var buf strings.Builder
 		var b [1024]byte
 		for {
@@ -297,21 +306,273 @@ var skillCreateCmd = &cobra.Command{
 				break
 			}
 		}
-		sk, err := skill.FromJSON([]byte(buf.String()))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "JSON tidak valid: %v\n", err)
-			os.Exit(1)
+		data := []byte(buf.String())
+
+		var sk *skill.Skill
+		var err error
+		if format == "md" || format == "markdown" {
+			sk, err = skill.ParseMarkdownSkill(data)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Markdown tidak valid: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			sk, err = skill.FromJSON(data)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "JSON tidak valid: %v\n", err)
+				os.Exit(1)
+			}
 		}
 		sk.Name = name
-		if err := skill.Save(sk, nil); err != nil {
-			fmt.Fprintf(os.Stderr, "Gagal simpan skill: %v\n", err)
-			os.Exit(1)
+		if format == "md" || format == "markdown" {
+			if err := skill.SaveAsMarkdown(sk, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "Gagal simpan skill sebagai markdown: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			if err := skill.Save(sk, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "Gagal simpan skill: %v\n", err)
+				os.Exit(1)
+			}
 		}
-		fmt.Printf("Skill '%s' tersimpan.\n", name)
+		fmt.Printf("Skill '%s' tersimpan (%s).\n", name, format)
+	},
+}
+
+var skillInstallCmd = &cobra.Command{
+	Use:   "install <url-or-name>",
+	Short: "Install skill dari URL atau marketplace",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		input := args[0]
+
+		// If input does not look like a URL, try resolving from registry (Phase 3)
+		if !strings.Contains(input, "/") && !strings.Contains(input, ".") {
+			return fmt.Errorf("skill '%s' not found in local store (registry search belum diimplementasi — gunakan URL langsung)", input)
+		}
+
+		opts := skill.InstallOptions{
+			URL:       input,
+			Alias:     skillInstallAlias,
+			Overwrite: skillInstallOverwrite,
+		}
+
+		sk, err := skill.InstallFromURL(opts)
+		if err != nil {
+			return fmt.Errorf("gagal install skill: %w", err)
+		}
+		fmt.Printf("Skill '%s' berhasil di-install.\n", sk.Name)
+		fmt.Printf("  Deskripsi: %s\n", sk.Description)
+		fmt.Printf("  Steps: %d\n", len(sk.Steps))
+		if len(sk.Tags) > 0 {
+			fmt.Printf("  Tags: %s\n", strings.Join(sk.Tags, ", "))
+		}
+		return nil
+	},
+}
+
+var skillUpdateCmd = &cobra.Command{
+	Use:   "update [nama-skill]",
+	Short: "Update skill yang sudah di-install dari source URL",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		sk, err := skill.UpdateSkill(name)
+		if err != nil {
+			return fmt.Errorf("gagal update skill '%s': %w", name, err)
+		}
+		fmt.Printf("Skill '%s' berhasil di-update ke versi %d.\n", sk.Name, sk.Version)
+		return nil
+	},
+}
+
+var skillInfoCmd = &cobra.Command{
+	Use:   "info [nama-skill]",
+	Short: "Tampilkan detail skill",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		sk, err := skill.Load(name)
+		if err != nil {
+			return fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+		}
+		fmt.Printf("Skill: %s\n", sk.Name)
+		fmt.Printf("  Deskripsi: %s\n", sk.Description)
+		fmt.Printf("  Versi: %d\n", sk.Version)
+		if sk.Author != "" {
+			fmt.Printf("  Author: %s\n", sk.Author)
+		}
+		if sk.SourceURL != "" {
+			fmt.Printf("  Source: %s\n", sk.SourceURL)
+		}
+		if len(sk.Tags) > 0 {
+			fmt.Printf("  Tags: %s\n", strings.Join(sk.Tags, ", "))
+		}
+		if len(sk.Params) > 0 {
+			fmt.Println("  Parameters:")
+			for _, p := range sk.Params {
+				req := "optional"
+				if p.Required {
+					req = "required"
+				}
+				fmt.Printf("    - %s (%s, %s): %s\n", p.Name, p.Type, req, p.Description)
+			}
+		}
+		fmt.Printf("  Steps (%d):\n", len(sk.Steps))
+		for i, st := range sk.Steps {
+			fmt.Printf("    %d. %s\n", i+1, st.Tool)
+			if len(st.Args) > 0 {
+				for k, v := range st.Args {
+					fmt.Printf("       %s = %v\n", k, v)
+				}
+			}
+		}
+		return nil
+	},
+}
+
+var skillSearchQuery string
+var skillSearchRegistry string
+
+var skillSearchCmd = &cobra.Command{
+	Use:   "search [query/tag]",
+	Short: "Cari skill di semua registry yang terdaftar",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		query := ""
+		if len(args) > 0 {
+			query = args[0]
+		}
+
+		cfg := config.Get()
+		registries := make([]skill.RegistryConfig, 0, len(cfg.SkillRegistries))
+		for _, r := range cfg.SkillRegistries {
+			if skillSearchRegistry != "" && r.Name != skillSearchRegistry {
+				continue
+			}
+			registries = append(registries, skill.RegistryConfig{
+				Name:      r.Name,
+				URL:       r.URL,
+				AuthToken: r.AuthToken,
+			})
+		}
+
+		if len(registries) == 0 {
+			return fmt.Errorf("tidak ada registry yang terdaftar (konfigurasi di skill_registries)")
+		}
+
+		results, err := skill.Search(query, registries)
+		if err != nil {
+			return fmt.Errorf("gagal mencari skill: %w", err)
+		}
+
+		if len(results) == 0 {
+			fmt.Println("Tidak ada skill yang cocok.")
+			return nil
+		}
+
+		fmt.Printf("Ditemukan %d skill:\n\n", len(results))
+		for _, entry := range results {
+			fmt.Printf("  %s — %s (v%d)\n", entry.Name, entry.Description, entry.Version)
+			if entry.Author != "" {
+				fmt.Printf("    Author: %s  Downloads: %d  Rating: %.1f\n", entry.Author, entry.Downloads, entry.Rating)
+			}
+			if len(entry.Tags) > 0 {
+				fmt.Printf("    Tags: %s\n", strings.Join(entry.Tags, ", "))
+			}
+			fmt.Println()
+		}
+		return nil
+	},
+}
+
+var skillPublishCmd = &cobra.Command{
+	Use:   "publish [nama-skill]",
+	Short: "Publikasikan skill ke marketplace/registry",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		sk, err := skill.Load(name)
+		if err != nil {
+			return fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+		}
+
+		cfg := config.Get()
+		if len(cfg.SkillRegistries) == 0 {
+			return fmt.Errorf("tidak ada registry yang terdaftar (konfigurasi di skill_registries)")
+		}
+
+		// Default to first registry if only one
+		regCfg := cfg.SkillRegistries[0]
+		r := skill.RegistryConfig{
+			Name:      regCfg.Name,
+			URL:       regCfg.URL,
+			AuthToken: regCfg.AuthToken,
+		}
+
+		if err := skill.Publish(sk, r); err != nil {
+			return fmt.Errorf("gagal publish skill: %w", err)
+		}
+		return nil
+	},
+}
+
+var skillRegistryCmd = &cobra.Command{
+	Use:   "registry",
+	Short: "Kelola registry skill",
+}
+
+var skillRegistryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Daftar registry yang terdaftar",
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Get()
+		if len(cfg.SkillRegistries) == 0 {
+			fmt.Println("Tidak ada registry yang terdaftar.")
+			return
+		}
+		fmt.Println("Registry yang terdaftar:")
+		for _, r := range cfg.SkillRegistries {
+			fmt.Printf("  - %s: %s\n", r.Name, r.URL)
+		}
+	},
+}
+
+var skillRegistrySyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sinkronkan cache lokal untuk semua registry",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg := config.Get()
+		registries := make([]skill.RegistryConfig, 0, len(cfg.SkillRegistries))
+		for _, r := range cfg.SkillRegistries {
+			registries = append(registries, skill.RegistryConfig{
+				Name:      r.Name,
+				URL:       r.URL,
+				AuthToken: r.AuthToken,
+			})
+		}
+
+		if len(registries) == 0 {
+			return fmt.Errorf("tidak ada registry yang terdaftar")
+		}
+
+		if err := skill.SyncRegistries(registries); err != nil {
+			return fmt.Errorf("gagal sync registry: %w", err)
+		}
+		fmt.Println("Registry cache berhasil disinkronkan.")
+		return nil
 	},
 }
 
 func init() {
 	skillCmd.AddCommand(skillRunCmd, skillListCmd, skillDeleteCmd, skillCreateCmd)
+	skillCmd.AddCommand(skillInstallCmd, skillUpdateCmd, skillInfoCmd)
+	skillCmd.AddCommand(skillSearchCmd, skillPublishCmd, skillRegistryCmd)
+	skillRegistryCmd.AddCommand(skillRegistryListCmd, skillRegistrySyncCmd)
 	rootCmd.AddCommand(skillCmd)
+
+	skillInstallCmd.Flags().StringVar(&skillInstallAlias, "as", "", "Alias nama skill (override nama dari JSON)")
+	skillInstallCmd.Flags().BoolVar(&skillInstallOverwrite, "overwrite", false, "Timpa skill yang sudah ada")
+	skillSearchCmd.Flags().StringVar(&skillSearchQuery, "query", "", "Filter kata kunci (positional juga bisa)")
+	skillSearchCmd.Flags().StringVar(&skillSearchRegistry, "registry", "", "Filter nama registry tertentu")
+	skillCreateCmd.Flags().StringVar(&skillCreateFormat, "format", "json", "Format input skill: json atau md (markdown)")
 }

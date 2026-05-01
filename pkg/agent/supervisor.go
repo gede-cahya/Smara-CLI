@@ -606,6 +606,9 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	// 2. Build messages with mode-specific system prompt
 	messages := []llm.Message{
@@ -706,6 +709,10 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 		finalResp = resp.Content
 		finalThinking = resp.Thinking
+	}
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	// 4. Update conversation history (both local and session)
@@ -851,6 +858,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 	// 4. Agentic loop
 	for iteration := 0; iteration < s.maxIterations; iteration++ {
+		if ctx.Err() != nil {
+			return "", "", nil, nil, ctx.Err()
+		}
+
 		// Callback: report iteration
 		if s.callback.OnIteration != nil {
 			s.callback.OnIteration(iteration+1, s.maxIterations)
@@ -863,6 +874,9 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		if streamer, ok := s.provider.(llm.Streamer); ok {
 			streamCb := func(chunk string, isThinking bool, _ llm.PhaseHint) {
+				if ctx.Err() != nil {
+					return
+				}
 				if s.callback.OnStream != nil {
 					s.callback.OnStream(chunk, isThinking)
 				}
@@ -882,6 +896,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
+		}
+
+		if ctx.Err() != nil {
+			return "", "", nil, nil, ctx.Err()
 		}
 
 		// Accumulate thinking
@@ -944,6 +962,9 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		// Execute each tool and add results to messages
 		for _, tc := range toolCalls {
+			if ctx.Err() != nil {
+				return "", "", nil, nil, ctx.Err()
+			}
 			result, err := s.executeToolCall(tc)
 
 			// Callback: report result
@@ -987,6 +1008,33 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	)
 
 	return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+}
+
+// ClearHistory clears the conversation history and session registry history.
+func (s *Supervisor) ClearHistory() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.history = make([]llm.Message, 0)
+	if sess := s.sessionRegistry.Current(); sess != nil {
+		sess.History = make([]llm.Message, 0)
+		sess.UpdatedAt = time.Now()
+		if s.sessionStore != nil {
+			s.sessionStore.UpdateSession(sess)
+		}
+	}
+}
+
+// SaveSession persists the current session to the store.
+func (s *Supervisor) SaveSession() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess := s.sessionRegistry.Current(); sess != nil {
+		sess.UpdatedAt = time.Now()
+		if s.sessionStore != nil {
+			return s.sessionStore.UpdateSession(sess)
+		}
+	}
+	return nil
 }
 
 // SetMaxIterations sets the maximum number of agentic loop iterations.
