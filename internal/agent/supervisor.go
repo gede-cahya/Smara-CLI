@@ -999,6 +999,8 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	// 3. Call LLM (branch based on mode)
 	var finalResp string
 	var finalThinking string
+	var finalThoughts []string
+	var finalToolsExecuted []string
 
 	// Use agentic loop if tools are available, regardless of mode (with different behavior)
 	tools := s.ConvertMCPToolsToToolFunctions()
@@ -1008,19 +1010,10 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		if err != nil {
 			return nil, err
 		}
-
 		finalResp = resp
 		finalThinking = thinking
-		return &PromptResult{
-			Response:      finalResp,
-			Thinking:      finalThinking,
-			Thoughts:      thoughts,
-			ToolsExecuted: executed,
-			InputTokens:   s.stats.InputTokens,
-			OutputTokens:  s.stats.OutputTokens,
-			TotalTokens:   s.stats.InputTokens + s.stats.OutputTokens,
-			Duration:      time.Since(startTime),
-		}, nil
+		finalThoughts = thoughts
+		finalToolsExecuted = executed
 	} else {
 		var resp *llm.ChatResponse
 		var err error
@@ -1087,12 +1080,14 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	s.mu.Unlock()
 
 	result := &PromptResult{
-		Response:     finalResp,
-		Thinking:     finalThinking,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		TotalTokens:  totalTokens,
-		Duration:     duration,
+		Response:      finalResp,
+		Thinking:      finalThinking,
+		Thoughts:      finalThoughts,
+		ToolsExecuted: finalToolsExecuted,
+		InputTokens:   inputTokens,
+		OutputTokens:  outputTokens,
+		TotalTokens:   totalTokens,
+		Duration:      duration,
 	}
 
 	// 6. Save interaction to memory
