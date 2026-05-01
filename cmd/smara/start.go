@@ -609,11 +609,20 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 		ui.PrintInfo("Daftar Session:\n%s", strings.Join(msgParts, "\n"))
 
 	case "info":
+		var session *session.Session
+		var ok bool
 		if len(args) < 2 {
-			ui.PrintError("Gunakan: /session info <id>")
-			return
+			// Show current session info if no ID provided
+			if s := supervisor.GetCurrentSession(); s != nil {
+				session = s
+				ok = true
+			} else {
+				ui.PrintError("Tidak ada session aktif. Gunakan: /session info <id>")
+				return
+			}
+		} else {
+			session, ok = supervisor.GetSession(args[1])
 		}
-		session, ok := supervisor.GetSession(args[1])
 		if !ok {
 			ui.PrintError("Session tidak ditemukan: %s", args[1])
 			return
@@ -629,7 +638,22 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 
 	case "switch":
 		if len(args) < 2 {
-			ui.PrintError("Gunakan: /session switch <id>")
+			// List available sessions with ID so user can copy-paste
+			sessions := supervisor.ListSessions()
+			if len(sessions) == 0 {
+				ui.PrintInfo("Belum ada session. Gunakan /session new")
+				return
+			}
+			var msgParts []string
+			msgParts = append(msgParts, "Session tersedia (gunakan /session switch <id>):")
+			for _, s := range sessions {
+				marker := "  "
+				if supervisor.IsCurrentSession(s.ID) {
+					marker = "▸"
+				}
+				msgParts = append(msgParts, fmt.Sprintf("%s %s [%s]", marker, s.Name, s.ID[:8]))
+			}
+			ui.PrintInfo(strings.Join(msgParts, "\n"))
 			return
 		}
 		if err := supervisor.SwitchSession(args[1]); err != nil {
