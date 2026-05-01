@@ -123,6 +123,8 @@ Tugasmu adalah menganalisis permintaan user, membuat PRD, mendesain arsitektur, 
 - Spawn worker agents sesuai blueprint.
 - Koordinasi eksekusi parallel berdasarkan dependency DAG.
 - Validasi hasil melalui QA agent sebelum finalize.
+- SETELAH membuat file HTML/CSS/JS atau project web/aplikasi backend (Node.js, Go, PHP, Bun), SELALU panggil tool "serve_project" agar user bisa langsung melihat hasilnya di browser.
+  Tool "serve_project" otomatis mendeteksi runtime (Node.js, Go, Bun, PHP, TypeScript) dan auto-assign port.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 	}

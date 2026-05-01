@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
@@ -692,8 +694,29 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"source_path"},
 			},
 		},
+		{
+			Name:        "serve_project",
+			Description: "Menjalankan local HTTP server untuk project web yang sudah dibuat, sehingga bisa diakses dari browser. Gunakan ini SETELAH membuat file HTML/CSS/JS. Server berjalan di background dan bisa diakses via URL publik VPS.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"project_dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Path direktori project yang akan di-serve (default: direktori project terakhir atau cwd)",
+					},
+					"port": map[string]interface{}{
+						"type":        "integer",
+						"description": "Port untuk HTTP server (default: auto-assign 8000-8999)",
+					},
+				},
+			},
+		},
 	}
 }
+
+// activeServers tracks running background HTTP servers spawned by serve_project.
+var activeServers = make(map[string]*exec.Cmd)
+var activeServersMu sync.Mutex
 
 // ExecuteBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
 func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (string, error) {
@@ -705,13 +728,14 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 
 		cmd := exec.Command("sh", "-c", cmdStr)
-		
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
-		
+
 		var fullOutput strings.Builder
 		var mu sync.Mutex
-		
+
 		if err := cmd.Start(); err != nil {
 			return "", fmt.Errorf("gagal memulai perintah: %w", err)
 		}
@@ -737,17 +761,36 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		go readPipe(stdout)
 		go readPipe(stderr)
 
-		// Tunggu sampai kedua pipe ditutup (EOF)
-		wg.Wait()
+		// Timeout untuk mencegah hang jika background process menahan pipe
+		done := make(chan error, 1)
+		go func() {
+			err := cmd.Wait()
+			// Tutup pipe agar goroutine reader keluar jika process group masih hidup
+			stdout.Close()
+			stderr.Close()
+			done <- err
+		}()
 
-		if err := cmd.Wait(); err != nil {
+		var waitErr error
+		select {
+		case waitErr = <-done:
+			// Proses selesai, tunggu reader goroutine
+			wg.Wait()
+		case <-time.After(30 * time.Second):
+			// Timeout: bunuh seluruh process group (termasuk background processes)
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			wg.Wait()
+			waitErr = fmt.Errorf("timeout setelah 30 detik")
+		}
+
+		if waitErr != nil {
 			output := fullOutput.String()
 			if output == "" {
 				output = "(tidak ada output)"
 			}
-			return output, fmt.Errorf("eksekusi gagal: %w\nOutput: %s", err, output)
+			return output, fmt.Errorf("eksekusi gagal: %w\nOutput: %s", waitErr, output)
 		}
-		
+
 		result := strings.TrimSpace(fullOutput.String())
 		if result == "" {
 			result = "Perintah berhasil dieksekusi tanpa output (exit code 0)."
@@ -1378,6 +1421,10 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			maxDepth = int(md)
 		}
 		return generateCallGraph(sourcePath, lang, maxDepth)
+
+	case "serve_project":
+		result, err := serveProject(args)
+		return result, err
 
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)
@@ -2342,4 +2389,187 @@ func generateCallGraph(sourcePath, lang string, maxDepth int) (string, error) {
 
 	sb.WriteString(fmt.Sprintf("**Summary:** %d functions analyzed across %d source files.\n", len(funcNames), len(files)))
 	return sb.String(), nil
+}
+
+// serveProject detects project type and starts an appropriate background HTTP server.
+func serveProject(args map[string]interface{}) (string, error) {
+	projectDir, _ := args["project_dir"].(string)
+	if projectDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("gagal mendapatkan cwd: %w", err)
+		}
+		projectDir = cwd
+	}
+	// Pastikan direktori ada
+	if fi, err := os.Stat(projectDir); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("direktori '%s' tidak ditemukan", projectDir)
+	}
+
+	// Cek apakah sudah ada server aktif untuk direktori ini
+	activeServersMu.Lock()
+	if cmd, ok := activeServers[projectDir]; ok && cmd.Process != nil {
+		activeServersMu.Unlock()
+		return fmt.Sprintf("Server sudah berjalan untuk '%s'.", projectDir), nil
+	}
+	activeServersMu.Unlock()
+
+	// Tentukan port
+	port := 0
+	if p, ok := args["port"].(float64); ok {
+		port = int(p)
+	}
+	if port <= 0 {
+		for p := 8000; p <= 8999; p++ {
+			ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+			if err == nil {
+				ln.Close()
+				port = p
+				break
+			}
+		}
+	}
+	if port <= 0 {
+		return "", fmt.Errorf("tidak dapat menemukan port kosong di range 8000-8999")
+	}
+
+	// Auto-detect project type
+	type serveInfo struct {
+		cmd       *exec.Cmd
+		entryFile string
+		portHint  int
+	}
+	var detected *serveInfo
+
+	// Helpers
+	fileExists := func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+	readFile := func(path string) string {
+		b, _ := os.ReadFile(path)
+		return string(b)
+	}
+	extractPortFromContent := func(content string) int {
+		// Common patterns: :3000, :8080, :5000, process.env.PORT || 3000, ListenAndServe(":8080"
+		re := regexp.MustCompile(`(?i)(?:listen.*?:|\bport\b.*?=|env\.PORT.*?\|\|).*?(\d{4,5})`)
+		m := re.FindStringSubmatch(content)
+		if len(m) > 1 {
+			if p, _ := strconv.Atoi(m[1]); p > 0 {
+				return p
+			}
+		}
+		return 0
+	}
+
+	switch {
+	// Node.js (server.js / app.js / index.js)
+	case fileExists(filepath.Join(projectDir, "server.js")):
+		detected = &serveInfo{entryFile: "server.js", cmd: exec.Command("node", "server.js")}
+	case fileExists(filepath.Join(projectDir, "app.js")):
+		detected = &serveInfo{entryFile: "app.js", cmd: exec.Command("node", "app.js")}
+	case fileExists(filepath.Join(projectDir, "index.js")):
+		detected = &serveInfo{entryFile: "index.js", cmd: exec.Command("node", "index.js")}
+
+	// Bun (bun.lockb, bun run)
+	case fileExists(filepath.Join(projectDir, "bun.lockb")) || fileExists(filepath.Join(projectDir, "bun.lock")):
+		if fileExists(filepath.Join(projectDir, "index.ts")) {
+			detected = &serveInfo{entryFile: "index.ts", cmd: exec.Command("bun", "run", "index.ts")}
+		} else if fileExists(filepath.Join(projectDir, "server.ts")) {
+			detected = &serveInfo{entryFile: "server.ts", cmd: exec.Command("bun", "run", "server.ts")}
+		} else if fileExists(filepath.Join(projectDir, "package.json")) {
+			detected = &serveInfo{entryFile: "package.json", cmd: exec.Command("bun", "run", "start")}
+		}
+
+	// TypeScript Node (server.ts / index.ts)
+	case fileExists(filepath.Join(projectDir, "server.ts")):
+		if fileExists(filepath.Join(projectDir, "package.json")) {
+			pj := readFile(filepath.Join(projectDir, "package.json"))
+			if strings.Contains(pj, "tsx") || strings.Contains(pj, "ts-node") {
+				detected = &serveInfo{entryFile: "server.ts", cmd: exec.Command("npx", "tsx", "server.ts")}
+			}
+		}
+		if detected == nil {
+			detected = &serveInfo{entryFile: "server.ts", cmd: exec.Command("npx", "ts-node", "server.ts")}
+		}
+	case fileExists(filepath.Join(projectDir, "index.ts")):
+		if fileExists(filepath.Join(projectDir, "package.json")) {
+			pj := readFile(filepath.Join(projectDir, "package.json"))
+			if strings.Contains(pj, "tsx") || strings.Contains(pj, "ts-node") {
+				detected = &serveInfo{entryFile: "index.ts", cmd: exec.Command("npx", "tsx", "index.ts")}
+			}
+		}
+		if detected == nil {
+			detected = &serveInfo{entryFile: "index.ts", cmd: exec.Command("npx", "ts-node", "index.ts")}
+		}
+
+	// Go
+	case fileExists(filepath.Join(projectDir, "go.mod")) || fileExists(filepath.Join(projectDir, "main.go")):
+		if fileExists(filepath.Join(projectDir, "main.go")) {
+			detected = &serveInfo{entryFile: "main.go", cmd: exec.Command("go", "run", "main.go")}
+		} else {
+			detected = &serveInfo{entryFile: "go.mod", cmd: exec.Command("go", "run", ".")}
+		}
+
+	// PHP
+	case fileExists(filepath.Join(projectDir, "index.php")):
+		detected = &serveInfo{entryFile: "index.php", cmd: exec.Command("php", "-S", fmt.Sprintf("0.0.0.0:%d", port), "index.php")}
+	case fileExists(filepath.Join(projectDir, "server.php")):
+		detected = &serveInfo{entryFile: "server.php", cmd: exec.Command("php", "-S", fmt.Sprintf("0.0.0.0:%d", port), "server.php")}
+	}
+
+	// Override port for PHP (already bound in cmd above) or detect from entry file
+	if detected != nil && detected.entryFile != "" && !strings.HasPrefix(detected.entryFile, "package.json") {
+		content := readFile(filepath.Join(projectDir, detected.entryFile))
+		if p := extractPortFromContent(content); p > 0 {
+			detected.portHint = p
+		}
+	}
+
+	// If no backend runtime detected → fallback to static file server
+	if detected == nil {
+		detected = &serveInfo{entryFile: "static", cmd: exec.Command("python3", "-m", "http.server", strconv.Itoa(port))}
+	} else {
+		// Non-static runtime detected
+		// Override detected port hint via environment variable so the app binds to our free port
+		if detected.portHint > 0 {
+			// The app might read PORT env var or hardcode. We'll set both PORT and commonly used alternatives.
+			detected.cmd.Env = append(os.Environ(),
+				fmt.Sprintf("PORT=%d", port),
+				fmt.Sprintf("SERVER_PORT=%d", port),
+				fmt.Sprintf("HTTP_PORT=%d", port),
+				fmt.Sprintf("APP_PORT=%d", port),
+			)
+		} else {
+			detected.cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+		}
+	}
+
+	detected.cmd.Dir = projectDir
+	detected.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Redirect output to avoid hanging if pipes fill
+	detected.cmd.Stdout = nil
+	detected.cmd.Stderr = nil
+	if err := detected.cmd.Start(); err != nil {
+		return "", fmt.Errorf("gagal memulai server [%s]: %w", detected.entryFile, err)
+	}
+
+	activeServersMu.Lock()
+	activeServers[projectDir] = detected.cmd
+	activeServersMu.Unlock()
+
+	// Deteksi IP publik
+	publicIP := "VPS_IP"
+	if out, err := exec.Command("curl", "-s", "-4", "ifconfig.me").CombinedOutput(); err == nil {
+		ip := strings.TrimSpace(string(out))
+		if ip != "" {
+			publicIP = ip
+		}
+	}
+
+	url := fmt.Sprintf("http://%s:%d", publicIP, port)
+	return fmt.Sprintf(
+		"✅ Server %s berjalan\n📂 Project: %s\n🚀 Entry: %s\n🔗 URL akses: %s\n\nBuka di browser PC kamu:\n%s",
+		detected.entryFile, projectDir, detected.entryFile, url, url,
+	), nil
 }

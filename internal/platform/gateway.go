@@ -132,13 +132,17 @@ func (g *Gateway) Stop() {
 // HandleIncoming processes an incoming message from any platform.
 // It performs auth check, rate limiting, session management, and dispatches to the supervisor.
 func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error {
+	log.Printf("[gateway] Incoming message from %s/%s (user=%s): %q", msg.Platform, msg.ChannelID, msg.UserID, msg.Content)
+
 	// 1. Auth check
 	if !g.auth.IsAllowed(msg.Platform, msg.UserID) {
+		log.Printf("[gateway] Auth denied for %s/%s", msg.Platform, msg.UserID)
 		return g.sendReply(ctx, msg, "⛔ Akses ditolak. Hubungi admin untuk mendapatkan akses.")
 	}
 
 	// 2. Rate limit check
 	if !g.rateLimiter.Allow(msg.UserID) {
+		log.Printf("[gateway] Rate limit hit for %s", msg.UserID)
 		return g.sendReply(ctx, msg, "⏳ Rate limit tercapai. Coba lagi dalam beberapa saat.")
 	}
 
@@ -149,10 +153,12 @@ func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error
 
 	// 4. Handle commands
 	if msg.IsCommand {
+		log.Printf("[gateway] Processing command /%s", msg.Command)
 		return g.handleCommand(ctx, msg)
 	}
 
 	// 5. Process as prompt
+	log.Printf("[gateway] Processing prompt via supervisor (mode=%s)", g.supervisor.GetMode())
 	return g.processPrompt(ctx, msg)
 }
 
@@ -261,16 +267,25 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	}
 
 	// Process via supervisor
+	log.Printf("[gateway] Calling supervisor.ProcessPrompt: %q", msg.Content)
 	startTime := time.Now()
 	result, err := g.supervisor.ProcessPrompt(ctx, msg.Content)
 	latencyMs := time.Since(startTime).Milliseconds()
+	log.Printf("[gateway] supervisor.ProcessPrompt done in %dms, err=%v", latencyMs, err)
 
 	if err != nil {
+		log.Printf("[gateway] supervisor error: %v", err)
 		if g.metrics != nil {
 			g.metrics.RecordError(msg.Platform, err.Error())
 		}
 		return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
 	}
+
+	respPreview := result.Response
+	if len(respPreview) > 200 {
+		respPreview = respPreview[:200] + "..."
+	}
+	log.Printf("[gateway] supervisor result: response=%q tools=%d", respPreview, len(result.ToolsExecuted))
 
 	// Record metrics
 	if g.metrics != nil {
@@ -283,6 +298,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		g.metrics.RecordLLMUsage(result.InputTokens, result.OutputTokens, latencyMs, cost)
 	}
 
+	log.Printf("[gateway] Sending reply to %s/%s", msg.Platform, msg.ChannelID)
 	return g.sendReply(ctx, msg, result.Response)
 }
 

@@ -71,11 +71,16 @@ func (a *Adapter) Listen(ctx context.Context, handler platform.MessageHandler) e
 				continue
 			}
 
+			log.Printf("[telegram] Received update: chatID=%d from=%s text=%q", update.Message.Chat.ID, update.Message.From.UserName, update.Message.Text)
+
 			msg := a.convertMessage(update.Message)
 
 			go func() {
+				log.Printf("[telegram] Handling message from %s (chat %s): %q", msg.Username, msg.ChannelID, msg.Content)
 				if err := handler(ctx, msg); err != nil {
 					log.Printf("[telegram] Error handling message: %v", err)
+				} else {
+					log.Printf("[telegram] Message handled successfully")
 				}
 			}()
 		}
@@ -136,9 +141,8 @@ func (a *Adapter) SendTyping(ctx context.Context, channelID string) error {
 
 // Close shuts down the Telegram bot.
 func (a *Adapter) Close() error {
-	if a.bot != nil {
-		a.bot.StopReceivingUpdates()
-	}
+	// StopReceivingUpdates is already called in Listen() when ctx is cancelled.
+	// Calling it again causes a panic: "close of closed channel".
 	return nil
 }
 

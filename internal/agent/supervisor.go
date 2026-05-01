@@ -1411,13 +1411,13 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			allThinking = append(allThinking, resp.Thinking)
 		}
 
-		// Fallback: some LLMs emit tool calls as DSML/XML inside content instead of native tool_calls field
-		if len(toolCalls) == 0 && resp != nil && strings.Contains(resp.Content, "<| DSML |") {
+		// Some LLMs (e.g. deepseek-v4-flash) emit tool calls as DSML/XML inside content
+		// alongside or instead of native tool_calls. Always strip DSML from content and
+		// merge any extracted tool calls with native ones.
+		if resp != nil {
 			extracted, cleaned := llm.ExtractToolCallsFromContent(resp.Content)
-			if len(extracted) > 0 {
-				toolCalls = extracted
-				resp.Content = cleaned
-			}
+			resp.Content = cleaned
+			toolCalls = append(toolCalls, extracted...)
 		}
 
 		if len(toolCalls) == 0 {

@@ -5,34 +5,82 @@ import (
 	"strings"
 )
 
+// pipe-like chars that models may use instead of ASCII |
+var pipeLike = []rune{'｜', '┃', '│', '║', '┆', '┇', '┊', '┋'}
+
+// normalizePipes replaces all pipe-like Unicode chars with ASCII |.
+func normalizePipes(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		isPipe := false
+		for _, p := range pipeLike {
+			if r == p {
+				isPipe = true
+				break
+			}
+		}
+		if isPipe {
+			b.WriteRune('|')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 var (
-	dsmlInvokeRe = regexp.MustCompile(`<\|\s*DSML\s*\|\s*invoke\s+name="([^"]+)"\s*>`)
-	dsmlParamRe  = regexp.MustCompile(`<\|\s*DSML\s*\|\s*parameter\s+name="([^"]+)"(?:\s+string="true")?\s*>(.*?)</\|\s*DSML\s*\|\s*parameter\s*>`)
-	dsmlOpenTagRe = regexp.MustCompile(`<\|\s*DSML\s*\|[^>]*>`)
+	// Matches any messy variation of DSML tags (e.g. "< | | DSML | | tag>" or "<| DSML |tag>")
+	dsmlTagNormalizeRe = regexp.MustCompile(`(?s)</?\s*\|(?:\s*\|)?\s*DSML\s*\|(?:\s*\|)?\s*([^>]*?)>`)
+
+	// Regexes for normalized format <|DSML|...>
+	dsmlInvokeRe = regexp.MustCompile(`<\|DSML\|invoke\s+name="([^"]+)"\s*>`)
+	dsmlParamRe  = regexp.MustCompile(`<\|DSML\|parameter\s+name="([^"]+)"(?:\s+string="true")?\s*>(.*?)</\|DSML\|parameter\s*>`)
+	dsmlOpenTagRe = regexp.MustCompile(`<\|DSML\|[^>]*>`)
 )
+
+// normalizeDSMLTags converts any variation of DSML tags to standard <|DSML|...> format.
+func normalizeDSMLTags(content string) string {
+	// First replace any Unicode pipe-like chars with ASCII pipe
+	content = normalizePipes(content)
+
+	return dsmlTagNormalizeRe.ReplaceAllStringFunc(content, func(match string) string {
+		submatches := dsmlTagNormalizeRe.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		tagContent := strings.TrimSpace(submatches[1])
+		if strings.HasPrefix(match, "</") {
+			return "</|DSML|" + tagContent + ">"
+		}
+		return "<|DSML|" + tagContent + ">"
+	})
+}
 
 // ExtractToolCallsFromContent parses DSML-style tool calls from raw LLM content.
 // Returns extracted ToolCalls and cleaned content.
 func ExtractToolCallsFromContent(content string) ([]ToolCall, string) {
-	if !strings.Contains(content, "<| DSML |") {
+	// Normalize messy tag formats from models like deepseek-v4-flash
+	normalized := normalizeDSMLTags(content)
+
+	if !strings.Contains(normalized, "<|DSML|") {
 		return nil, content
 	}
 
-	cleaned := content
+	cleaned := normalized
 	var toolCalls []ToolCall
 
 	// Find all invoke blocks with submatch indices
-	invokeMatches := dsmlInvokeRe.FindAllStringSubmatchIndex(content, -1)
+	invokeMatches := dsmlInvokeRe.FindAllStringSubmatchIndex(normalized, -1)
 	for i, inv := range invokeMatches {
-		funcName := content[inv[2]:inv[3]] // submatch group 1
+		funcName := normalized[inv[2]:inv[3]] // submatch group 1
 
 		// Determine the end of this invoke block
-		end := len(content)
+		end := len(normalized)
 		if i+1 < len(invokeMatches) {
 			end = invokeMatches[i+1][0]
 		}
 
-		block := content[inv[0]:end]
+		block := normalized[inv[0]:end]
 		args := make(map[string]interface{})
 
 		paramMatches := dsmlParamRe.FindAllStringSubmatch(block, -1)
