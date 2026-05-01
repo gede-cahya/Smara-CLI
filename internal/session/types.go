@@ -38,12 +38,13 @@ type Session struct {
 
 // Config holds configuration for creating a new session.
 type Config struct {
-	Name        string
-	WorkspaceID int64
-	Mode        string
-	MCPServers  []string
-	IsAgentic   bool // Enable agentic AI mode
-	AutoResume  bool // Auto-resume from last state
+	Name           string
+	WorkspaceID      int64
+	Mode             string
+	MCPServers       []string
+	IsAgentic        bool // Enable agentic AI mode
+	AutoResume       bool // Auto-resume from last state
+	CarryOverCount   int  // Copy last N message pairs from current session history
 }
 
 // Store defines the interface for session persistence.

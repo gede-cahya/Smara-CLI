@@ -141,6 +141,21 @@ func (r *SessionRegistry) IsCurrent(id string) bool {
 	return r.current != nil && r.current.ID == id
 }
 
+// Delete removes a session by ID.
+func (r *SessionRegistry) Delete(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.sessions[id]; !ok {
+		return fmt.Errorf("session tidak ditemukan: %s", id)
+	}
+	delete(r.sessions, id)
+	if r.current != nil && r.current.ID == id {
+		r.current = nil
+	}
+	return nil
+}
+
 // UpdateHistory appends to a session's history.
 func (r *SessionRegistry) UpdateHistory(sessionID string, userMsg, assistantMsg string) {
 	r.mu.Lock()

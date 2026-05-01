@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/nudge"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
@@ -187,6 +188,7 @@ type AppModel struct {
 	helpOverlay   *components.HelpOverlay
 	palette       *components.CommandPalette
 	phaseStepper  *components.PhaseStepper
+	sessionPicker *components.SessionPicker
 	showHelp      bool
 	showPalette   bool
 	showThinking  bool // toggle thinking visibility
@@ -276,6 +278,7 @@ func InitialModel(sup AppSupervisor, onCmd func(cmd string, args []string), stor
 		helpOverlay:   components.NewHelpOverlay(60),
 		palette:       components.NewCommandPalette(50),
 		phaseStepper:  components.NewPhaseStepper(80),
+		sessionPicker: components.NewSessionPicker(70, 20),
 		showThinking:  true,
 		sidebarSpring: harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.4),
 		store:         store,
@@ -464,6 +467,87 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Still update textarea/viewport in background but don't process their input
+		m.textarea, tiCmd = m.textarea.Update(msg)
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		cmds = append(cmds, tiCmd, vpCmd)
+		return m, tea.Batch(cmds...)
+	}
+
+	// If session picker is active, handle picker input
+	if m.sessionPicker.IsActive() {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc", "ctrl+c":
+				if m.sessionPicker.IsDeleting() {
+					m.sessionPicker.CancelDelete()
+					return m, nil
+				}
+				m.sessionPicker.Close()
+				return m, nil
+			case "enter":
+				if m.sessionPicker.IsDeleting() {
+					deleteID := m.sessionPicker.ConfirmDelete()
+					m.sessionPicker.Close()
+					if agentSup, ok := m.supervisor.(*agent.Supervisor); ok && deleteID != "" {
+						if err := agentSup.DeleteSession(deleteID); err != nil {
+							m.addMessage("System", fmt.Sprintf("Gagal menghapus session: %v", err))
+						} else {
+							m.addMessage("System", fmt.Sprintf("Session dihapus: %s", deleteID[:8]))
+						}
+					}
+					return m, nil
+				}
+				if item, ok := m.sessionPicker.SelectedItem(); ok {
+					m.sessionPicker.Close()
+					if agentSup, ok := m.supervisor.(*agent.Supervisor); ok {
+						if err := agentSup.SwitchSession(item.Session.ID); err != nil {
+							m.addMessage("System", fmt.Sprintf("Gagal switch session: %v", err))
+						} else {
+							m.messages = []ChatMessage{}
+							history, _ := agentSup.GetSessionHistory(item.Session.ID)
+							for _, msg := range history {
+								role := "User"
+								if msg.Role == llm.RoleAssistant {
+									role = "Agent"
+								}
+								m.messages = append(m.messages, ChatMessage{
+									Role:    role,
+									Content: msg.Content,
+									Time:    time.Now(),
+								})
+							}
+							m.renderMessages()
+							m.showToast(fmt.Sprintf("Switched to: %s", item.Session.Name))
+						}
+					}
+					return m, nil
+				}
+			case "up":
+				m.sessionPicker.MoveSelection(-1)
+				return m, nil
+			case "down":
+				m.sessionPicker.MoveSelection(1)
+				return m, nil
+			case "d":
+				if !m.sessionPicker.IsDeleting() {
+					if _, ok := m.sessionPicker.SelectedItem(); ok {
+						m.sessionPicker.SetDeleteConfirm()
+						return m, nil
+					}
+				}
+			case "backspace":
+				if len(m.sessionPicker.FilterText()) > 0 {
+					m.sessionPicker.SetFilter(m.sessionPicker.FilterText()[:len(m.sessionPicker.FilterText())-1])
+				}
+				return m, nil
+			default:
+				if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					m.sessionPicker.SetFilter(m.sessionPicker.FilterText() + string(msg.Runes))
+				}
+				return m, nil
+			}
+		}
 		m.textarea, tiCmd = m.textarea.Update(msg)
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		cmds = append(cmds, tiCmd, vpCmd)
@@ -684,6 +768,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlP:
 			// Toggle command palette
 			m.palette.Toggle()
+			return m, nil
+
+		case tea.KeyF3:
+			// Toggle session picker
+			if agentSup, ok := m.supervisor.(*agent.Supervisor); ok {
+				m.sessionPicker.Toggle(agentSup.ListSessions())
+				if m.sessionPicker.IsActive() {
+					m.sessionPicker.SetSize(m.layout.ContentW-10, m.layout.ChatH-4)
+				}
+			}
 			return m, nil
 
 		case tea.KeyRunes:
@@ -1036,6 +1130,11 @@ func (m *AppModel) updateLayout() {
 		m.sidebarComp.SetSize(m.layout.SidebarW, m.layout.Height-m.layout.HeaderH-m.layout.StatusH)
 	}
 
+	// Update session picker size
+	if m.sessionPicker != nil && m.sessionPicker.IsActive() {
+		m.sessionPicker.SetSize(m.layout.ContentW-10, m.layout.ChatH-4)
+	}
+
 	// Update textarea
 	m.textarea.SetWidth(m.layout.ContentW - 4)
 
@@ -1156,6 +1255,7 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
 		m.addMessage("System", `Perintah tersedia:
   [Tab]              — Ganti mode agen (cycle: ask → rush → plan → test)
   [F2]               — Ganti tampilan (Chat → Node Graph → Help)
+  [F3]               — Buka session picker
   /mode [ask|rush|plan|test] — Ganti mode agen
   /model [provider] [model] — Ganti LLM provider/model
   /skill [run <nama>] — Lihat atau jalankan skill tersimpan
@@ -1166,7 +1266,9 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
   /mcp add <name> local <cmd> [args...] — Hubungkan MCP local
   /mcp add <name> remote <url> — Hubungkan MCP remote
   /mcp remove <name> — Putuskan dan hapus MCP server
-  /session [list|new|info|switch|end] — Kelola sessions
+  /session [list|new|info|switch|end|delete|search] — Kelola sessions
+  /session new <nama> [--carry-over=N] — Buat session baru (bawa N turn terakhir)
+  /session search <query> — Cari session dengan AI embedding
   /clear             — Bersihkan layar
   /ssh               — Lihat perintah SSH management
   /nudge             — Lihat nudge/reminder tertunda
@@ -1579,6 +1681,29 @@ func (m AppModel) View() string {
 			MarginLeft(m.layout.ContentW - len(m.toastText) - 4)
 		toast := toastStyle.Render("📋 "+m.toastText)
 		mainColumn = mainColumn + "\n" + toast
+	}
+
+	// ─── Session Picker Overlay ────────────────────────────────
+	if m.sessionPicker.IsActive() {
+		pickerContent := m.sessionPicker.Render()
+		pickerOverlay := m.sessionPicker.Center(pickerContent, m.width, m.height)
+		// Overlay picker on top of main column by replacing lines in the center
+		mainLines := strings.Split(mainColumn, "\n")
+		pickerLines := strings.Split(pickerOverlay, "\n")
+		pickerH := len(pickerLines)
+		startY := (len(mainLines) - pickerH) / 2
+		if startY < 0 {
+			startY = 0
+		}
+		for i, pLine := range pickerLines {
+			idx := startY + i
+			if idx < len(mainLines) {
+				mainLines[idx] = pLine
+			} else {
+				mainLines = append(mainLines, pLine)
+			}
+		}
+		mainColumn = strings.Join(mainLines, "\n")
 	}
 
 	// ─── Final Layout ──────────────────────────────────────────

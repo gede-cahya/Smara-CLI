@@ -45,6 +45,8 @@ var shortcuts = []shortcut{
 	{"Ctrl+S", "Select message to copy"},
 	{"Ctrl+B", "Toggle sidebar"},
 	{"Ctrl+T", "Toggle thinking visibility"},
+	{"Ctrl+P", "Toggle command palette"},
+	{"F3", "Toggle session picker"},
 	{"Ctrl+U", "Clear current line"},
 	{"Ctrl+W", "Delete last word"},
 	{"Ctrl+?", "Show / hide this help"},
@@ -64,6 +66,8 @@ var commandShortcuts = []shortcut{
 	{"/memory", "View saved memories"},
 	{"/mcp", "View MCP servers and tools"},
 	{"/session [list|new|switch|end]", "Manage sessions"},
+	{"/session delete <id>", "Delete a session"},
+	{"/session search <query>", "AI-powered session search"},
 	{"/clear", "Clear chat screen"},
 	{"exit", "Exit Smara"},
 }

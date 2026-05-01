@@ -579,7 +579,7 @@ func truncateStr(s string, maxLen int) string {
 
 func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 	if len(args) == 0 {
-		ui.PrintError("Gunakan: /session [list|info|switch|new|end]")
+		ui.PrintError("Gunakan: /session [list|info|switch|new|end|delete|search]")
 		return
 	}
 
@@ -665,19 +665,37 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 
 	case "new":
 		name := "Session"
-		if len(args) > 1 {
-			name = strings.Join(args[1:], " ")
+		carryOver := 0
+		nameParts := []string{}
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(arg, "--carry-over=") {
+				if c, err := strconv.Atoi(strings.TrimPrefix(arg, "--carry-over=")); err == nil && c > 0 {
+					carryOver = c
+				}
+			} else if arg == "--carry-over" {
+				carryOver = 3 // default carry-over
+			} else {
+				nameParts = append(nameParts, arg)
+			}
+		}
+		if len(nameParts) > 0 {
+			name = strings.Join(nameParts, " ")
 		}
 		session, err := supervisor.CreateSession(agent.SessionConfig{
-			Name:       name,
-			Mode:       string(supervisor.GetMode()),
-			MCPServers: supervisor.ListMCPServers(),
+			Name:           name,
+			Mode:           string(supervisor.GetMode()),
+			MCPServers:     supervisor.ListMCPServers(),
+			CarryOverCount: carryOver,
 		})
 		if err != nil {
 			ui.PrintError("Gagal membuat session: %v", err)
 			return
 		}
-		ui.PrintSuccess("Session baru dibuat: %s [%s]\nMode: %s | MCP: %d servers", session.Name, session.ID[:8], session.Mode, len(session.MCPServers))
+		extra := ""
+		if carryOver > 0 {
+			extra = fmt.Sprintf(" | Carry-over: %d turns", carryOver)
+		}
+		ui.PrintSuccess("Session baru dibuat: %s [%s]\nMode: %s | MCP: %d servers%s", session.Name, session.ID[:8], session.Mode, len(session.MCPServers), extra)
 
 	case "end":
 		if err := supervisor.EndCurrentSession(); err != nil {
@@ -686,8 +704,53 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 			ui.PrintSuccess("Session diakhiri.")
 		}
 
+	case "delete":
+		if len(args) < 2 {
+			ui.PrintError("Gunakan: /session delete <id>")
+			return
+		}
+		id := args[1]
+		if supervisor.IsCurrentSession(id) {
+			ui.PrintError("Tidak dapat menghapus session yang sedang aktif. Gunakan /session end terlebih dahulu.")
+			return
+		}
+		if err := supervisor.DeleteSession(id); err != nil {
+			ui.PrintError("Gagal menghapus session: %v", err)
+		} else {
+			ui.PrintSuccess("Session %s dihapus.", id[:8])
+		}
+
+	case "search":
+		if len(args) < 2 {
+			ui.PrintError("Gunakan: /session search <query>")
+			return
+		}
+		query := strings.Join(args[1:], " ")
+		results, err := supervisor.SearchSessions(query, 5)
+		if err != nil {
+			ui.PrintError("Gagal mencari session: %v", err)
+			return
+		}
+		if len(results) == 0 {
+			ui.PrintInfo("Tidak ada session yang cocok dengan query: %s", query)
+			return
+		}
+		var msgParts []string
+		msgParts = append(msgParts, fmt.Sprintf("Hasil pencarian untuk '%s' (top %d):", query, len(results)))
+		for i, r := range results {
+			marker := "  "
+			if supervisor.IsCurrentSession(r.Session.ID) {
+				marker = "▸"
+			}
+			msgParts = append(msgParts, fmt.Sprintf("%s [%d] %s [%s] — relevansi: %.2f", marker, i+1, r.Session.Name, r.Session.ID[:8], r.Score))
+			if r.Snippet != "" {
+				msgParts = append(msgParts, fmt.Sprintf("     %s", r.Snippet))
+			}
+		}
+		ui.PrintInfo(strings.Join(msgParts, "\n"))
+
 	default:
-		ui.PrintError("Sub-command tidak dikenali: %s (list|info|switch|new|end)", subCmd)
+		ui.PrintError("Sub-command tidak dikenali: %s (list|info|switch|new|end|delete|search)", subCmd)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -811,10 +812,29 @@ func (s *Supervisor) skillExecutorWithDepth(depth int) skill.StepExecutor {
 
 // CreateSession creates a new session and sets it as current.
 func (s *Supervisor) CreateSession(cfg SessionConfig) (*Session, error) {
+	// Save reference to old current session before creating new one
+	var oldCurrent *Session
+	if cfg.CarryOverCount > 0 {
+		oldCurrent = s.sessionRegistry.Current()
+	}
+
 	sess, err := s.sessionRegistry.Create(cfg)
 	if err != nil {
 		return nil, err
 	}
+
+	// Carry over last N message pairs from old current session if requested
+	if cfg.CarryOverCount > 0 && oldCurrent != nil && oldCurrent.ID != sess.ID {
+		msgCount := cfg.CarryOverCount * 2 // each turn = user + assistant
+		if len(oldCurrent.History) < msgCount {
+			msgCount = len(oldCurrent.History)
+		}
+		if msgCount > 0 {
+			sess.History = make([]llm.Message, msgCount)
+			copy(sess.History, oldCurrent.History[len(oldCurrent.History)-msgCount:])
+		}
+	}
+
 	// Persist to store
 	if s.sessionStore != nil {
 		s.sessionStore.UpdateSession(sess)
@@ -906,6 +926,128 @@ func (s *Supervisor) EndCurrentSession() error {
 // IsCurrentSession checks if a session ID is the current session.
 func (s *Supervisor) IsCurrentSession(id string) bool {
 	return s.sessionRegistry.IsCurrent(id)
+}
+
+// DeleteSession deletes a session by ID from both registry and store.
+func (s *Supervisor) DeleteSession(id string) error {
+	if err := s.sessionRegistry.Delete(id); err != nil {
+		return err
+	}
+	if s.sessionStore != nil {
+		if err := s.sessionStore.DeleteSession(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SearchResult holds a single session search result with relevance.
+type SearchResult struct {
+	Session   *session.Session
+	Score     float64
+	Snippet   string
+}
+
+// SearchSessions searches sessions using AI embeddings for semantic relevance.
+func (s *Supervisor) SearchSessions(query string, topN int) ([]SearchResult, error) {
+	sessions := s.ListSessions()
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+	if s.provider == nil {
+		return nil, fmt.Errorf("LLM provider tidak tersedia untuk generate embedding")
+	}
+
+	queryEmb, err := s.provider.GenerateEmbedding(query)
+	if err != nil {
+		return nil, fmt.Errorf("gagal generate embedding query: %w", err)
+	}
+
+	var results []SearchResult
+	for _, sess := range sessions {
+		// Build searchable text from session name, context, and history
+		var parts []string
+		parts = append(parts, sess.Name)
+		if sess.Context != "" {
+			parts = append(parts, sess.Context)
+		}
+		for _, msg := range sess.History {
+			parts = append(parts, msg.Content)
+		}
+		text := strings.Join(parts, "\n")
+		if len(text) > 8000 {
+			text = text[:8000]
+		}
+
+		textEmb, err := s.provider.GenerateEmbedding(text)
+		if err != nil {
+			continue // skip sessions that fail embedding
+		}
+
+		score := cosineSimilarity(queryEmb, textEmb)
+
+		// Build snippet: first matching line or first history message
+		snippet := ""
+		lines := strings.Split(text, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if len(line) > 10 {
+				snippet = line
+				break
+			}
+		}
+		if len(snippet) > 120 {
+			snippet = snippet[:120] + "..."
+		}
+
+		results = append(results, SearchResult{
+			Session: sess,
+			Score:   score,
+			Snippet: snippet,
+		})
+	}
+
+	// Sort by score descending
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[j].Score > results[i].Score {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	if topN > 0 && len(results) > topN {
+		results = results[:topN]
+	}
+	return results, nil
+}
+
+// cosineSimilarity computes cosine similarity between two float32 vectors.
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+// GetSessionHistory returns the history messages for a session by ID.
+func (s *Supervisor) GetSessionHistory(id string) ([]llm.Message, error) {
+	sess, ok := s.sessionRegistry.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("session tidak ditemukan: %s", id)
+	}
+	result := make([]llm.Message, len(sess.History))
+	copy(result, sess.History)
+	return result, nil
 }
 
 // ProcessPrompt handles a user prompt using the current agent mode.
