@@ -56,7 +56,17 @@ Rilis v1.13.0 menyempurnakan fondasi Skill Ecosystem, menambahkan kemampuan SSH 
 
 ---
 
-## 🛠️ Breaking Changes
+## � Bug Fixes
+
+### Session Persistence on Exit
+- **ESC/Ctrl+Q/Ctrl+D/exit**: Sesi sekarang selalu tersimpan ke database sebelum TUI keluar (via `defer SaveSession()` di `start.go`).
+- **Ctrl+C (SIGINT)**: Signal handler sekarang memanggil `supervisor.SaveSession()` sebelum `os.Exit(0)`.
+- **Terminal killed/closed (SIGHUP)**: Menambah handler `SIGHUP` dan `SIGQUIT` agar session tetap tersimpan saat terminal window ditutup atau proses di-kill.
+
+### Version Display
+- Banner TUI menampilkan versi dinamis dari `version.go` (`1.13.0`) daripada hardcoded `v1.8.0` lama. `AppVersion` di `internal/ui/app.go` sekarang di-set oleh `cmd/smara/start.go`.
+
+## �🛠️ Breaking Changes
 
 **None** — v1.13.0 adalah rilis minor yang fully backward-compatible dengan v1.12.0.
 

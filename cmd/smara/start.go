@@ -53,7 +53,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	cfg := config.Get()
 
-	// Show banner
+	// Set UI version and show banner
+	ui.AppVersion = version
 	ui.PrintBanner(version)
 
 	// Override model from flag if provided
@@ -174,6 +175,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 		ui.PrintWarning("Gagal inisialisasi session store: %v", err)
 	} else {
 		supervisor.SetSessionStore(sessStore)
+		// Ensure session is saved when TUI exits normally (ESC, Ctrl+Q, exit command, etc.)
+		defer func() {
+			if err := supervisor.SaveSession(); err != nil {
+				ui.PrintWarning("Gagal menyimpan session saat keluar: %v", err)
+			}
+		}()
 	}
 
 	// 4.1 Initialize Sessions & Auto-Connection
@@ -336,14 +343,18 @@ func runStart(cmd *cobra.Command, args []string) error {
 	ui.PrintInfo("Startup: %s", elapsed.Round(time.Millisecond))
 	fmt.Println()
 
-	// 6. Handle OS signals for graceful shutdown
+	// 6. Handle OS signals for graceful shutdown (SIGINT=Ctrl+C, SIGTERM=kill, SIGHUP=terminal closed, SIGQUIT=Ctrl+\)
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 
 	go func() {
 		<-sigCh
 		fmt.Println()
 		ui.PrintInfo("Menutup Smara...")
+		// Persist current session before exit
+		if err := supervisor.SaveSession(); err != nil {
+			ui.PrintWarning("Gagal menyimpan session: %v", err)
+		}
 		cancel()
 		os.Exit(0)
 	}()

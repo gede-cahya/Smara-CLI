@@ -30,6 +30,9 @@ import (
 // Smara CLI TUI App — Interactive Multi-Panel Terminal UI
 // ═══════════════════════════════════════════════════════════════
 
+// AppVersion is set by the main package at startup.
+var AppVersion = "dev"
+
 // Style definitions — Crush Pastel Green palette
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -301,7 +304,7 @@ func bannerContent() string {
   ╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 `
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("#bef264")).Bold(true).Render(banner) +
-		"\n" + dimStyle.Render("  स्मृति — Autonomous Multi-Agent Terminal v1.8.0\n  Ketik /help untuk daftar perintah.\n")
+		"\n" + dimStyle.Render(fmt.Sprintf("  स्मृति — Autonomous Multi-Agent Terminal v%s\n  Ketik /help untuk daftar perintah.\n", AppVersion))
 }
 
 // Init initializes the app
