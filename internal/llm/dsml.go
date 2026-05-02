@@ -30,7 +30,7 @@ func normalizePipes(s string) string {
 
 var (
 	// Matches any messy variation of DSML tags (e.g. "< | | DSML | | tag>" or "<| DSML |tag>")
-	dsmlTagNormalizeRe = regexp.MustCompile(`(?s)</?\s*\|(?:\s*\|)?\s*DSML\s*\|(?:\s*\|)?\s*([^>]*?)>`)
+	dsmlTagNormalizeRe = regexp.MustCompile(`(?s)</?\s*\|(?:\s*\|)*\s*DSML\s*\|(?:\s*\|)*\s*([^>]*?)>`)
 
 	// Regexes for normalized format <|DSML|...>
 	dsmlInvokeRe = regexp.MustCompile(`<\|DSML\|invoke\s+name="([^"]+)"\s*>`)

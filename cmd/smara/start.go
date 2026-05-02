@@ -21,6 +21,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/lsp"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/repair"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 	"github.com/gede-cahya/Smara-CLI/internal/sync"
@@ -52,6 +53,16 @@ func init() {
 func runStart(cmd *cobra.Command, args []string) error {
 	startTime := time.Now()
 	cfg := config.Get()
+
+	// Auto-repair critical components before startup
+	if repaired, err := repair.AutoRepairAtStartup(cfg.DBPath, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "[AUTO-REPAIR] Kegagalan kritis: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Jalankan 'smara repair' atau perbaiki secara manual.")
+		os.Exit(1)
+	} else if repaired {
+		// Reload config after repair
+		cfg = config.Get()
+	}
 
 	// Set UI version and show banner
 	ui.AppVersion = version

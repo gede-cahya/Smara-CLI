@@ -57,6 +57,20 @@ Ketemu! Ada "/stop" di session.py. Mari lihat detailnya.
 			expectFunc:  "ssh_list_dir",
 			expectArgs:  map[string]string{"host": "server1", "path": "/tmp"},
 		},
+		{
+			name: "double pipe DSML block — regression for raw DSML leak",
+			input: `Bot sudah restart. Cek log untuk memastikan tidak ada error:
+
+<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="run_command">
+<｜｜DSML｜｜parameter name="command" string="true">pm2 logs bot-penunggu --lines 30 --nostream 2>&1</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>
+</｜｜DSML｜｜tool_calls>`,
+			expectCalls:    1,
+			expectFunc:     "run_command",
+			expectArgs:     map[string]string{"command": "pm2 logs bot-penunggu --lines 30 --nostream 2>&1"},
+			expectContains: "Bot sudah restart",
+		},
 	}
 
 	for _, tt := range tests {
