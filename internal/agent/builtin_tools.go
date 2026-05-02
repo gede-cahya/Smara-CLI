@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
@@ -728,7 +727,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 
 		cmd := exec.Command("sh", "-c", cmdStr)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		setProcessGroup(cmd)
 
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
@@ -778,7 +777,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			wg.Wait()
 		case <-time.After(30 * time.Second):
 			// Timeout: bunuh seluruh process group (termasuk background processes)
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = killProcessGroup(cmd.Process.Pid)
 			wg.Wait()
 			waitErr = fmt.Errorf("timeout setelah 30 detik")
 		}
@@ -2546,7 +2545,7 @@ func serveProject(args map[string]interface{}) (string, error) {
 	}
 
 	detected.cmd.Dir = projectDir
-	detected.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(detected.cmd)
 	// Redirect output to avoid hanging if pipes fill
 	detected.cmd.Stdout = nil
 	detected.cmd.Stderr = nil
