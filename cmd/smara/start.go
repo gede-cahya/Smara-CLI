@@ -664,7 +664,7 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 				}
 				msgParts = append(msgParts, fmt.Sprintf("%s %s [%s]", marker, s.Name, s.ID[:8]))
 			}
-			ui.PrintInfo(strings.Join(msgParts, "\n"))
+			ui.PrintInfo("%s", strings.Join(msgParts, "\n"))
 			return
 		}
 		if err := supervisor.SwitchSession(args[1]); err != nil {
@@ -758,7 +758,7 @@ func handleSessionCommand(args []string, supervisor *agent.Supervisor) {
 				msgParts = append(msgParts, fmt.Sprintf("     %s", r.Snippet))
 			}
 		}
-		ui.PrintInfo(strings.Join(msgParts, "\n"))
+		ui.PrintInfo("%s", strings.Join(msgParts, "\n"))
 
 	default:
 		ui.PrintError("Sub-command tidak dikenali: %s (list|info|switch|new|end|delete|search)", subCmd)
