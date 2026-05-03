@@ -77,9 +77,11 @@ func FetchManifest(url string, authToken string) (*RegistryManifest, error) {
 
 // Search searches all configured registries for skills matching query and/or tags.
 // If query is empty, returns all skills. query is matched against name, description, and tags.
+// Falls back to the built-in embedded registry when all external sources fail.
 func Search(query string, registries []RegistryConfig) ([]RegistryEntry, error) {
 	var results []RegistryEntry
 	queryLower := strings.ToLower(query)
+	allFailed := true
 
 	for _, regCfg := range registries {
 		manifest, err := FetchManifest(regCfg.URL, regCfg.AuthToken)
@@ -87,8 +89,18 @@ func Search(query string, registries []RegistryConfig) ([]RegistryEntry, error) 
 			// Log but don't fail — try other registries
 			continue
 		}
+		allFailed = false
 
 		for _, entry := range manifest.Skills {
+			if query == "" || matchesQuery(entry, queryLower) {
+				results = append(results, entry)
+			}
+		}
+	}
+
+	// Fallback to built-in embedded registry if all external sources failed or no results
+	if (allFailed || len(results) == 0) && builtinManifest != nil {
+		for _, entry := range builtinManifest.Skills {
 			if query == "" || matchesQuery(entry, queryLower) {
 				results = append(results, entry)
 			}

@@ -1,0 +1,171 @@
+{
+  "registry_url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry",
+  "version": "1.0.0",
+  "skills": [
+    {
+      "name": "nextjs",
+      "description": "Next.js documentation and patterns via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/nextjs.json",
+      "tags": ["react", "frontend", "vercel", "ssr"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "react",
+      "description": "React documentation and hooks via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/react.json",
+      "tags": ["frontend", "ui", "hooks"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "tailwindcss",
+      "description": "Tailwind CSS utility classes and configuration via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/tailwindcss.json",
+      "tags": ["css", "frontend", "styling"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "typescript",
+      "description": "TypeScript types and patterns via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/typescript.json",
+      "tags": ["types", "language"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "go",
+      "description": "Go standard library and idioms via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/go.json",
+      "tags": ["backend", "language", "stdlib"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "docker",
+      "description": "Docker containers, images, and compose via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/docker.json",
+      "tags": ["devops", "containers", "deployment"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "kubernetes",
+      "description": "Kubernetes manifests and kubectl via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/kubernetes.json",
+      "tags": ["devops", "containers", "orchestration"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "python",
+      "description": "Python standard library and patterns via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/python.json",
+      "tags": ["backend", "language", "stdlib"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "fastapi",
+      "description": "FastAPI routing, dependencies, and async via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/fastapi.json",
+      "tags": ["backend", "api", "python"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "prisma",
+      "description": "Prisma ORM schema and queries via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/prisma.json",
+      "tags": ["database", "orm", "typescript"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "postgres",
+      "description": "PostgreSQL queries and configuration via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/postgres.json",
+      "tags": ["database", "sql"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "mongodb",
+      "description": "MongoDB queries and aggregation via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/mongodb.json",
+      "tags": ["database", "nosql"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "git",
+      "description": "Git commands and workflows via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/git.json",
+      "tags": ["vcs", "devops"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "vercel",
+      "description": "Vercel deployment and configuration via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/vercel.json",
+      "tags": ["deployment", "frontend", "hosting"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    },
+    {
+      "name": "laravel",
+      "description": "Laravel Eloquent, routing, and Blade via Context7",
+      "version": 1,
+      "author": "Smara Official",
+      "url": "https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/skills/registry/laravel.json",
+      "tags": ["backend", "php", "framework"],
+      "downloads": 0,
+      "rating": 0,
+      "updated_at": "2026-05-03T00:00:00Z"
+    }
+  ]
+}

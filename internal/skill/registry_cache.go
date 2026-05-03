@@ -108,6 +108,7 @@ func ClearCache() error {
 }
 
 // SyncRegistries fetches manifests from all registries and writes them to local cache.
+// The built-in embedded registry is always synced so search works offline.
 func SyncRegistries(registries []RegistryConfig) error {
 	var errs []string
 	for _, reg := range registries {
@@ -120,6 +121,14 @@ func SyncRegistries(registries []RegistryConfig) error {
 			errs = append(errs, fmt.Sprintf("%s cache: %v", reg.Name, err))
 		}
 	}
+
+	// Always sync built-in embedded registry to cache for offline fallback
+	if builtinManifest != nil {
+		if err := WriteCache("builtin", *builtinManifest); err != nil {
+			errs = append(errs, fmt.Sprintf("builtin cache: %v", err))
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("sync errors: %s", errs[0])
 	}

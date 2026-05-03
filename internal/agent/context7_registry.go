@@ -33,6 +33,11 @@ type Context7RegistryManifest struct {
 // 2. Executable directory: skills/registry/index.json (for standalone binary)
 // 3. Repository root: skills/registry/index.json (for dev mode)
 func loadContext7Registry() (*Context7RegistryManifest, error) {
+	// 1. Try embedded registry first (works for standalone binaries)
+	if manifest, err := loadEmbeddedContext7Registry(); err == nil {
+		return manifest, nil
+	}
+
 	candidates := []string{
 		"skills/registry/index.json",
 	}
