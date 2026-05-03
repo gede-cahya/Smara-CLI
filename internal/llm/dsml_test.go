@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -92,6 +93,65 @@ Ketemu! Ada "/stop" di session.py. Mari lihat detailnya.
 
 			// Ensure DSML tags are removed
 			assert.NotContains(t, cleaned, "<| DSML |")
+		})
+	}
+}
+
+func TestDSMLStreamFilter(t *testing.T) {
+	tests := []struct {
+		name           string
+		chunks         []string
+		expectedOutput string
+		expectedRemain string // output from Close()
+	}{
+		{
+			name:           "plain text without DSML",
+			chunks:         []string{"Hello ", "world", "."},
+			expectedOutput: "Hello world.",
+		},
+		{
+			name: "complete DSML block in single chunk",
+			chunks: []string{
+				"Checking logs...\n<| DSML | tool_calls>\n<| DSML | invoke name=\"run_command\">\n<| DSML | parameter name=\"command\" string=\"true\">uptime</| DSML | parameter>\n</| DSML | invoke>\n</| DSML | tool_calls>",
+			},
+			expectedOutput: "Checking logs...",
+		},
+		{
+			name: "DSML split across chunks",
+			chunks: []string{
+				"Here is the result.\n<| DSML | ",
+				"tool_calls>\n<| DSML | invoke name=\"run_command\">\n<| DSML | parameter name=\"command\" string=\"true\">uptime</| DSML | parameter>\n</| DSML | invoke>\n</| DSML | tool_calls>",
+			},
+			expectedOutput: "Here is the result.",
+		},
+		{
+			name: "double pipe DSML block",
+			chunks: []string{
+				"Done.\n<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name=\"run_command\">\n<｜｜DSML｜｜parameter name=\"command\" string=\"true\">uptime</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>",
+			},
+			expectedOutput: "Done.",
+		},
+		{
+			name: "angle bracket not DSML — should not hold back forever",
+			chunks: []string{
+				"Value is < 5 and > 0. ",
+				"Next sentence.",
+			},
+			expectedOutput: "Value is < 5 and > 0. Next sentence.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var f DSMLStreamFilter
+			var out strings.Builder
+			for _, chunk := range tt.chunks {
+				out.WriteString(f.Write(chunk))
+			}
+			assert.Equal(t, tt.expectedOutput, strings.TrimSpace(out.String()))
+			// Close should not leave any DSML residue
+			remain := f.Close()
+			assert.NotContains(t, remain, "DSML")
 		})
 	}
 }

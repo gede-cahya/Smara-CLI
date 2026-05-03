@@ -22,14 +22,18 @@ type Step struct {
 
 // Skill is a reusable automation recipe.
 type Skill struct {
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Steps       []Step     `json:"steps"`
-	Version     int        `json:"version"`
-	Tags        []string   `json:"tags,omitempty"`
-	Author      string     `json:"author,omitempty"`
-	SourceURL   string     `json:"source_url,omitempty"`
-	Params      []ParamDef `json:"params,omitempty"`
+	Name         string     `json:"name"`
+	Description  string     `json:"description"`
+	Steps        []Step     `json:"steps"`
+	Version      int        `json:"version"`
+	Tags         []string   `json:"tags,omitempty"`
+	Author       string     `json:"author,omitempty"`
+	SourceURL    string     `json:"source_url,omitempty"`
+	Params       []ParamDef `json:"params,omitempty"`
+	ParentID     string     `json:"parent_id,omitempty"`
+	CategoryPath []string   `json:"category_path,omitempty"`
+	Dependencies []string   `json:"dependencies,omitempty"`
+	Children     []string   `json:"children,omitempty"` // derived, not persisted
 }
 
 // WithArgs returns a copy of the skill with parameter substitution applied.
@@ -56,14 +60,17 @@ func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
 
 	// Create a deep copy of the skill with substituted args
 	newSkill := &Skill{
-		Name:        s.Name,
-		Description: s.Description,
-		Steps:       make([]Step, len(s.Steps)),
-		Version:     s.Version,
-		Tags:        append([]string(nil), s.Tags...),
-		Author:      s.Author,
-		SourceURL:   s.SourceURL,
-		Params:      append([]ParamDef(nil), s.Params...),
+		Name:         s.Name,
+		Description:  s.Description,
+		Steps:        make([]Step, len(s.Steps)),
+		Version:      s.Version,
+		Tags:         append([]string(nil), s.Tags...),
+		Author:       s.Author,
+		SourceURL:    s.SourceURL,
+		Params:       append([]ParamDef(nil), s.Params...),
+		ParentID:     s.ParentID,
+		CategoryPath: append([]string(nil), s.CategoryPath...),
+		Dependencies: append([]string(nil), s.Dependencies...),
 	}
 
 	for i, step := range s.Steps {

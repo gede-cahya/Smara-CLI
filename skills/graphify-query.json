@@ -1,0 +1,36 @@
+{
+  "name": "graphify-query",
+  "description": "Query a stored knowledge graph to find nodes, edges, and relationships in a codebase",
+  "version": 1,
+  "tags": ["graphify", "codebase", "query", "graph"],
+  "params": [
+    {
+      "name": "query",
+      "type": "string",
+      "description": "Search query (e.g., 'auth flow', 'router', 'database')",
+      "required": true
+    },
+    {
+      "name": "graph_name",
+      "type": "string",
+      "description": "Name of the graph to query",
+      "required": true
+    },
+    {
+      "name": "depth",
+      "type": "integer",
+      "description": "Neighborhood depth for subgraph extraction (default: 2)",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "tool": "graphify_query",
+      "args": {
+        "query": "__PARAM__query",
+        "graph_name": "__PARAM__graph_name",
+        "depth": "__PARAM__depth"
+      }
+    }
+  ]
+}

@@ -4,6 +4,8 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
@@ -235,6 +237,33 @@ func GenerateBlueprint(supervisor *agent.Supervisor, prompt string) (Blueprint, 
 }
 
 // GenerateBlueprintWithProvider creates a Blueprint using a direct LLM provider.
+// extractJSON tries to extract a valid JSON substring from raw LLM output.
+// It handles: JSON inside a quoted string, markdown code fences, bare JSON, etc.
+func extractJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+
+	// Case 1: the entire response is a quoted JSON string → unquote it
+	if strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`) {
+		if unquoted, err := strconv.Unquote(raw); err == nil {
+			raw = strings.TrimSpace(unquoted)
+		}
+	}
+
+	// Case 2: find first { or [
+	idx := strings.IndexAny(raw, "{[")
+	if idx < 0 {
+		return raw
+	}
+
+	// Case 3: strip markdown fences (```json ... ```)
+	re := regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
+	if m := re.FindStringSubmatch(raw); len(m) > 1 {
+		return m[1]
+	}
+
+	return raw[idx:]
+}
+
 func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]agent.MCPServerInfo, prompt string) (Blueprint, error) {
 	var bp Blueprint
 
@@ -266,21 +295,8 @@ func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]age
 		return bp, fmt.Errorf("gagal generate blueprint: %w", err)
 	}
 
-	// Extract JSON from response (handle markdown code blocks)
-	content := resp.Content
-	content = strings.TrimSpace(content)
-	if idx := strings.Index(content, "```json"); idx != -1 {
-		content = content[idx+7:]
-		if end := strings.Index(content, "```"); end != -1 {
-			content = content[:end]
-		}
-	} else if idx := strings.Index(content, "```"); idx != -1 {
-		content = content[idx+3:]
-		if end := strings.Index(content, "```"); end != -1 {
-			content = content[:end]
-		}
-	}
-	content = strings.TrimSpace(content)
+	// Extract JSON from response (handle escaped strings, markdown fences, bare JSON)
+	content := extractJSON(resp.Content)
 
 	if err := json.Unmarshal([]byte(content), &bp); err != nil {
 		// Retry once with error feedback
@@ -292,20 +308,8 @@ func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]age
 		if err2 != nil {
 			return bp, fmt.Errorf("gagal generate blueprint (retry): %w", err2)
 		}
-		content2 := resp2.Content
-		content2 = strings.TrimSpace(content2)
-		if idx := strings.Index(content2, "```json"); idx != -1 {
-			content2 = content2[idx+7:]
-			if end := strings.Index(content2, "```"); end != -1 {
-				content2 = content2[:end]
-			}
-		} else if idx := strings.Index(content2, "```"); idx != -1 {
-			content2 = content2[idx+3:]
-			if end := strings.Index(content2, "```"); end != -1 {
-				content2 = content2[:end]
-			}
-		}
-		content2 = strings.TrimSpace(content2)
+		content2 := extractJSON(resp2.Content)
+
 		if err := json.Unmarshal([]byte(content2), &bp); err != nil {
 			return bp, fmt.Errorf("gagal parse blueprint JSON setelah retry: %w", err)
 		}

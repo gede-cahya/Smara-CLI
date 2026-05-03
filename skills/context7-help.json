@@ -1,0 +1,42 @@
+{
+  "name": "context7-help",
+  "description": "Full Context7 workflow: resolve library name then fetch its documentation",
+  "version": 1,
+  "tags": ["context7", "documentation", "mcp", "workflow"],
+  "params": [
+    {
+      "name": "library",
+      "type": "string",
+      "description": "Library name to look up (e.g., 'react', 'numpy')",
+      "required": true
+    },
+    {
+      "name": "version",
+      "type": "string",
+      "description": "Specific version (optional, e.g., '18.2.0')",
+      "required": false
+    },
+    {
+      "name": "topic",
+      "type": "string",
+      "description": "Specific topic or section to retrieve (optional)",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "tool": "resolve",
+      "args": {
+        "libraryName": "__PARAM__library",
+        "version": "__PARAM__version"
+      }
+    },
+    {
+      "tool": "get-library-documentation",
+      "args": {
+        "uri": "{{step_0.result.uri}}",
+        "topic": "__PARAM__topic"
+      }
+    }
+  ]
+}

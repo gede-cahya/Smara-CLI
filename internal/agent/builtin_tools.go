@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gede-cahya/Smara-CLI/internal/graphify"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/nudge"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
@@ -695,7 +696,7 @@ func GetBuiltinTools() []llm.ToolFunction {
 		},
 		{
 			Name:        "serve_project",
-			Description: "Menjalankan local HTTP server untuk project web yang sudah dibuat, sehingga bisa diakses dari browser. Gunakan ini SETELAH membuat file HTML/CSS/JS. Server berjalan di background dan bisa diakses via URL publik VPS.",
+			Description: "Menjalankan HTTP server lokal untuk preview project web (static HTML, React dev server, dll). Server berjalan di background dan bisa diakses via browser.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -708,6 +709,46 @@ func GetBuiltinTools() []llm.ToolFunction {
 						"description": "Port untuk HTTP server (default: auto-assign 8000-8999)",
 					},
 				},
+			},
+		},
+		{
+			Name:        "graphify_init",
+			Description: "Membuat knowledge graph dari direktori source code Go untuk analisis struktur codebase.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path direktori codebase yang akan di-parse (default: cwd)",
+					},
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama graph (default: nama direktori)",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
+			Name:        "graphify_query",
+			Description: "Mencari knowledge graph yang sudah dibuat untuk menemukan fungsi, type, atau hubungan antar komponen codebase.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Kata kunci pencarian (misal: 'auth', 'router', 'Database')",
+					},
+					"graph_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama graph yang akan dicari (default: graph terakhir)",
+					},
+					"depth": map[string]interface{}{
+						"type":        "integer",
+						"description": "Kedalaman neighborhood (default: 2)",
+					},
+				},
+				"required": []string{"query"},
 			},
 		},
 	}
@@ -1424,6 +1465,69 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	case "serve_project":
 		result, err := serveProject(args)
 		return result, err
+
+	case "graphify_init":
+		path := getStr(args, "path")
+		if path == "" {
+			path = "."
+		}
+		name := getStr(args, "name")
+		if name == "" {
+			name = filepath.Base(path)
+		}
+		if BuiltinDB == nil {
+			return "", fmt.Errorf("database tidak tersedia")
+		}
+		g, err := graphify.ParseGoCodebase(path, name)
+		if err != nil {
+			return "", fmt.Errorf("gagal parse: %w", err)
+		}
+		g.AssignCommunities()
+		gs, err := graphify.NewGraphStore(BuiltinDB)
+		if err != nil {
+			return "", fmt.Errorf("gagal buat graph store: %w", err)
+		}
+		if err := gs.SaveGraph(g); err != nil {
+			return "", fmt.Errorf("gagal simpan graph: %w", err)
+		}
+		return fmt.Sprintf("Graph '%s' dibuat: %d nodes, %d edges", name, g.NodeCount(), g.EdgeCount()), nil
+
+	case "graphify_query":
+		query := getStr(args, "query")
+		if query == "" {
+			return "", fmt.Errorf("argumen 'query' wajib diisi")
+		}
+		graphName := getStr(args, "graph_name")
+		if graphName == "" {
+			return "", fmt.Errorf("argumen 'graph_name' wajib diisi")
+		}
+		depth := 2
+		if d, ok := args["depth"].(float64); ok {
+			depth = int(d)
+		}
+		if BuiltinDB == nil {
+			return "", fmt.Errorf("database tidak tersedia")
+		}
+		gs, err := graphify.NewGraphStore(BuiltinDB)
+		if err != nil {
+			return "", fmt.Errorf("gagal buat graph store: %w", err)
+		}
+		g, err := gs.LoadGraph(graphName)
+		if err != nil {
+			return "", fmt.Errorf("graph '%s' tidak ditemukan: %w", graphName, err)
+		}
+		result := g.Query(query, depth)
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("Hasil query '%s' (graph: %s):\n\n", query, graphName))
+		b.WriteString(fmt.Sprintf("Nodes (%d):\n", len(result.Nodes)))
+		for _, n := range result.Nodes {
+			b.WriteString(fmt.Sprintf("- %s (%s) %s:%d\n", n.Label, n.Type, n.SourceFile, n.SourceLine))
+		}
+		b.WriteString(fmt.Sprintf("\nEdges (%d):\n", len(result.Edges)))
+		for _, e := range result.Edges {
+			b.WriteString(fmt.Sprintf("- %s --[%s]--> %s\n", e.Source, e.Relation, e.Target))
+		}
+		return b.String(), nil
 
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)

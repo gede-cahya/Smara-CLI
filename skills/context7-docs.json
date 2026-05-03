@@ -1,0 +1,29 @@
+{
+  "name": "context7-docs",
+  "description": "Fetch up-to-date documentation for a library using Context7 MCP server",
+  "version": 1,
+  "tags": ["context7", "documentation", "mcp"],
+  "params": [
+    {
+      "name": "uri",
+      "type": "string",
+      "description": "Context7 library URI (obtained from context7-resolve, e.g., 'context7://react')",
+      "required": true
+    },
+    {
+      "name": "topic",
+      "type": "string",
+      "description": "Specific topic or section to retrieve (optional)",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "tool": "get-library-documentation",
+      "args": {
+        "uri": "__PARAM__uri",
+        "topic": "__PARAM__topic"
+      }
+    }
+  ]
+}

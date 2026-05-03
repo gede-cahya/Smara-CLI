@@ -154,6 +154,7 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 	var finalModel string
 	var toolCallsMap = make(map[int]*ToolCall)
 	var toolCallsRawArgs = make(map[int]*strings.Builder)
+	var dsmlFilter DSMLStreamFilter
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -184,8 +185,9 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 
 			if delta.Content != "" {
 				fullContent.WriteString(delta.Content)
-				if callback != nil {
-					callback(delta.Content, false, PhaseGenerating)
+				safeChunk := dsmlFilter.Write(delta.Content)
+				if safeChunk != "" && callback != nil {
+					callback(safeChunk, false, PhaseGenerating)
 				}
 			}
 
@@ -220,6 +222,12 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 
 	if err := scanner.Err(); err != nil {
 		return nil, nil, fmt.Errorf("error saat membaca stream: %w", err)
+	}
+
+	// Flush any remaining buffered text from DSML filter
+	safeRemaining := dsmlFilter.Close()
+	if safeRemaining != "" && callback != nil {
+		callback(safeRemaining, false, PhaseGenerating)
 	}
 
 	// Parse accumulated tool call arguments

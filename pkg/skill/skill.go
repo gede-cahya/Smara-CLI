@@ -33,6 +33,16 @@ type (
 	RegistryConfig = skill.RegistryConfig
 	// InstallOptions configures a remote install.
 	InstallOptions = skill.InstallOptions
+	// ExecutionTracker logs skill runs to SQLite.
+	ExecutionTracker = skill.ExecutionTracker
+	// SkillExecution tracks one run of a skill.
+	SkillExecution = skill.SkillExecution
+	// SkillImprovement tracks proposed refinements.
+	SkillImprovement = skill.SkillImprovement
+	// TreeManager builds and queries the skill tree.
+	TreeManager = skill.TreeManager
+	// TreeNode represents a skill in the tree.
+	TreeNode = skill.TreeNode
 )
 
 // Load retrieves a skill by name.

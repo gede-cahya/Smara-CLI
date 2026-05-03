@@ -56,6 +56,50 @@ func normalizeDSMLTags(content string) string {
 	})
 }
 
+// dsmlPrefixRe matches the start of a DSML tag after '<'.
+var dsmlPrefixRe = regexp.MustCompile(`(?i)^<\s*[\|｜┃│║┆┇┊┋\s]*D`)
+
+// DSMLStreamFilter buffers streaming chunks and emits only text outside DSML tags.
+// It holds back trailing text that might be the start of an incomplete DSML tag.
+type DSMLStreamFilter struct {
+	buf strings.Builder
+}
+
+// Write appends a chunk and returns text safe to display (DSML tags removed).
+// Incomplete DSML prefixes at the end of the chunk are retained internally.
+func (f *DSMLStreamFilter) Write(chunk string) string {
+	f.buf.WriteString(chunk)
+	raw := f.buf.String()
+
+	lastLT := strings.LastIndex(raw, "<")
+	if lastLT == -1 {
+		f.buf.Reset()
+		_, cleaned := ExtractToolCallsFromContent(raw)
+		return cleaned
+	}
+
+	tail := raw[lastLT:]
+	if !dsmlPrefixRe.MatchString(tail) {
+		f.buf.Reset()
+		_, cleaned := ExtractToolCallsFromContent(raw)
+		return cleaned
+	}
+
+	prefix := raw[:lastLT]
+	f.buf.Reset()
+	f.buf.WriteString(tail)
+	_, cleaned := ExtractToolCallsFromContent(prefix)
+	return cleaned
+}
+
+// Close flushes any remaining buffered text at the end of the stream.
+func (f *DSMLStreamFilter) Close() string {
+	raw := f.buf.String()
+	f.buf.Reset()
+	_, cleaned := ExtractToolCallsFromContent(raw)
+	return cleaned
+}
+
 // ExtractToolCallsFromContent parses DSML-style tool calls from raw LLM content.
 // Returns extracted ToolCalls and cleaned content.
 func ExtractToolCallsFromContent(content string) ([]ToolCall, string) {

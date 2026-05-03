@@ -184,6 +184,50 @@ func (s *SQLiteStore) Init() error {
 		`CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name)`,
 		`CREATE INDEX IF NOT EXISTS idx_nudge_next_run ON nudge_schedules(next_run)`,
 		`CREATE INDEX IF NOT EXISTS idx_nudge_tasks_created ON nudge_tasks(created_at)`,
+
+		`CREATE TABLE IF NOT EXISTS graph_nodes (
+			id INTEGER PRIMARY KEY,
+			graph_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			label TEXT,
+			type TEXT,
+			source_file TEXT,
+			source_line INTEGER,
+			language TEXT,
+			content TEXT,
+			community INTEGER DEFAULT 0,
+			god_score REAL DEFAULT 0,
+			metadata TEXT DEFAULT '{}',
+			UNIQUE(graph_id, node_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS graph_edges (
+			id INTEGER PRIMARY KEY,
+			graph_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			target TEXT NOT NULL,
+			relation TEXT,
+			confidence TEXT,
+			confidence_score REAL,
+			source_file TEXT,
+			inferred_reason TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS graph_metadata (
+			graph_id TEXT PRIMARY KEY,
+			root_path TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			node_count INTEGER DEFAULT 0,
+			edge_count INTEGER DEFAULT 0,
+			languages TEXT DEFAULT '[]',
+			corpus_hash TEXT DEFAULT '',
+			version INTEGER DEFAULT 1
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_graph_nodes_graph_id ON graph_nodes(graph_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(type)`,
+		`CREATE INDEX IF NOT EXISTS idx_graph_nodes_language ON graph_nodes(language)`,
+		`CREATE INDEX IF NOT EXISTS idx_graph_edges_graph_id ON graph_edges(graph_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_graph_edges_relation ON graph_edges(relation)`,
+		`CREATE INDEX IF NOT EXISTS idx_graph_edges_confidence ON graph_edges(confidence)`,
 	}
 
 	for _, stmt := range statements {
@@ -522,8 +566,12 @@ func (s *SQLiteStore) List(workspaceID int64, limit int) ([]Memory, error) {
 		var tagsJSON, metadataJSON sql.NullString
 		var expiresAt sql.NullTime
 		var categoryID sql.NullInt64
-		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
+		var workspaceID sql.NullInt64
+		if err := rows.Scan(&m.ID, &workspaceID, &m.Content, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
 			return nil, fmt.Errorf("gagal scan memory: %w", err)
+		}
+		if workspaceID.Valid {
+			m.WorkspaceID = workspaceID.Int64
 		}
 		m.Tags = parseTagsFromJSON(tagsJSON.String)
 		if expiresAt.Valid {
@@ -1094,12 +1142,16 @@ func (s *SQLiteStore) ListMemoriesWithFilters(workspaceID int64, filters MemoryF
 		var tagsJSON, metadataJSON sql.NullString
 		var expiresAt sql.NullTime
 		var categoryID sql.NullInt64
+		var workspaceID sql.NullInt64
 		var embBlob []byte
 
-		if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
+		if err := rows.Scan(&m.ID, &workspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
 			return nil, 0, fmt.Errorf("gagal scan memory: %w", err)
 		}
 
+		if workspaceID.Valid {
+			m.WorkspaceID = workspaceID.Int64
+		}
 		if len(embBlob) > 0 {
 			m.Embedding = bytesToFloat32(embBlob)
 		}

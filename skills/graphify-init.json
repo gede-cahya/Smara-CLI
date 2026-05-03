@@ -1,0 +1,29 @@
+{
+  "name": "graphify-init",
+  "description": "Initialize knowledge graph from a Go codebase directory",
+  "version": 1,
+  "tags": ["graphify", "codebase", "graph", "analysis"],
+  "params": [
+    {
+      "name": "path",
+      "type": "string",
+      "description": "Directory path to parse (e.g., './src' or '.')",
+      "required": true
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "description": "Graph name (default: directory basename)",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "tool": "graphify_init",
+      "args": {
+        "path": "__PARAM__path",
+        "name": "__PARAM__name"
+      }
+    }
+  ]
+}

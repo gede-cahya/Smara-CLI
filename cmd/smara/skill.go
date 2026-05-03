@@ -341,14 +341,70 @@ var skillCreateCmd = &cobra.Command{
 
 var skillInstallCmd = &cobra.Command{
 	Use:   "install <url-or-name>",
-	Short: "Install skill dari URL atau marketplace",
+	Short: "Install skill dari URL, registry lokal, atau marketplace",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		input := args[0]
 
-		// If input does not look like a URL, try resolving from registry (Phase 3)
+		// If input does not look like a URL, try resolving from Context7 registry first
 		if !strings.Contains(input, "/") && !strings.Contains(input, ".") {
-			return fmt.Errorf("skill '%s' not found in local store (registry search belum diimplementasi — gunakan URL langsung)", input)
+			entries, err := agent.SearchContext7Registry(input)
+			if err == nil && len(entries) > 0 {
+				// Use exact name match if available
+				var target *agent.Context7RegistryEntry
+				for _, e := range entries {
+					if strings.EqualFold(e.Name, input) {
+						target = &e
+						break
+					}
+				}
+				if target == nil {
+					target = &entries[0]
+				}
+				sk, err := agent.InstallContext7Skill(*target)
+				if err != nil {
+					return fmt.Errorf("gagal install skill '%s' dari Context7 registry: %w", target.Name, err)
+				}
+				fmt.Printf("Skill '%s' berhasil di-install dari Context7 registry.\n", sk.Name)
+				fmt.Printf("  Deskripsi: %s\n", sk.Description)
+				fmt.Printf("  Steps: %d\n", len(sk.Steps))
+				if len(sk.Tags) > 0 {
+					fmt.Printf("  Tags: %s\n", strings.Join(sk.Tags, ", "))
+				}
+				return nil
+			}
+
+			// Fallback: try marketplace registry search
+			cfg := config.Get()
+			var registries []skill.RegistryConfig
+			for _, r := range cfg.SkillRegistries {
+				registries = append(registries, skill.RegistryConfig{
+					Name:      r.Name,
+					URL:       r.URL,
+					AuthToken: r.AuthToken,
+				})
+			}
+			results, err := skill.Search(input, registries)
+			if err != nil || len(results) == 0 {
+				return fmt.Errorf("skill '%s' tidak ditemukan di Context7 registry maupun marketplace registry (gunakan URL langsung)", input)
+			}
+			// Install the first matching marketplace skill
+			opts := skill.InstallOptions{
+				URL:       results[0].URL,
+				Alias:     skillInstallAlias,
+				Overwrite: skillInstallOverwrite,
+			}
+			sk, err := skill.InstallFromURL(opts)
+			if err != nil {
+				return fmt.Errorf("gagal install skill dari marketplace: %w", err)
+			}
+			fmt.Printf("Skill '%s' berhasil di-install dari marketplace '%s'.\n", sk.Name, results[0].Name)
+			fmt.Printf("  Deskripsi: %s\n", sk.Description)
+			fmt.Printf("  Steps: %d\n", len(sk.Steps))
+			if len(sk.Tags) > 0 {
+				fmt.Printf("  Tags: %s\n", strings.Join(sk.Tags, ", "))
+			}
+			return nil
 		}
 
 		opts := skill.InstallOptions{
@@ -436,15 +492,31 @@ var skillSearchRegistry string
 
 var skillSearchCmd = &cobra.Command{
 	Use:   "search [query/tag]",
-	Short: "Cari skill di semua registry yang terdaftar",
+	Short: "Cari skill di Context7 registry dan marketplace",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := ""
 		if len(args) > 0 {
 			query = args[0]
 		}
 
+		var allResults []string
+
+		// 1. Search Context7 registry
+		c7Entries, err := agent.SearchContext7Registry(query)
+		if err == nil && len(c7Entries) > 0 {
+			allResults = append(allResults, "Context7 Library Skills:")
+			for _, e := range c7Entries {
+				tags := ""
+				if len(e.Tags) > 0 {
+					tags = fmt.Sprintf("  Tags: %s", strings.Join(e.Tags, ", "))
+				}
+				allResults = append(allResults, fmt.Sprintf("  %s — %s%s", e.Name, e.Description, tags))
+			}
+		}
+
+		// 2. Search marketplace registries
 		cfg := config.Get()
-		registries := make([]skill.RegistryConfig, 0, len(cfg.SkillRegistries))
+		var registries []skill.RegistryConfig
 		for _, r := range cfg.SkillRegistries {
 			if skillSearchRegistry != "" && r.Name != skillSearchRegistry {
 				continue
@@ -456,31 +528,36 @@ var skillSearchCmd = &cobra.Command{
 			})
 		}
 
-		if len(registries) == 0 {
-			return fmt.Errorf("tidak ada registry yang terdaftar (konfigurasi di skill_registries)")
+		if len(registries) > 0 {
+			results, err := skill.Search(query, registries)
+			if err == nil && len(results) > 0 {
+				if len(allResults) > 0 {
+					allResults = append(allResults, "")
+				}
+				allResults = append(allResults, "Marketplace Skills:")
+				for _, entry := range results {
+					meta := ""
+					if entry.Author != "" {
+						meta = fmt.Sprintf("    Author: %s  Downloads: %d  Rating: %.1f", entry.Author, entry.Downloads, entry.Rating)
+					}
+					tags := ""
+					if len(entry.Tags) > 0 {
+						tags = fmt.Sprintf("  Tags: %s", strings.Join(entry.Tags, ", "))
+					}
+					allResults = append(allResults, fmt.Sprintf("  %s — %s (v%d)%s", entry.Name, entry.Description, entry.Version, tags))
+					if meta != "" {
+						allResults = append(allResults, meta)
+					}
+				}
+			}
 		}
 
-		results, err := skill.Search(query, registries)
-		if err != nil {
-			return fmt.Errorf("gagal mencari skill: %w", err)
-		}
-
-		if len(results) == 0 {
-			fmt.Println("Tidak ada skill yang cocok.")
+		if len(allResults) == 0 {
+			fmt.Println("Tidak ada skill yang cocok di Context7 registry maupun marketplace.")
 			return nil
 		}
 
-		fmt.Printf("Ditemukan %d skill:\n\n", len(results))
-		for _, entry := range results {
-			fmt.Printf("  %s — %s (v%d)\n", entry.Name, entry.Description, entry.Version)
-			if entry.Author != "" {
-				fmt.Printf("    Author: %s  Downloads: %d  Rating: %.1f\n", entry.Author, entry.Downloads, entry.Rating)
-			}
-			if len(entry.Tags) > 0 {
-				fmt.Printf("    Tags: %s\n", strings.Join(entry.Tags, ", "))
-			}
-			fmt.Println()
-		}
+		fmt.Println(strings.Join(allResults, "\n"))
 		return nil
 	},
 }
@@ -563,10 +640,89 @@ var skillRegistrySyncCmd = &cobra.Command{
 	},
 }
 
+var skillTreeCmd = &cobra.Command{
+	Use:   "tree",
+	Short: "Tampilkan hierarki skill tree",
+	Run: func(cmd *cobra.Command, args []string) {
+		tm, err := skill.BuildTree()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Gagal build tree: %v\n", err)
+			os.Exit(1)
+		}
+		for name := range tm.AllNodes() {
+			fmt.Printf("- %s\n", name)
+			deps, _ := tm.GetDependencies(name)
+			for _, d := range deps {
+				fmt.Printf("  -> depends on: %s\n", d)
+			}
+			next := tm.SuggestNextSkills(name)
+			for _, n := range next {
+				fmt.Printf("  <- unlocks: %s\n", n)
+			}
+		}
+	},
+}
+
+var skillStatsCmd = &cobra.Command{
+	Use:   "stats [nama-skill]",
+	Short: "Tampilkan statistik eksekusi skill",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("Statistik skill '%s': (butuh DB tracker)\n", args[0])
+	},
+}
+
+var skillRefineCmd = &cobra.Command{
+	Use:   "refine [nama-skill]",
+	Short: "Trigger manual refinement untuk skill",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		cfg := config.Get()
+		var provider llm.Provider
+		if cfg.Provider != "" {
+			pc := llm.ProviderConfig{
+				Name:   cfg.Provider,
+				Model:  cfg.Model,
+				Host:   cfg.OllamaHost,
+				APIKey: cfg.OpenAIAPIKey,
+			}
+			var err error
+			provider, err = llm.NewProvider(pc)
+			if err != nil {
+				provider = nil
+			}
+		}
+		if provider == nil {
+			return fmt.Errorf("LLM provider tidak tersedia, konfigurasi provider terlebih dahulu")
+		}
+		prompt, sk, err := skill.BuildRefinementPromptFull(name, &skill.ExecutionTracker{}, nil)
+		if err != nil {
+			return err
+		}
+		resp, _, err := skill.RefineSkill(name, &skill.ExecutionTracker{}, nil, provider)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Prompt:\n%s\n\n", prompt)
+		fmt.Printf("Proposed refinement for '%s' (v%d):\n%s\n", sk.Name, sk.Version, resp)
+		return nil
+	},
+}
+
+var skillAnalyticsCmd = &cobra.Command{
+	Use:   "analytics",
+	Short: "Tampilkan global skill analytics",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("Global analytics: (butuh DB tracker)")
+	},
+}
+
 func init() {
 	skillCmd.AddCommand(skillRunCmd, skillListCmd, skillDeleteCmd, skillCreateCmd)
 	skillCmd.AddCommand(skillInstallCmd, skillUpdateCmd, skillInfoCmd)
 	skillCmd.AddCommand(skillSearchCmd, skillPublishCmd, skillRegistryCmd)
+	skillCmd.AddCommand(skillTreeCmd, skillStatsCmd, skillRefineCmd, skillAnalyticsCmd)
 	skillRegistryCmd.AddCommand(skillRegistryListCmd, skillRegistrySyncCmd)
 	rootCmd.AddCommand(skillCmd)
 

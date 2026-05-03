@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.13.0**
+**Autonomous Multi-Agent Terminal v1.18.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -25,7 +25,12 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **🔀 Message Selection & Clipboard**: `Ctrl+S` untuk menyeleksi pesan historis, `Enter/C` untuk copy ke clipboard. `Ctrl+V` untuk paste dari clipboard.
 - **🌐 MCP Auto-Discovery**: Auto-load MCP servers dari konfigurasi **Windsurf IDE**, **OpenCode**, dan file konfigurasi Smara-native secara paralel.
 - **🛜 Remote MCP Support**: Koneksi ke MCP server remote via SSE/WebSocket (`mcp.NewRemoteClient`).
-- **🧩 Skill Ecosystem v2**: Buat, install dari URL, cari, publikasikan ke registry, dan jalankan reusable automation skills. Support format JSON dan Markdown.
+- **🧩 Skill Ecosystem v3 — Skill Tree & Analytics**:
+  - Hierarchical skill tree dengan parent-child dan dependency edges.
+  - Execution tracker (SQLite) untuk logging run, stats, timeline, dan success rate.
+  - Skill Dashboard: visualisasi top skills, struggling skills, dan recent activity.
+  - Interactive dependency graph (React Flow) untuk visualisasi hubungan antar skill.
+  - Auto-Refinement Engine: usulkan perbaikan skill berdasarkan eksekusi history & feedback.
 - **📁 SSH File Transfer**: Upload/download file dan direktori via SFTP/SCP langsung dari CLI.
 - **Platform Integration**: Jalankan Smara sebagai bot di **Telegram**, **Discord**, dan **WhatsApp**.
 - **Multi-Provider LLM**: Mendukung **Ollama (local)**, **Anthropic**, **OpenAI**, dan **OpenRouter**.
@@ -38,6 +43,7 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **🛡️ Two-Step Safety**: Plan Mode (read-only) vs Build Mode (read-write) dengan Auto-Revert jika eksekusi gagal.
 - **🔍 LSP Integration**: Language Server Protocol untuk Go, TypeScript, Python, dan Rust.
 - **📜 Dedicated Audit Log**: Logging terstruktur JSON Lines untuk semua tindakan agen.
+- **🕸️ Graphify — Knowledge Graph**: Parse codebase Go menjadi knowledge graph, simpan di SQLite, query dengan natural language, dan inject konteks graph ke system prompt agen secara otomatis. Export ke JSON/SVG/GraphML/Neo4j.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 
 ---
@@ -106,7 +112,39 @@ smara workspace list
 
 ---
 
-## 🖥️ SSH Remote Control (Agent Tools)
+## �️ Graphify — Knowledge Graph
+
+Generate and query knowledge graphs from Go codebases for deep structural understanding.
+
+```bash
+# Parse codebase and store graph
+smara graphify init ./cmd --name smara-cmd
+
+# Query graph with natural language
+smara graphify query "auth flow" --name smara-cmd --depth 2
+
+# Find shortest path between nodes
+smara graphify path "A" "B" --name smara-cmd
+
+# Explain a node and its neighborhood
+smara graphify explain "NodeID" --name smara-cmd --depth 1
+
+# Export graph
+smara graphify export --name smara-cmd --format json     # JSON
+smara graphify export --name smara-cmd --format svg       # SVG
+smara graphify export --name smara-cmd --format graphml   # GraphML
+smara graphify export --name smara-cmd --format neo4j     # Neo4j Cypher
+
+# List & manage stored graphs
+smara graphify list
+smara graphify delete smara-cmd
+```
+
+When the agent detects a codebase question, it **auto-injects** the relevant subgraph into the system prompt for context-aware answers.
+
+---
+
+## �️ SSH Remote Control (Agent Tools)
 Agen dapat mengeksekusi perintah di VPS/Server langsung dari percakapan:
 ```bash
 # Tambah host SSH
@@ -170,6 +208,12 @@ smara skill publish deploy-backend
 
 # Sync cache registry
 smara skill registry sync
+
+# Skill Tree & Analytics
+smara skill tree                    # Tampilkan hierarki skill tree
+smara skill stats deploy-backend    # Statistik eksekusi skill
+smara skill refine deploy-backend   # Trigger manual refinement
+smara skill analytics               # Global skill analytics
 ```
 
 ---
@@ -226,6 +270,7 @@ smara serve --platform telegram --mode plan
 - `smara guide`: Panduan interaktif langsung di terminal.
 - `smara dashboard`: Monitoring real-time TUI.
 - `smara serve`: Jalankan platform bot (Telegram, Discord, WhatsApp).
+- `smara graphify`: Generate knowledge graph dari codebase Go (init, query, path, explain, export, list, delete).
 
 ---
 

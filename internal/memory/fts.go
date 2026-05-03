@@ -149,18 +149,22 @@ func (s *SQLiteStore) SearchFullText(query string, workspaceID int64, filters Me
 		var tagsJSON, metadataJSON sql.NullString
 		var expiresAt sql.NullTime
 		var categoryID sql.NullInt64
+		var workspaceID sql.NullInt64
 
 		if useFTS {
 			var rank float64
-			if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version, &rank); err != nil {
+			if err := rows.Scan(&m.ID, &workspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version, &rank); err != nil {
 				return nil, fmt.Errorf("gagal scan memory FTS: %w", err)
 			}
 		} else {
-			if err := rows.Scan(&m.ID, &m.WorkspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
+			if err := rows.Scan(&m.ID, &workspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
 				return nil, fmt.Errorf("gagal scan memory LIKE: %w", err)
 			}
 		}
 
+		if workspaceID.Valid {
+			m.WorkspaceID = workspaceID.Int64
+		}
 		if len(embBlob) > 0 {
 			m.Embedding = bytesToFloat32(embBlob)
 		}

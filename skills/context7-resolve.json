@@ -1,0 +1,29 @@
+{
+  "name": "context7-resolve",
+  "description": "Resolve a library name to a Context7-compatible URI using the Context7 MCP server",
+  "version": 1,
+  "tags": ["context7", "documentation", "mcp"],
+  "params": [
+    {
+      "name": "library",
+      "type": "string",
+      "description": "Library name to resolve (e.g., 'react', 'numpy', 'lodash')",
+      "required": true
+    },
+    {
+      "name": "version",
+      "type": "string",
+      "description": "Specific version (optional, e.g., '18.2.0')",
+      "required": false
+    }
+  ],
+  "steps": [
+    {
+      "tool": "resolve",
+      "args": {
+        "libraryName": "__PARAM__library",
+        "version": "__PARAM__version"
+      }
+    }
+  ]
+}

@@ -1125,6 +1125,27 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		})
 	}
 
+	// Inject graph context when user asks about codebase
+	if BuiltinDB != nil && IsCodebaseQuery(userPrompt) {
+		graphCtx, _ := BuildGraphContext(BuiltinDB, userPrompt, s.workspaceID)
+		if graphCtx != "" {
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleSystem,
+				Content: graphCtx,
+			})
+		}
+	}
+
+	// Auto-resolve Context7 documentation for libraries mentioned in the prompt
+	if s.mcpClients != nil && len(s.mcpClients) > 0 {
+		injector := NewContext7Injector()
+		enrichedPrompt, _, err := injector.DetectAndInject(userPrompt, s.SkillExecutor())
+		if err == nil && enrichedPrompt != userPrompt {
+			// Replace the user prompt with enriched version that includes Context7 docs
+			userPrompt = enrichedPrompt
+		}
+	}
+
 	// Add conversation history (keep last 10 exchanges for context)
 	maxHistory := 20 // 10 pairs of user+assistant
 	if len(s.history) > maxHistory {
