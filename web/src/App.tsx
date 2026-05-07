@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, Wrench, GitBranch, TreePine, LineChart } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, Wrench, GitBranch, TreePine, LineChart, Network, FolderTree } from 'lucide-react'
 import Chat from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
@@ -10,15 +10,19 @@ import Workflow from './pages/Workflow'
 
 const SkillTree = lazy(() => import('./pages/SkillTree'))
 const SkillDashboard = lazy(() => import('./pages/SkillDashboard'))
+const Graphify = lazy(() => import('./pages/Graphify'))
+const CustomWorkflow = lazy(() => import('./pages/CustomWorkflow'))
 
 const TAB_KEY = 'smara_active_tab'
 
 const navItems = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'workflow', label: 'Workflow', icon: GitBranch },
+  { id: 'custom-workflow', label: 'Custom Workflow', icon: FolderTree },
   { id: 'skills', label: 'Skills', icon: Wrench },
   { id: 'skilltree', label: 'Skill Tree', icon: TreePine },
   { id: 'skilldash', label: 'Analytics', icon: LineChart },
+  { id: 'graphify', label: 'Graphify', icon: Network },
   { id: 'memory', label: 'Memory', icon: Database },
   { id: 'workspace', label: 'Workspace', icon: Layers },
   { id: 'config', label: 'Config', icon: Settings },
@@ -91,15 +95,17 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 overflow-hidden">
-        {active === 'chat' && <Chat />}
-        {active === 'workflow' && <Workflow />}
-        {active === 'skills' && <Skills />}
-        {active === 'skilltree' && <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense>}
-        {active === 'skilldash' && <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense>}
-        {active === 'memory' && <Memory />}
-        {active === 'workspace' && <Workspace />}
-        {active === 'config' && <Config />}
-        {active === 'dashboard' && <Dashboard />}
+        <div className={active === 'chat' ? 'h-full' : 'hidden'}><Chat /></div>
+        <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
+        <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
+        <div className={active === 'skills' ? 'h-full' : 'hidden'}><Skills /></div>
+        <div className={active === 'skilltree' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense></div>
+        <div className={active === 'skilldash' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense></div>
+        <div className={active === 'graphify' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense></div>
+        <div className={active === 'memory' ? 'h-full' : 'hidden'}><Memory /></div>
+        <div className={active === 'workspace' ? 'h-full' : 'hidden'}><Workspace /></div>
+        <div className={active === 'config' ? 'h-full' : 'hidden'}><Config /></div>
+        <div className={active === 'dashboard' ? 'h-full' : 'hidden'}><Dashboard /></div>
       </main>
     </div>
   )

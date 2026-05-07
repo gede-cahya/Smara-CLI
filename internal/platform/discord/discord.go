@@ -151,6 +151,34 @@ func (a *Adapter) SendTyping(ctx context.Context, channelID string) error {
 	return nil
 }
 
+// SendMessageWithID sends a message and returns its message ID.
+func (a *Adapter) SendMessageWithID(ctx context.Context, channelID string, msg platform.OutgoingMessage) (string, error) {
+	if a.session == nil {
+		return "", fmt.Errorf("session belum terhubung")
+	}
+
+	sent, err := a.session.ChannelMessageSend(channelID, msg.Content)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengirim pesan: %w", err)
+	}
+
+	return sent.ID, nil
+}
+
+// EditMessage edits an existing Discord message.
+func (a *Adapter) EditMessage(ctx context.Context, channelID string, messageID string, msg platform.OutgoingMessage) error {
+	if a.session == nil {
+		return fmt.Errorf("session belum terhubung")
+	}
+
+	_, err := a.session.ChannelMessageEdit(channelID, messageID, msg.Content)
+	if err != nil {
+		return fmt.Errorf("gagal mengedit pesan: %w", err)
+	}
+
+	return nil
+}
+
 // Close shuts down the Discord bot.
 func (a *Adapter) Close() error {
 	if a.session != nil {

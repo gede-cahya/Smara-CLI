@@ -257,28 +257,122 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 }
 
 // processPrompt sends a user prompt to the supervisor and relays the response.
+// It provides real-time UX feedback by sending and updating a status message.
 func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error {
-	// Send typing indicator
 	g.mu.RLock()
 	adapter, ok := g.adapters[msg.Platform]
 	g.mu.RUnlock()
-	if ok {
-		_ = adapter.SendTyping(ctx, msg.ChannelID)
+	if !ok {
+		return fmt.Errorf("adapter tidak ditemukan: %s", msg.Platform)
 	}
 
-	// Process via supervisor
+	// 1. Send initial status message
+	statusMsg := OutgoingMessage{Content: "🤔 Sedang berpikir...", Format: FormatPlain}
+	statusMsgID, err := adapter.SendMessageWithID(ctx, msg.ChannelID, statusMsg)
+	if err != nil {
+		// Fallback: just send typing indicator if status message fails
+		_ = adapter.SendTyping(ctx, msg.ChannelID)
+		statusMsgID = ""
+	}
+
+	// 2. Track current status for live updates
+	var statusMu sync.Mutex
+	currentStatus := "🤔 Sedang berpikir..."
+	lastEditTime := time.Now()
+
+	updateStatus := func(newStatus string) {
+		statusMu.Lock()
+		defer statusMu.Unlock()
+		if statusMsgID == "" || newStatus == currentStatus {
+			return
+		}
+		// Rate limit edits: min 1.5s between edits (Telegram API limit)
+		if time.Since(lastEditTime) < 1500*time.Millisecond {
+			return
+		}
+		currentStatus = newStatus
+		lastEditTime = time.Now()
+		editMsg := OutgoingMessage{Content: newStatus, Format: FormatPlain}
+		_ = adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg)
+	}
+
+	// 3. Set up supervisor callbacks for phase changes
+	g.supervisor.SetCallback(agent.AgenticCallback{
+		OnPhaseChange: func(phase, description string) {
+			emoji := phaseEmoji(phase)
+			updateStatus(fmt.Sprintf("%s %s...", emoji, description))
+		},
+		OnToolCall: func(server, tool string, args map[string]interface{}) {
+			toolName := tool
+			if len(toolName) > 30 {
+				toolName = toolName[:30] + "…"
+			}
+			updateStatus(fmt.Sprintf("🔧 Menjalankan: %s", toolName))
+		},
+		OnToolResult: func(output string) {
+			updateStatus("📝 Menganalisis hasil...")
+		},
+		OnIteration: func(current, max int) {
+			updateStatus(fmt.Sprintf("🔄 Iterasi %d/%d...", current, max))
+		},
+	})
+
+	// 4. Continuous typing indicator + timeout
+	promptCtx, promptCancel := context.WithTimeout(ctx, 120*time.Second)
+	defer promptCancel()
+
+	// Keep sending typing indicator every 4 seconds
+	typingDone := make(chan struct{})
+	go func() {
+		defer close(typingDone)
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-promptCtx.Done():
+				return
+			case <-ticker.C:
+				_ = adapter.SendTyping(promptCtx, msg.ChannelID)
+			}
+		}
+	}()
+
+	// 5. Process via supervisor
 	log.Printf("[gateway] Calling supervisor.ProcessPrompt: %q", msg.Content)
 	startTime := time.Now()
-	result, err := g.supervisor.ProcessPrompt(ctx, msg.Content)
+	result, err := g.supervisor.ProcessPrompt(promptCtx, msg.Content)
 	latencyMs := time.Since(startTime).Milliseconds()
 	log.Printf("[gateway] supervisor.ProcessPrompt done in %dms, err=%v", latencyMs, err)
 
+	// Stop typing indicator
+	promptCancel()
+	<-typingDone
+
+	// Clear callbacks
+	g.supervisor.SetCallback(agent.AgenticCallback{})
+
+	// 6. Delete status message (best effort)
+	if statusMsgID != "" {
+		deleteMsg := OutgoingMessage{Content: "⏳", Format: FormatPlain}
+		_ = adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, deleteMsg)
+	}
+
+	// 7. Handle errors
 	if err != nil {
 		log.Printf("[gateway] supervisor error: %v", err)
 		if g.metrics != nil {
 			g.metrics.RecordError(msg.Platform, err.Error())
 		}
-		return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
+		errText := err.Error()
+		if promptCtx.Err() != nil {
+			errText = "Timeout: proses terlalu lama (>120 detik)"
+		}
+		// Update status message with error instead of sending new one
+		if statusMsgID != "" {
+			editMsg := OutgoingMessage{Content: "❌ Error: " + errText, Format: FormatPlain}
+			return adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg)
+		}
+		return g.sendReply(ctx, msg, "❌ Error: "+errText)
 	}
 
 	respPreview := result.Response
@@ -287,7 +381,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	}
 	log.Printf("[gateway] supervisor result: response=%q tools=%d", respPreview, len(result.ToolsExecuted))
 
-	// Record metrics
+	// 8. Record metrics
 	if g.metrics != nil {
 		g.metrics.RecordMessageOut(msg.Platform)
 		g.metrics.RecordLatency(msg.Platform, latencyMs)
@@ -298,8 +392,104 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		g.metrics.RecordLLMUsage(result.InputTokens, result.OutputTokens, latencyMs, cost)
 	}
 
+	// 9. Build final response with stats footer
+	finalResp := result.Response
+	if latencyMs > 2000 {
+		duration := time.Duration(latencyMs) * time.Millisecond
+		footer := fmt.Sprintf("\n\n⏱ %.1fs", duration.Seconds())
+		if len(result.ToolsExecuted) > 0 {
+			footer += fmt.Sprintf(" • 🔧 %d tools", len(result.ToolsExecuted))
+		}
+		finalResp += footer
+	}
+
+	// 10. Update status message with final response, or send new message
+	if statusMsgID != "" {
+		// If response is short enough, edit the status message
+		if len(finalResp) <= maxMessageLength {
+			editMsg := OutgoingMessage{Content: finalResp, Format: FormatPlain}
+			if err := adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg); err == nil {
+				return nil
+			}
+		}
+		// For long responses or edit failure, delete status and send normally
+		editMsg := OutgoingMessage{Content: "✅", Format: FormatPlain}
+		_ = adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg)
+	}
+
 	log.Printf("[gateway] Sending reply to %s/%s", msg.Platform, msg.ChannelID)
-	return g.sendReply(ctx, msg, result.Response)
+	return g.sendReply(ctx, msg, finalResp)
+}
+
+// phaseEmoji returns an emoji for a processing phase.
+func phaseEmoji(phase string) string {
+	switch strings.ToLower(phase) {
+	case "thinking":
+		return "🤔"
+	case "tool_call", "tool_execution", "executing":
+		return "🔧"
+	case "analyzing", "analysis":
+		return "🔍"
+	case "responding", "response":
+		return "📝"
+	case "planning":
+		return "📋"
+	case "searching", "search":
+		return "🔎"
+	case "writing", "coding":
+		return "💻"
+	default:
+		return "⚡"
+	}
+}
+
+// sanitizeDSML strips leaked DSML tool-calling markup from AI responses.
+func sanitizeDSML(text string) string {
+	if text == "" {
+		return text
+	}
+	// DSML tags use fullwidth pipe characters (U+FF5C)
+	dsmlOpen := string([]rune{0xFF5C, 0xFF5C}) + "DSML" + string([]rune{0xFF5C, 0xFF5C})
+	// Remove complete DSML blocks
+	for {
+		start := strings.Index(text, "<"+dsmlOpen)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(text[start:], "</"+dsmlOpen)
+		if end == -1 {
+			closeIdx := strings.Index(text[start:], ">")
+			if closeIdx == -1 {
+				text = text[:start]
+			} else {
+				text = text[:start] + text[start+closeIdx+1:]
+			}
+			continue
+		}
+		endClose := strings.Index(text[start+end:], ">")
+		if endClose == -1 {
+			text = text[:start]
+		} else {
+			text = text[:start] + text[start+end+endClose+1:]
+		}
+	}
+	// Remove orphan DSML tags
+	for {
+		idx := strings.Index(text, "<"+dsmlOpen)
+		if idx == -1 {
+			idx = strings.Index(text, "</"+dsmlOpen)
+		}
+		if idx == -1 {
+			break
+		}
+		end := strings.Index(text[idx:], ">")
+		if end == -1 {
+			text = text[:idx]
+		} else {
+			text = text[:idx] + text[idx+end+1:]
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 // sendReply sends a response back to the platform where the message originated.
@@ -310,6 +500,9 @@ func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, conte
 	if !ok {
 		return fmt.Errorf("adapter tidak ditemukan untuk platform: %s", original.Platform)
 	}
+
+	// Sanitize DSML markup before sending
+	content = sanitizeDSML(content)
 
 	// Split long messages
 	parts := splitMessage(content, maxMessageLength)

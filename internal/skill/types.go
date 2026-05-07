@@ -3,6 +3,7 @@ package skill
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ParamDef defines a configurable parameter for a skill.
@@ -76,18 +77,56 @@ func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
 	for i, step := range s.Steps {
 		newArgs := make(map[string]interface{})
 		for k, v := range step.Args {
-			newArgs[k] = v
+			newArgs[k] = substituteParamValue(v, merged)
 		}
-		// Override with merged runtime args where keys match
+		// Override with merged runtime args where keys match (exact key replacement)
 		for k, v := range merged {
 			if _, exists := newArgs[k]; exists {
-				newArgs[k] = v
+				newArgs[k] = substituteParamValue(v, merged)
 			}
 		}
 		newSkill.Steps[i] = Step{Tool: step.Tool, Args: newArgs}
 	}
 
 	return newSkill
+}
+
+// substituteParamValue replaces __PARAM__name placeholders recursively in strings, maps, and slices.
+func substituteParamValue(v interface{}, params map[string]interface{}) interface{} {
+	switch val := v.(type) {
+	case string:
+		result := val
+		for k, pv := range params {
+			placeholder := "__PARAM__" + k
+			if strings.Contains(result, placeholder) {
+				var replacement string
+				switch rv := pv.(type) {
+				case string:
+					replacement = rv
+				case fmt.Stringer:
+					replacement = rv.String()
+				default:
+					replacement = fmt.Sprintf("%v", pv)
+				}
+				result = strings.ReplaceAll(result, placeholder, replacement)
+			}
+		}
+		return result
+	case map[string]interface{}:
+		newMap := make(map[string]interface{}, len(val))
+		for mk, mv := range val {
+			newMap[mk] = substituteParamValue(mv, params)
+		}
+		return newMap
+	case []interface{}:
+		newSlice := make([]interface{}, len(val))
+		for i, sv := range val {
+			newSlice[i] = substituteParamValue(sv, params)
+		}
+		return newSlice
+	default:
+		return v
+	}
 }
 
 // ToJSON serializes the skill.

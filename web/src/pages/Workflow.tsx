@@ -12,6 +12,14 @@ interface WorkflowItem {
 }
 
 const STORAGE_KEY = 'smara_workflow_history'
+const ACTIVE_ID_KEY = 'smara_workflow_active_id'
+const PROMPT_KEY = 'smara_workflow_prompt'
+const PHASES_KEY = 'smara_workflow_phases'
+const THOUGHTS_KEY = 'smara_workflow_thoughts'
+const ERROR_KEY = 'smara_workflow_error'
+const LAST_REQ_KEY = 'smara_workflow_last_req'
+const LAST_RES_KEY = 'smara_workflow_last_res'
+const SHOW_DEBUG_KEY = 'smara_workflow_show_debug'
 
 export default function Workflow() {
   const [prompt, setPrompt] = useState('')
@@ -41,22 +49,91 @@ export default function Workflow() {
     return () => { if (timer.current) clearInterval(timer.current) }
   }, [generating, executing])
 
-  // Load history from localStorage on mount
+  // Load history + transient state from localStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       try {
         const parsed: WorkflowItem[] = JSON.parse(saved)
         setHistory(parsed)
-        if (parsed.length > 0 && !activeId) setActiveId(parsed[0].id)
       } catch { /* ignore */ }
     }
+    const savedActive = localStorage.getItem(ACTIVE_ID_KEY)
+    if (savedActive) setActiveId(savedActive)
+    const savedPrompt = localStorage.getItem(PROMPT_KEY)
+    if (savedPrompt) setPrompt(savedPrompt)
+
+    // Restore transient UI state
+    const savedPhases = localStorage.getItem(PHASES_KEY)
+    if (savedPhases) {
+      try {
+        const parsed = JSON.parse(savedPhases)
+        // If we were interrupted while running, mark all phases as done
+        // because we can't reconnect to the in-flight HTTP request
+        const restored = parsed.map((p: any) => ({ ...p, status: 'done' as const }))
+        setPhases(restored)
+      } catch { /* ignore */ }
+    }
+    const savedThoughts = localStorage.getItem(THOUGHTS_KEY)
+    if (savedThoughts) {
+      try { setThoughts(JSON.parse(savedThoughts)) } catch { /* ignore */ }
+    }
+    const savedError = localStorage.getItem(ERROR_KEY)
+    if (savedError) setError(savedError)
+    const savedLastReq = localStorage.getItem(LAST_REQ_KEY)
+    if (savedLastReq) setLastRequest(savedLastReq)
+    const savedLastRes = localStorage.getItem(LAST_RES_KEY)
+    if (savedLastRes) setLastResponse(savedLastRes)
+    const savedShowDebug = localStorage.getItem(SHOW_DEBUG_KEY)
+    if (savedShowDebug) setShowDebug(savedShowDebug === 'true')
   }, [])
 
   // Save history to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history))
   }, [history])
+
+  // Save activeId to localStorage
+  useEffect(() => {
+    if (activeId) localStorage.setItem(ACTIVE_ID_KEY, activeId)
+    else localStorage.removeItem(ACTIVE_ID_KEY)
+  }, [activeId])
+
+  // Save prompt to localStorage
+  useEffect(() => {
+    if (prompt) localStorage.setItem(PROMPT_KEY, prompt)
+    else localStorage.removeItem(PROMPT_KEY)
+  }, [prompt])
+
+  // Persist transient state
+  useEffect(() => {
+    if (phases.length > 0) localStorage.setItem(PHASES_KEY, JSON.stringify(phases))
+    else localStorage.removeItem(PHASES_KEY)
+  }, [phases])
+
+  useEffect(() => {
+    if (thoughts.length > 0) localStorage.setItem(THOUGHTS_KEY, JSON.stringify(thoughts))
+    else localStorage.removeItem(THOUGHTS_KEY)
+  }, [thoughts])
+
+  useEffect(() => {
+    if (error) localStorage.setItem(ERROR_KEY, error)
+    else localStorage.removeItem(ERROR_KEY)
+  }, [error])
+
+  useEffect(() => {
+    if (lastRequest) localStorage.setItem(LAST_REQ_KEY, lastRequest)
+    else localStorage.removeItem(LAST_REQ_KEY)
+  }, [lastRequest])
+
+  useEffect(() => {
+    if (lastResponse) localStorage.setItem(LAST_RES_KEY, lastResponse)
+    else localStorage.removeItem(LAST_RES_KEY)
+  }, [lastResponse])
+
+  useEffect(() => {
+    localStorage.setItem(SHOW_DEBUG_KEY, String(showDebug))
+  }, [showDebug])
 
   const addPhase = (phase: string, description: string) => {
     setPhases(prev => {
@@ -179,7 +256,26 @@ export default function Workflow() {
           {generating ? 'Generate...' : 'Generate'}
         </button>
         <button
-          onClick={() => { localStorage.removeItem(STORAGE_KEY); setHistory([]); setActiveId(null); setError(null); }}
+          onClick={() => {
+            localStorage.removeItem(STORAGE_KEY)
+            localStorage.removeItem(ACTIVE_ID_KEY)
+            localStorage.removeItem(PROMPT_KEY)
+            localStorage.removeItem(PHASES_KEY)
+            localStorage.removeItem(THOUGHTS_KEY)
+            localStorage.removeItem(ERROR_KEY)
+            localStorage.removeItem(LAST_REQ_KEY)
+            localStorage.removeItem(LAST_RES_KEY)
+            localStorage.removeItem(SHOW_DEBUG_KEY)
+            setHistory([])
+            setActiveId(null)
+            setPrompt('')
+            setPhases([])
+            setThoughts([])
+            setError(null)
+            setLastRequest(null)
+            setLastResponse(null)
+            setShowDebug(false)
+          }}
           className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors text-xs"
         >
           Clear

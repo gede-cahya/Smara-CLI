@@ -50,14 +50,19 @@ var workspaceListCmd = &cobra.Command{
 	},
 }
 
+var workspacePath string
+
 var workspaceCreateCmd = &cobra.Command{
 	Use:   "create [nama]",
 	Short: "Buat workspace baru",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		path, _ := os.Getwd()
-		
+		path := workspacePath
+		if path == "" {
+			path, _ = os.Getwd()
+		}
+
 		cfg := config.Get()
 		store, err := memory.NewSQLiteStore(cfg.DBPath)
 		if err != nil {
@@ -108,4 +113,5 @@ var workspaceUseCmd = &cobra.Command{
 
 func init() {
 	workspaceCmd.AddCommand(workspaceListCmd, workspaceCreateCmd, workspaceUseCmd)
+	workspaceCreateCmd.Flags().StringVar(&workspacePath, "path", "", "Path direktori workspace (default: cwd)")
 }

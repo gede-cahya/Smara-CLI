@@ -1,9 +1,15 @@
 import { useState, useEffect } from 'react'
-import { Wrench, Play, Trash2, Download, FileJson, FileText, Plus, X } from 'lucide-react'
-import { fetchJSON, type SkillItem } from '../api'
+import { Wrench, Play, Trash2, Download, FileJson, FileText, Plus, X, Box, Settings } from 'lucide-react'
+import { fetchJSON, installBundledSkill, type SkillItem, type SkillParam, type BundledSkillItem } from '../api'
+
+function defaultParamValue(p: SkillParam): string {
+  if (p.default !== undefined) return String(p.default)
+  return ''
+}
 
 export default function Skills() {
   const [skills, setSkills] = useState<SkillItem[]>([])
+  const [bundled, setBundled] = useState<BundledSkillItem[]>([])
   const [loading, setLoading] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [importName, setImportName] = useState('')
@@ -11,12 +17,18 @@ export default function Skills() {
   const [importData, setImportData] = useState('')
   const [running, setRunning] = useState<string | null>(null)
   const [runResult, setRunResult] = useState<string | null>(null)
+  const [runModal, setRunModal] = useState<SkillItem | null>(null)
+  const [runArgs, setRunArgs] = useState<Record<string, string>>({})
 
   const load = async () => {
     setLoading(true)
     try {
-      const data = await fetchJSON<{ skills: SkillItem[] }>('/api/skills')
-      setSkills(data.skills || [])
+      const [saved, bundle] = await Promise.all([
+        fetchJSON<{ skills: SkillItem[] }>('/api/skills').catch(() => ({ skills: [] })),
+        fetchJSON<{ skills: BundledSkillItem[] }>('/api/skills/bundled').catch(() => ({ skills: [] })),
+      ])
+      setSkills(saved.skills || [])
+      setBundled(bundle.skills || [])
     } catch (e) {
       console.error(e)
     } finally {
@@ -36,13 +48,34 @@ export default function Skills() {
     }
   }
 
-  const runSkill = async (name: string) => {
+  const openRunModal = (sk: SkillItem) => {
+    if (sk.params && sk.params.length > 0) {
+      const defaults: Record<string, string> = {}
+      for (const p of sk.params) {
+        defaults[p.name] = defaultParamValue(p)
+      }
+      setRunArgs(defaults)
+      setRunModal(sk)
+    } else {
+      executeRun(sk.name, {})
+    }
+  }
+
+  const executeRun = async (name: string, args: Record<string, string>) => {
     setRunning(name)
     setRunResult(null)
     try {
+      const payload: Record<string, unknown> = { name }
+      const nonEmptyArgs: Record<string, string> = {}
+      for (const [k, v] of Object.entries(args)) {
+        if (v.trim() !== '') nonEmptyArgs[k] = v
+      }
+      if (Object.keys(nonEmptyArgs).length > 0) {
+        payload.args = nonEmptyArgs
+      }
       const res = await fetchJSON('/api/skills/run', {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(payload),
         headers: { 'Content-Type': 'application/json' },
       })
       setRunResult(JSON.stringify(res, null, 2))
@@ -50,6 +83,7 @@ export default function Skills() {
       setRunResult('Error: ' + (e.message || e))
     } finally {
       setRunning(null)
+      setRunModal(null)
     }
   }
 
@@ -69,6 +103,17 @@ export default function Skills() {
       alert('Gagal import: ' + (e.message || e))
     }
   }
+
+  const installBundled = async (name: string) => {
+    try {
+      await installBundledSkill(name)
+      load()
+    } catch (e: any) {
+      alert('Gagal install: ' + (e.message || e))
+    }
+  }
+
+  const savedNames = new Set(skills.map(s => s.name))
 
   return (
     <div className="flex flex-col h-full p-4 overflow-y-auto">
@@ -128,12 +173,16 @@ export default function Skills() {
         </div>
       )}
 
-      {loading && <div className="text-gray-500 text-sm">Loading...</div>}
+      {loading && <div className="text-gray-500 text-sm mb-4">Loading...</div>}
 
-      <div className="space-y-2">
+      {/* Saved Skills */}
+      <div className="mb-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium">
+        Tersimpan ({skills.length})
+      </div>
+      <div className="space-y-2 mb-6">
         {skills.length === 0 && !loading && (
           <div className="text-gray-600 text-sm p-4 bg-gray-900/50 rounded-lg">
-            Belum ada skill tersimpan. Import atau buat dari workflow.
+            Belum ada skill tersimpan. Import dari bundled atau buat dari workflow.
           </div>
         )}
         {skills.map(sk => (
@@ -144,15 +193,20 @@ export default function Skills() {
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{sk.name}</div>
               <div className="text-xs text-gray-500 truncate">{sk.description || 'No description'}</div>
-              <div className="flex gap-1 mt-1">
+              <div className="flex gap-1 mt-1 flex-wrap">
                 {sk.tags?.map(t => (
                   <span key={t} className="text-[10px] px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">{t}</span>
                 ))}
+                {sk.params && sk.params.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 bg-smara-900/30 rounded text-smara-400 flex items-center gap-1">
+                    <Settings className="w-3 h-3" />{sk.params.length} param
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2 ml-3">
               <button
-                onClick={() => runSkill(sk.name)}
+                onClick={() => openRunModal(sk)}
                 disabled={running === sk.name}
                 className="p-1.5 bg-green-900/30 hover:bg-green-900/50 text-green-400 rounded transition-colors disabled:opacity-50"
                 title="Jalankan skill"
@@ -171,6 +225,92 @@ export default function Skills() {
         ))}
       </div>
 
+      {/* Bundled Skills */}
+      {bundled.length > 0 && (
+        <>
+          <div className="mb-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium">
+            Bundled Skills ({bundled.length})
+          </div>
+          <div className="space-y-2">
+            {bundled.map(b => {
+              const installed = savedNames.has(b.name)
+              return (
+                <div
+                  key={b.name}
+                  className="flex items-center justify-between p-3 bg-gray-900/30 border border-gray-800/60 rounded-lg"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate flex items-center gap-2">
+                      <Box className="w-3.5 h-3.5 text-gray-500" />
+                      {b.name}
+                      {installed && <span className="text-[10px] px-1.5 py-0.5 bg-green-900/20 text-green-400 rounded">installed</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">{b.description || 'No description'}</div>
+                    <div className="flex gap-1 mt-1">
+                      {b.tags?.map(t => (
+                        <span key={t} className="text-[10px] px-1.5 py-0.5 bg-gray-800/60 rounded text-gray-400">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => installBundled(b.name)}
+                    disabled={installed}
+                    className="px-3 py-1.5 bg-smara-700 hover:bg-smara-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs transition-colors"
+                  >
+                    {installed ? 'Installed' : 'Install'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Run Modal */}
+      {runModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 w-full max-w-md space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Run: {runModal.name}</h3>
+              <button onClick={() => setRunModal(null)} className="text-gray-500 hover:text-gray-300">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              {runModal.params?.map(p => (
+                <div key={p.name}>
+                  <label className="text-xs text-gray-500 mb-1 block">
+                    {p.name} {p.required && <span className="text-red-400">*</span>}
+                  </label>
+                  <input
+                    value={runArgs[p.name] ?? ''}
+                    onChange={e => setRunArgs(prev => ({ ...prev, [p.name]: e.target.value }))}
+                    placeholder={p.description}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRunModal(null)}
+                className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => executeRun(runModal.name, runArgs)}
+                disabled={running === runModal.name || (runModal.params?.some(p => p.required && !runArgs[p.name]?.trim()) ?? false)}
+                className="px-3 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-50 rounded-lg text-xs transition-colors flex items-center gap-1"
+              >
+                <Play className="w-3.5 h-3.5" /> {running === runModal.name ? 'Menjalankan...' : 'Jalankan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Run Result */}
       {runResult && (
         <div className="mt-4 p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
           <div className="flex items-center justify-between mb-2">

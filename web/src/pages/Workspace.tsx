@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
-import { Layers, Plus, Check, Folder } from 'lucide-react'
+import { Layers, Plus, Check, Folder, FolderOpen } from 'lucide-react'
 import { fetchJSON } from '../api'
 import type { WorkspaceItem } from '../api'
+import FolderPicker from '../components/FolderPicker'
 
 export default function Workspace() {
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
   const [active, setActive] = useState('')
   const [newName, setNewName] = useState('')
+  const [newPath, setNewPath] = useState('')
   const [loading, setLoading] = useState(false)
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -41,9 +44,10 @@ export default function Workspace() {
     try {
       await fetchJSON('/api/workspaces/create', {
         method: 'POST',
-        body: JSON.stringify({ name: newName.trim(), path: '.' }),
+        body: JSON.stringify({ name: newName.trim(), path: newPath.trim() || '.' }),
       })
       setNewName('')
+      setNewPath('')
       load()
     } catch (e) {
       alert('Gagal buat workspace: ' + e)
@@ -57,20 +61,38 @@ export default function Workspace() {
         <h2 className="text-lg font-medium">Workspaces</h2>
       </div>
 
-      <div className="flex gap-2 mb-4">
-        <input
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && create()}
-          placeholder="Nama workspace baru..."
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
-        />
-        <button
-          onClick={create}
-          className="px-3 py-2 bg-smara-700 hover:bg-smara-600 rounded-lg transition-colors flex items-center gap-1"
-        >
-          <Plus className="w-4 h-4" /> Buat
-        </button>
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="flex gap-2">
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && create()}
+            placeholder="Nama workspace baru..."
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+          />
+          <button
+            onClick={create}
+            className="px-3 py-2 bg-smara-700 hover:bg-smara-600 rounded-lg transition-colors flex items-center gap-1"
+          >
+            <Plus className="w-4 h-4" /> Buat
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={newPath}
+            onChange={e => setNewPath(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && create()}
+            placeholder="Path folder (opsional, default: .)"
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+          />
+          <button
+            onClick={() => setFolderPickerOpen(true)}
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors flex items-center gap-1 text-xs"
+            title="Browse folder"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {loading && <div className="text-gray-500 text-sm">Loading...</div>}
@@ -107,6 +129,13 @@ export default function Workspace() {
           </div>
         ))}
       </div>
+
+      <FolderPicker
+        open={folderPickerOpen}
+        onClose={() => setFolderPickerOpen(false)}
+        onSelect={(path: string) => setNewPath(path)}
+        title="Pilih Folder Workspace"
+      />
     </div>
   )
 }

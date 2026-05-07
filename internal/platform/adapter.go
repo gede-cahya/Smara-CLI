@@ -21,6 +21,14 @@ type PlatformAdapter interface {
 	// SendTyping sends a typing indicator to a specific channel/chat.
 	SendTyping(ctx context.Context, channelID string) error
 
+	// EditMessage edits an existing message. Returns error if not supported.
+	// messageID is the platform-specific ID of the message to edit.
+	EditMessage(ctx context.Context, channelID string, messageID string, msg OutgoingMessage) error
+
+	// SendMessageWithID sends a message and returns its platform-specific message ID.
+	// This is used for status messages that will be edited later.
+	SendMessageWithID(ctx context.Context, channelID string, msg OutgoingMessage) (string, error)
+
 	// Close gracefully shuts down the adapter connection.
 	Close() error
 }

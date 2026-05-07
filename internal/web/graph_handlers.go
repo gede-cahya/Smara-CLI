@@ -309,6 +309,65 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, result)
 }
 
+func (s *Server) handleGraphData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	graphID := r.URL.Query().Get("id")
+	if graphID == "" {
+		errorResponse(w, http.StatusBadRequest, "graph id required")
+		return
+	}
+
+	memStore, ok := s.MemStore.(*memory.SQLiteStore)
+	if !ok {
+		errorResponse(w, http.StatusServiceUnavailable, "memory store unavailable")
+		return
+	}
+	gs, err := graphify.NewGraphStore(memStore.DB())
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("graph store: %v", err))
+		return
+	}
+	g, err := gs.LoadGraph(graphID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	const maxNodes = 500
+	var nodes []*graphify.Node
+	for _, n := range g.Nodes {
+		nodes = append(nodes, n)
+		if len(nodes) >= maxNodes {
+			break
+		}
+	}
+
+	nodeIDs := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		nodeIDs[n.ID] = true
+	}
+
+	var edges []*graphify.Edge
+	for _, e := range g.Edges {
+		if nodeIDs[e.Source] && nodeIDs[e.Target] {
+			edges = append(edges, e)
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"graph_id":   g.ID,
+		"root_path":  g.RootPath,
+		"node_count": g.NodeCount(),
+		"edge_count": g.EdgeCount(),
+		"truncated":  g.NodeCount() > maxNodes,
+		"nodes":      nodes,
+		"edges":      edges,
+	})
+}
+
 func (s *Server) handleGraphExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "only POST")

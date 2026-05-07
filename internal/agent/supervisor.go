@@ -717,6 +717,22 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 				return fmt.Sprintf("MCP '%s' diputuskan dan dihapus dari config", name), nil
 			}
 
+			if tc.Function == "skill_run" {
+				name := getStr(tc.Args, "skill_name")
+				if name == "" {
+					return "", fmt.Errorf("argumen 'skill_name' wajib diisi")
+				}
+				sk, err := skill.Load(name)
+				if err != nil {
+					return "", fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+				}
+				res, err := sk.Run(s.SkillExecutor())
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary), nil
+			}
+
 			var logFn func(string, string)
 			if s.callback.OnLog != nil {
 				logFn = s.callback.OnLog
@@ -728,6 +744,32 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 	s.mu.RLock()
 	route, ok := s.toolRoute[tc.Function]
 	client := s.mcpClients[route.MCPServer]
+
+	// Fallback: Context7 tools via connected MCP servers if not in toolRoute
+	// (handles cases where ListTools() discovery failed but server is connected)
+	if !ok && (tc.Function == "resolve" || tc.Function == "get-library-documentation") {
+		for name, mcpClient := range s.mcpClients {
+			if mcpClient == nil || !strings.Contains(strings.ToLower(name), "context7") {
+				continue
+			}
+			s.mu.RUnlock()
+			result, err := mcpClient.CallTool(tc.Function, tc.Args)
+			if err == nil && !result.IsError {
+				var output strings.Builder
+				for _, c := range result.Content {
+					if c.Text != "" {
+						output.WriteString(c.Text)
+						output.WriteString("\n")
+					}
+				}
+				out := strings.TrimSpace(output.String())
+				if out != "" {
+					return out, nil
+				}
+			}
+			s.mu.RLock()
+		}
+	}
 	s.mu.RUnlock()
 
 	if !ok {

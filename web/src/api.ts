@@ -105,6 +105,14 @@ export interface Blueprint {
   thoughts?: string[]
 }
 
+export interface SkillParam {
+  name: string
+  type: string
+  description: string
+  required: boolean
+  default?: string | number | boolean
+}
+
 export interface SkillItem {
   name: string
   description: string
@@ -113,6 +121,7 @@ export interface SkillItem {
   parent_id?: string
   category_path?: string[]
   dependencies?: string[]
+  params?: SkillParam[]
 }
 
 export interface ModeInfo {
@@ -120,4 +129,167 @@ export interface ModeInfo {
   Label: string
   Emoji: string
   Description: string
+}
+
+export interface GraphInfo {
+  graph_id: string
+  root_path: string
+  node_count: number
+  edge_count: number
+  languages: string[]
+  created_at?: string
+  updated_at?: string
+  corpus_hash?: string
+  version?: number
+}
+
+export interface GraphNode {
+  id: string
+  label: string
+  type: string
+  source_file: string
+  source_line: number
+  language: string
+  content: string
+  community: number
+  god_score: number
+  metadata?: Record<string, unknown>
+}
+
+export interface GraphEdge {
+  id: string
+  source: string
+  target: string
+  relation: string
+  confidence: string
+  confidence_score: number
+  source_file: string
+  inferred_reason?: string
+}
+
+export interface GraphData {
+  graph_id: string
+  root_path: string
+  node_count: number
+  edge_count: number
+  truncated: boolean
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+export interface GraphListResponse {
+  graphs: GraphInfo[]
+}
+
+export function fetchGraphList(): Promise<GraphListResponse> {
+  return fetchJSON<GraphListResponse>('/api/graph/list')
+}
+
+export function fetchGraphData(id: string): Promise<GraphData> {
+  return fetchJSON<GraphData>(`/api/graph/data?id=${encodeURIComponent(id)}`)
+}
+
+export function fetchGraphQuery(id: string, q: string, depth = 2): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+  return fetchJSON(`/api/graph/query?id=${encodeURIComponent(id)}&q=${encodeURIComponent(q)}&depth=${depth}`)
+}
+
+export interface CustomWorkflowTask {
+  id: string
+  description: string
+  type?: string
+  mcp_server?: string
+  tool_name?: string
+}
+
+export interface CustomWorkflowAgent {
+  role: string
+  description: string
+  skills: string[]
+  tasks: CustomWorkflowTask[]
+  depends_on?: string[]
+  inputs_from?: Record<string, string[]>
+}
+
+export interface CustomWorkflowItem {
+  name: string
+  description: string
+  project_dir?: string
+  agents: CustomWorkflowAgent[]
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CustomWorkflowSummary {
+  name: string
+  description: string
+  agents: number
+}
+
+export interface CustomWorkflowListResponse {
+  workflows: CustomWorkflowSummary[]
+}
+
+export interface BundledSkillItem {
+  name: string
+  description: string
+  version: number
+  tags: string[]
+}
+
+export interface BundledSkillsResponse {
+  skills: BundledSkillItem[]
+}
+
+export function fetchBundledSkills(): Promise<BundledSkillsResponse> {
+  return fetchJSON<BundledSkillsResponse>('/api/skills/bundled')
+}
+
+export function installBundledSkill(name: string): Promise<{ status: string; name: string }> {
+  return fetchJSON('/api/skills/install-bundled', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function fetchCustomWorkflowList(): Promise<CustomWorkflowListResponse> {
+  return fetchJSON<CustomWorkflowListResponse>('/api/custom-workflow/list')
+}
+
+export function fetchCustomWorkflowGet(name: string): Promise<CustomWorkflowItem> {
+  return fetchJSON<CustomWorkflowItem>(`/api/custom-workflow/get?name=${encodeURIComponent(name)}`)
+}
+
+export function saveCustomWorkflow(cw: CustomWorkflowItem): Promise<{ status: string; name: string }> {
+  return fetchJSON('/api/custom-workflow/save', { method: 'POST', body: JSON.stringify(cw) })
+}
+
+export function deleteCustomWorkflow(name: string): Promise<{ status: string; name: string }> {
+  return fetchJSON('/api/custom-workflow/delete', { method: 'POST', body: JSON.stringify({ name }) })
+}
+
+export function runCustomWorkflow(name: string, projectDir?: string): Promise<unknown> {
+  return fetchJSON('/api/custom-workflow/run', {
+    method: 'POST',
+    body: JSON.stringify({ name, project_dir: projectDir || undefined }),
+  })
+}
+
+export function importCustomWorkflow(name: string, json: string): Promise<{ status: string; name: string }> {
+  return fetchJSON('/api/custom-workflow/import', {
+    method: 'POST',
+    body: JSON.stringify({ name, json }),
+  })
+}
+
+export function getCwd(): Promise<{ path: string }> {
+  return fetchJSON('/api/fs/cwd')
+}
+
+export interface FSEntry {
+  name: string
+  is_dir: boolean
+}
+
+export function listDir(path: string): Promise<{ path: string; entries: FSEntry[] }> {
+  return fetchJSON(`/api/fs/list?path=${encodeURIComponent(path)}`)
 }

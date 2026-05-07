@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -46,6 +47,26 @@ func (s *SharedState) ReadArtifact(role, key string) (string, bool) {
 	defer s.mu.RUnlock()
 	path, ok := s.Artifacts[role+"/"+key]
 	return path, ok
+}
+
+// ArtifactEntry is a key-value artifact record.
+type ArtifactEntry struct {
+	Key   string
+	Value string
+}
+
+// ListArtifactsByRole returns all artifacts for a given role.
+func (s *SharedState) ListArtifactsByRole(role string) []ArtifactEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var entries []ArtifactEntry
+	prefix := role + "/"
+	for k, v := range s.Artifacts {
+		if strings.HasPrefix(k, prefix) {
+			entries = append(entries, ArtifactEntry{Key: strings.TrimPrefix(k, prefix), Value: v})
+		}
+	}
+	return entries
 }
 
 // WriteContract stores a structured contract (API schema, DB schema, etc.).

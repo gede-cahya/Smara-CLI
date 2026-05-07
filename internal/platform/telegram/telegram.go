@@ -139,6 +139,55 @@ func (a *Adapter) SendTyping(ctx context.Context, channelID string) error {
 	return nil
 }
 
+// SendMessageWithID sends a message and returns its message ID for later editing.
+func (a *Adapter) SendMessageWithID(ctx context.Context, channelID string, msg platform.OutgoingMessage) (string, error) {
+	if a.bot == nil {
+		return "", fmt.Errorf("bot belum terhubung")
+	}
+
+	chatID, err := parseChatID(channelID)
+	if err != nil {
+		return "", err
+	}
+
+	tgMsg := tgbotapi.NewMessage(chatID, msg.Content)
+	tgMsg.DisableWebPagePreview = true
+
+	sent, err := a.bot.Send(tgMsg)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengirim pesan: %w", err)
+	}
+
+	return fmt.Sprintf("%d", sent.MessageID), nil
+}
+
+// EditMessage edits an existing Telegram message.
+func (a *Adapter) EditMessage(ctx context.Context, channelID string, messageID string, msg platform.OutgoingMessage) error {
+	if a.bot == nil {
+		return fmt.Errorf("bot belum terhubung")
+	}
+
+	chatID, err := parseChatID(channelID)
+	if err != nil {
+		return err
+	}
+
+	var msgID int64
+	_, err = fmt.Sscanf(messageID, "%d", &msgID)
+	if err != nil {
+		return fmt.Errorf("invalid message ID: %s", messageID)
+	}
+
+	editMsg := tgbotapi.NewEditMessageText(chatID, int(msgID), msg.Content)
+	editMsg.DisableWebPagePreview = true
+
+	if _, err := a.bot.Send(editMsg); err != nil {
+		return fmt.Errorf("gagal mengedit pesan: %w", err)
+	}
+
+	return nil
+}
+
 // Close shuts down the Telegram bot.
 func (a *Adapter) Close() error {
 	// StopReceivingUpdates is already called in Listen() when ctx is cancelled.

@@ -1,0 +1,36 @@
+{
+  "name": "claude-prompt-engineer",
+  "description": "Craft optimized prompts for Claude AI using Anthropic's prompt engineering best practices",
+  "version": 1,
+  "tags": ["claude", "anthropic", "prompt-engineering", "ai", "llm"],
+  "params": [
+    {
+      "name": "task",
+      "type": "string",
+      "description": "The task or goal you want to achieve with Claude (e.g., 'write a React component', 'debug this error')",
+      "required": true
+    },
+    {
+      "name": "output_path",
+      "type": "string",
+      "description": "Path to save the optimized prompt file",
+      "required": false,
+      "default": "claude-prompt.md"
+    }
+  ],
+  "steps": [
+    {
+      "tool": "web_search",
+      "args": {
+        "query": "Claude prompt engineering best practices Anthropic __PARAM__task"
+      }
+    },
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "__PARAM__output_path",
+        "content": "# Optimized Claude Prompt\n\n## Task\n__PARAM__task\n\n## Optimized Prompt\n\nYou are an expert assistant specializing in the following domain.\n\n**Task:** __PARAM__task\n\n**Requirements:**\n- Be concise, specific, and actionable\n- Provide concrete examples where helpful\n- Ask clarifying questions only when critical information is missing\n- Structure your response for clarity and scan-ability\n- If writing code, include comments explaining key decisions\n\nPlease proceed with the task.\n"
+      }
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { fetchJSON, type SkillItem } from '../api'
-import { ChevronRight, ChevronDown, Folder, FileCode } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, FileCode, TreePine, Sparkles } from 'lucide-react'
+import SkillConstellation from './SkillConstellation'
 
+// --- Tree View helpers ---
 function buildCategoryTree(skills: SkillItem[]): Record<string, any> {
   const tree: Record<string, any> = {}
   for (const sk of skills) {
@@ -67,9 +69,21 @@ function TreeSection({ name, data, depth = 0 }: { name: string; data: any; depth
   )
 }
 
+// --- View mode type ---
+type ViewMode = 'tree' | 'constellation'
+
+const VIEW_KEY = 'smara_skilltree_view'
+
 export default function SkillTree() {
   const [skills, setSkills] = useState<SkillItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [view, setView] = useState<ViewMode>(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_KEY)
+      if (saved === 'tree' || saved === 'constellation') return saved
+    } catch {}
+    return 'constellation'
+  })
 
   useEffect(() => {
     setLoading(true)
@@ -78,20 +92,70 @@ export default function SkillTree() {
       .finally(() => setLoading(false))
   }, [])
 
+  const switchView = (v: ViewMode) => {
+    setView(v)
+    try { localStorage.setItem(VIEW_KEY, v) } catch {}
+  }
+
   const tree = buildCategoryTree(skills)
 
   return (
-    <div className="flex flex-col h-full p-4 overflow-y-auto">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">Hierarchical Skill Tree</h3>
-      {loading && <div className="text-gray-500 text-xs">Loading...</div>}
-      {skills.length === 0 && !loading && (
-        <div className="text-gray-600 text-xs">No skills found.</div>
-      )}
-      <div className="space-y-1">
-        {Object.entries(tree).map(([name, data]) => (
-          <TreeSection key={name} name={name} data={data} depth={0} />
-        ))}
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header with view toggle */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0">
+        <h3 className="text-sm font-medium text-gray-300">Skill Tree</h3>
+        <div className="flex items-center gap-1 bg-gray-800/60 rounded-lg p-0.5">
+          <button
+            onClick={() => switchView('tree')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              view === 'tree'
+                ? 'bg-gray-700 text-gray-100 shadow-sm'
+                : 'text-gray-500 hover:text-gray-300'
+            }`}
+          >
+            <TreePine className="w-3 h-3" />
+            Tree
+          </button>
+          <button
+            onClick={() => switchView('constellation')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              view === 'constellation'
+                ? 'bg-smara-700/40 text-smara-300 shadow-sm'
+                : 'text-gray-500 hover:text-gray-300'
+            }`}
+          >
+            <Sparkles className="w-3 h-3" />
+            Constellation
+          </button>
+        </div>
       </div>
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-gray-500 text-xs">Loading skills...</div>
+        </div>
+      )}
+
+      {/* Content */}
+      {!loading && view === 'tree' && (
+        <div className="flex-1 overflow-y-auto p-4">
+          {skills.length === 0 && (
+            <div className="text-gray-600 text-xs">No skills found.</div>
+          )}
+          <div className="space-y-1">
+            {Object.entries(tree).map(([name, data]) => (
+              <TreeSection key={name} name={name} data={data} depth={0} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!loading && view === 'constellation' && (
+        <div className="flex-1 overflow-hidden">
+          <SkillConstellation skills={skills} />
+        </div>
+      )}
     </div>
   )
 }

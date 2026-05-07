@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
@@ -586,7 +588,8 @@ func (s *Server) handleSkillRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name string                 `json:"name"`
+		Args map[string]interface{} `json:"args,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, "invalid JSON")
@@ -596,6 +599,10 @@ func (s *Server) handleSkillRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errorResponse(w, http.StatusNotFound, err.Error())
 		return
+	}
+	// Apply runtime args if provided
+	if len(req.Args) > 0 {
+		sk = sk.WithArgs(req.Args)
 	}
 	start := time.Now()
 	result, err := sk.Run(s.Supervisor.SkillExecutor())
@@ -819,4 +826,298 @@ func (s *Server) handleSkillDependencies(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"name": req.Name, "dependencies": req.Dependencies})
+}
+
+// --- Bundled Skills ---
+
+func findBundledSkillsDir() string {
+	candidates := []string{"skills"}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "skills"))
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		repoRoot := filepath.Join(filepath.Dir(file), "..", "..")
+		candidates = append(candidates, filepath.Join(repoRoot, "skills"))
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleSkillsBundled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	dir := findBundledSkillsDir()
+	if dir == "" {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"skills": []interface{}{}})
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var items []map[string]interface{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		var sk skill.Skill
+		if err := json.Unmarshal(data, &sk); err != nil {
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"name":        sk.Name,
+			"description": sk.Description,
+			"version":     sk.Version,
+			"tags":        sk.Tags,
+		})
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"skills": items})
+}
+
+func (s *Server) handleSkillsInstallBundled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	dir := findBundledSkillsDir()
+	if dir == "" {
+		errorResponse(w, http.StatusNotFound, "bundled skills directory not found")
+		return
+	}
+	path := filepath.Join(dir, req.Name+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, fmt.Sprintf("bundled skill '%s' not found", req.Name))
+		return
+	}
+	sk, err := skill.FromJSON(data)
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid bundled skill JSON: "+err.Error())
+		return
+	}
+	if err := skill.Save(sk, nil); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "installed", "name": sk.Name})
+}
+
+// --- Custom Workflow ---
+
+func (s *Server) handleCustomWorkflowList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	items, err := workflow.ListCustomWorkflows()
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var result []map[string]interface{}
+	for _, name := range items {
+		cw, err := workflow.LoadCustomWorkflow(name)
+		if err != nil {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"name":        cw.Name,
+			"description": cw.Description,
+			"agents":      len(cw.Agents),
+		})
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"workflows": result})
+}
+
+func (s *Server) handleCustomWorkflowGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		errorResponse(w, http.StatusBadRequest, "name required")
+		return
+	}
+	cw, err := workflow.LoadCustomWorkflow(name)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, cw)
+}
+
+func (s *Server) handleCustomWorkflowSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var cw workflow.CustomWorkflow
+	if err := json.NewDecoder(r.Body).Decode(&cw); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := workflow.SaveCustomWorkflow(&cw); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "saved", "name": cw.Name})
+}
+
+func (s *Server) handleCustomWorkflowDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST/DELETE")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			errorResponse(w, http.StatusBadRequest, "name required")
+			return
+		}
+		req.Name = name
+	}
+	if err := workflow.DeleteCustomWorkflow(req.Name); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted", "name": req.Name})
+}
+
+func (s *Server) handleCustomWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		Name       string `json:"name"`
+		ProjectDir string `json:"project_dir,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	cw, err := workflow.LoadCustomWorkflow(req.Name)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if req.ProjectDir != "" {
+		cw.ProjectDir = req.ProjectDir
+	}
+	result, err := workflow.RunCustomWorkflow(s.Supervisor, s.Supervisor.GetProvider(), cw)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCustomWorkflowImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		JSON string `json:"json"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	cw, err := workflow.CustomWorkflowFromJSON([]byte(req.JSON))
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid workflow JSON: "+err.Error())
+		return
+	}
+	cw.Name = req.Name
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "imported", "name": req.Name})
+}
+
+// --- Filesystem Browser ---
+
+func (s *Server) handleFSCwd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"path": cwd})
+}
+
+type fsEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
+}
+
+func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		cwd, _ := os.Getwd()
+		p = cwd
+	}
+	p, err := filepath.Abs(p)
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	info, err := os.Stat(p)
+	if err != nil || !info.IsDir() {
+		errorResponse(w, http.StatusBadRequest, "not a directory")
+		return
+	}
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result := []fsEntry{}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		result = append(result, fsEntry{Name: e.Name(), IsDir: e.IsDir()})
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"path":    p,
+		"entries": result,
+	})
 }

@@ -49,6 +49,14 @@ func init() {
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	// Never serve SPA fallback for API or WebSocket paths
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ws") {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("Not found"))
+		return
+	}
+
 	p := strings.TrimPrefix(r.URL.Path, "/")
 	if p == "" {
 		p = "index.html"
