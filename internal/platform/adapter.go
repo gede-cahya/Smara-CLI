@@ -33,6 +33,16 @@ type PlatformAdapter interface {
 	Close() error
 }
 
+// AttachmentDownloader is an optional capability for adapters that can
+// fetch incoming attachments (Telegram photos, Discord attachments, etc.)
+// to a local file. Adapters that implement this expose attachment data
+// to vision-capable agent tools.
+type AttachmentDownloader interface {
+	// DownloadAttachment fetches the file referenced by id (platform-
+	// specific) and writes it to a local path. Returns the path.
+	DownloadAttachment(ctx context.Context, id string) (string, error)
+}
+
 // MessageHandler is a callback function invoked when an incoming message is received.
 type MessageHandler func(ctx context.Context, msg IncomingMessage) error
 

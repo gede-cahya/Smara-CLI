@@ -288,6 +288,38 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		return fmt.Errorf("adapter tidak ditemukan: %s", msg.Platform)
 	}
 
+	// 0. Download image attachments (if any) and inject [image:/path] tokens
+	// into the prompt. Adapters declare attachment download capability via
+	// the AttachmentDownloader interface.
+	if len(msg.Attachments) > 0 {
+		if downloader, ok := adapter.(AttachmentDownloader); ok {
+			injected := []string{}
+			for _, att := range msg.Attachments {
+				if att.Type != "image" {
+					continue
+				}
+				path, err := downloader.DownloadAttachment(ctx, att.FileName)
+				if err != nil {
+					log.Printf("[gateway] gagal download attachment %s: %v", att.FileName, err)
+					continue
+				}
+				log.Printf("[gateway] image attachment di-download: %s", path)
+				injected = append(injected, "[image:"+path+"]")
+			}
+			if len(injected) > 0 {
+				steer := "\n\n[Sistem: pesan ini menyertakan gambar. Pakai tool analyze_image dengan path tersebut untuk melihat konten gambar — jangan menebak isi tanpa membacanya. Setelah dapat hasil, jawab pertanyaan user berdasarkan info tersebut.]"
+				if msg.Content == "" {
+					msg.Content = strings.Join(injected, " ") + " (tidak ada caption — analisa gambar yang dilampirkan)" + steer
+				} else {
+					msg.Content = strings.Join(injected, " ") + " " + msg.Content + steer
+				}
+			}
+		} else {
+			log.Printf("[gateway] adapter %s belum support download attachment, %d attachment di-skip",
+				msg.Platform, len(msg.Attachments))
+		}
+	}
+
 	// 1. Send initial status message
 	statusMsg := OutgoingMessage{Content: "🤔 Sedang berpikir...", Format: FormatPlain}
 	statusMsgID, err := adapter.SendMessageWithID(ctx, msg.ChannelID, statusMsg)

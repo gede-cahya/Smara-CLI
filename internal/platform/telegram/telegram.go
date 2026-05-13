@@ -4,7 +4,11 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -195,6 +199,61 @@ func (a *Adapter) Close() error {
 	return nil
 }
 
+// DownloadAttachment fetches a file from Telegram by FileID and saves it
+// under ~/.smara/clip-images/. Returns the local path. Used by the gateway
+// to make Photo/Document attachments visible to vision-capable tools.
+func (a *Adapter) DownloadAttachment(ctx context.Context, fileID string) (string, error) {
+	if a.bot == nil {
+		return "", fmt.Errorf("bot belum terhubung")
+	}
+	url, err := a.bot.GetFileDirectURL(fileID)
+	if err != nil {
+		return "", fmt.Errorf("gagal mendapatkan URL file: %w", err)
+	}
+
+	// Determine destination path under ~/.smara/clip-images/.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".smara", "clip-images")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+
+	// Pick extension from URL (Telegram URLs include the extension).
+	ext := filepath.Ext(url)
+	if ext == "" || strings.Contains(ext, "?") {
+		ext = ".jpg" // sensible default for photos
+	}
+	dest := filepath.Join(dir, fmt.Sprintf("tg-%s%s", fileID, ext))
+
+	// HTTP GET with the request context for cancellation support.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gagal download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download gagal, status %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(dest)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = os.Remove(dest)
+		return "", err
+	}
+	return dest, nil
+}
+
 // convertMessage converts a Telegram message to a platform.IncomingMessage.
 func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessage {
 	msg := platform.IncomingMessage{
@@ -206,6 +265,11 @@ func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessa
 		Content:   tgMsg.Text,
 		Metadata:  make(map[string]string),
 		Timestamp: time.Unix(int64(tgMsg.Date), 0),
+	}
+
+	// Photo/video messages carry text in Caption, not Text.
+	if msg.Content == "" && tgMsg.Caption != "" {
+		msg.Content = tgMsg.Caption
 	}
 
 	// Use first name if username is empty
