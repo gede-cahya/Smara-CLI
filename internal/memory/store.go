@@ -246,6 +246,11 @@ func (s *SQLiteStore) Init() error {
 		return fmt.Errorf("gagal setup FTS5: %w", err)
 	}
 
+	// Setup memory_links schema (for memory graph)
+	if err := EnsureLinksSchema(s.db); err != nil {
+		return fmt.Errorf("gagal setup memory_links: %w", err)
+	}
+
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ParamDef defines a configurable parameter for a skill.
@@ -21,20 +22,34 @@ type Step struct {
 	Args map[string]interface{} `json:"args"`
 }
 
+// LineageEntry records a previous version of a skill after refinement.
+// When a skill is refined, the prior version's description, tags and a
+// short summary of the steps are appended to Lineage so the history is
+// preserved even though the JSON file is overwritten.
+type LineageEntry struct {
+	Version     int       `json:"version"`
+	Description string    `json:"description,omitempty"`
+	Tags        []string  `json:"tags,omitempty"`
+	StepCount   int       `json:"step_count"`
+	RefinedAt   time.Time `json:"refined_at"`
+	RefinedFrom string    `json:"refined_from,omitempty"` // "auto", "manual", "feedback"
+}
+
 // Skill is a reusable automation recipe.
 type Skill struct {
-	Name         string     `json:"name"`
-	Description  string     `json:"description"`
-	Steps        []Step     `json:"steps"`
-	Version      int        `json:"version"`
-	Tags         []string   `json:"tags,omitempty"`
-	Author       string     `json:"author,omitempty"`
-	SourceURL    string     `json:"source_url,omitempty"`
-	Params       []ParamDef `json:"params,omitempty"`
-	ParentID     string     `json:"parent_id,omitempty"`
-	CategoryPath []string   `json:"category_path,omitempty"`
-	Dependencies []string   `json:"dependencies,omitempty"`
-	Children     []string   `json:"children,omitempty"` // derived, not persisted
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	Steps        []Step         `json:"steps"`
+	Version      int            `json:"version"`
+	Tags         []string       `json:"tags,omitempty"`
+	Author       string         `json:"author,omitempty"`
+	SourceURL    string         `json:"source_url,omitempty"`
+	Params       []ParamDef     `json:"params,omitempty"`
+	ParentID     string         `json:"parent_id,omitempty"`
+	CategoryPath []string       `json:"category_path,omitempty"`
+	Dependencies []string       `json:"dependencies,omitempty"`
+	Lineage      []LineageEntry `json:"lineage,omitempty"` // history of prior versions
+	Children     []string       `json:"children,omitempty"` // derived, not persisted
 }
 
 // WithArgs returns a copy of the skill with parameter substitution applied.
@@ -72,6 +87,7 @@ func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
 		ParentID:     s.ParentID,
 		CategoryPath: append([]string(nil), s.CategoryPath...),
 		Dependencies: append([]string(nil), s.Dependencies...),
+		Lineage:      append([]LineageEntry(nil), s.Lineage...),
 	}
 
 	for i, step := range s.Steps {

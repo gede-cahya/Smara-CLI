@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,9 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 	waves := r.buildWaves()
 	completed := make(map[string][]agent.TaskResult)
 
+	totalWaves := len(waves)
 	for waveIdx, wave := range waves {
+		log.Printf("[workflow] === WAVE %d/%d START (%d roles: %s) ===", waveIdx+1, totalWaves, len(wave), strings.Join(wave, ", "))
 		if r.OnWaveStart != nil {
 			r.OnWaveStart(waveIdx, wave)
 		}
@@ -49,6 +52,7 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 			completed[role] = append(completed[role], results...)
 		}
 
+		log.Printf("[workflow] === WAVE %d/%d COMPLETE ===", waveIdx+1, totalWaves)
 		if r.OnWaveComplete != nil {
 			r.OnWaveComplete(waveIdx, waveResults)
 		}
@@ -147,6 +151,9 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			log.Printf("[workflow] Role '%s' starting execution", role)
+			startTime := time.Now()
+
 			worker, ok := r.Workers[role]
 			if !ok {
 				mu.Lock()
@@ -156,6 +163,7 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 					Error:  fmt.Sprintf("worker for role '%s' not found", role),
 				})
 				mu.Unlock()
+				log.Printf("[workflow] Role '%s' FAILED: worker not found", role)
 				return
 			}
 
@@ -175,18 +183,30 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 					Error:  fmt.Sprintf("agent spec for role '%s' not found", role),
 				})
 				mu.Unlock()
+				log.Printf("[workflow] Role '%s' FAILED: spec not found", role)
 				return
 			}
 
 			tasks := BuildRoleTasks(*spec, r.SharedState)
 			tasks = injectDependencies(tasks, completed)
 
+			log.Printf("[workflow] Role '%s' executing %d task(s)", role, len(tasks))
 			var roleResults []agent.TaskResult
-			for _, task := range tasks {
+			for taskIdx, task := range tasks {
 				// Add small delay between tasks for rate limiting
 				time.Sleep(100 * time.Millisecond)
 
+				log.Printf("[workflow] Role '%s' task %d/%d (%s) starting...", role, taskIdx+1, len(tasks), task.ID)
+				taskStart := time.Now()
 				result := worker.Execute(ctx, task)
+				duration := time.Since(taskStart)
+
+				if result.Status == agent.TaskCompleted {
+					log.Printf("[workflow] Role '%s' task %d/%d (%s) COMPLETE (%v)", role, taskIdx+1, len(tasks), task.ID, duration)
+				} else {
+					log.Printf("[workflow] Role '%s' task %d/%d (%s) FAILED: %s (%v)", role, taskIdx+1, len(tasks), task.ID, result.Error, duration)
+				}
+
 				roleResults = append(roleResults, result)
 
 				if r.OnTaskComplete != nil {
@@ -202,6 +222,7 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 			mu.Lock()
 			results[role] = roleResults
 			mu.Unlock()
+			log.Printf("[workflow] Role '%s' FINISHED (%d/%d tasks, %v)", role, len(roleResults), len(tasks), time.Since(startTime))
 		}(role)
 	}
 

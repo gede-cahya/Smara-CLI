@@ -94,6 +94,11 @@ type Supervisor struct {
 	safetyEngine        *safety.Engine
 	cognitiveValidator  *cognitive.Validator
 	lspManager          *lsp.Manager
+
+	// lastToolTrace records the sequence of tool calls (with args) made
+	// during the current ProcessPrompt invocation. It is reset at the start
+	// of each prompt and used by auto-skill detection at the end.
+	lastToolTrace []skill.TraceStep
 }
 
 // toolRouteInfo stores routing info for a registered tool.
@@ -536,18 +541,36 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 				if s.memStore == nil {
 					return "Memory store tidak tersedia.", nil
 				}
-				if s.provider == nil {
-					return "LLM provider tidak tersedia untuk generate embedding.", nil
-				}
 				query, _ := tc.Args["query"].(string)
-				embedding, err := s.provider.GenerateEmbedding(query)
-				if err != nil {
-					return "", fmt.Errorf("gagal generate embedding: %w", err)
+				if strings.TrimSpace(query) == "" {
+					return "", fmt.Errorf("argumen 'query' wajib diisi")
 				}
-				results, err := s.memStore.Search(embedding, s.workspaceID, 5)
-				if err != nil {
-					return "", fmt.Errorf("gagal mencari memori: %w", err)
+
+				// Prefer semantic search; fall back to FTS when embeddings
+				// are unavailable (custom provider without /embeddings) or
+				// return no matches.
+				var results []memory.SearchResult
+				if s.provider != nil {
+					if embedding, embErr := s.provider.GenerateEmbedding(query); embErr == nil && len(embedding) > 0 {
+						if semRes, semErr := s.memStore.Search(embedding, s.workspaceID, 5); semErr == nil {
+							results = semRes
+						}
+					}
 				}
+
+				// FTS fallback when semantic returned nothing or embedding was
+				// unavailable.
+				if len(results) == 0 {
+					ftsQuery := sanitizeFTSQuery(query)
+					if ftsQuery != "" {
+						if fts, err := s.memStore.SearchFullText(ftsQuery, s.workspaceID, memory.MemoryFilters{Limit: 5}); err == nil {
+							for _, m := range fts {
+								results = append(results, memory.SearchResult{Memory: m})
+							}
+						}
+					}
+				}
+
 				if len(results) == 0 {
 					return "Tidak ada memori yang relevan ditemukan.", nil
 				}
@@ -1096,6 +1119,24 @@ func (s *Supervisor) GetSessionHistory(id string) ([]llm.Message, error) {
 func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*PromptResult, error) {
 	// Auto-discovery and exploration removed to respect user preference for manual triggers.
 
+	// Reset the auto-skill-detection trace for this new prompt.
+	s.lastToolTrace = nil
+
+	// Safety net: if the user's prompt is a clear self-introduction
+	// ("nama saya X", "panggil saya Y", etc), capture it to long-term
+	// memory immediately — regardless of whether the LLM later remembers
+	// to call the `remember` tool. This guarantees identity info is
+	// always recorded the first time it's mentioned.
+	if intro, ok := detectIntroduction(userPrompt); ok && s.memStore != nil {
+		// Best-effort embedding (custom providers without /embeddings will
+		// just save with NULL embedding — FTS will still find it).
+		var emb []float32
+		if s.provider != nil {
+			emb, _ = s.provider.GenerateEmbedding(intro)
+		}
+		_, _ = s.memStore.Save(intro, "user_preference", "auto-intro", s.workspaceID, emb)
+	}
+
 	// Pre-process: Search relevant memories
 
 	startTime := time.Now()
@@ -1104,17 +1145,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	// 1. Search memory for relevant context
 	var memContext string
 	if s.memStore != nil {
-		embedding, err := s.provider.GenerateEmbedding(userPrompt)
-		if err == nil && len(embedding) > 0 {
-			results, err := s.memStore.Search(embedding, s.workspaceID, 3)
-			if err == nil && len(results) > 0 {
-				var parts []string
-				for _, r := range results {
-					parts = append(parts, fmt.Sprintf("- %s (relevansi: %.2f)", r.Memory.Content, r.Similarity))
-				}
-				memContext = "Konteks dari memori:\n" + strings.Join(parts, "\n")
-			}
-		}
+		memContext = buildMemoryContext(s.memStore, s.provider, userPrompt, s.workspaceID)
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -1125,6 +1156,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	if hostCtx, err := smarassh.AllHosts(); err == nil && hostCtx != "(tidak ada host SSH tersimpan)" {
 		sysPrompt += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx
 	}
+	sysPrompt += buildSkillContext()
 	if BuiltinDB != nil {
 		if profile, err := LoadProfile(BuiltinDB); err == nil {
 			sysPrompt += "\n\n" + profile.ToContext()
@@ -1303,6 +1335,17 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
 	}
 
+	// 7. Auto-skill detection: record trace and capture if a repeating pattern
+	// has been observed. Runs asynchronously so it never blocks the reply.
+	if len(s.lastToolTrace) >= 2 && BuiltinDB != nil {
+		trace := skill.ExecutionTrace{
+			PromptText:  userPrompt,
+			Steps:       append([]skill.TraceStep(nil), s.lastToolTrace...),
+			CompletedAt: time.Now(),
+		}
+		go s.autoDetectAndCapture(trace)
+	}
+
 	return result, nil
 }
 
@@ -1321,17 +1364,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	// 1. Search memory for relevant context
 	var memContext string
 	if s.memStore != nil {
-		embedding, err := s.provider.GenerateEmbedding(userPrompt)
-		if err == nil && len(embedding) > 0 {
-			results, err := s.memStore.Search(embedding, s.workspaceID, 3)
-			if err == nil && len(results) > 0 {
-				var parts []string
-				for _, r := range results {
-					parts = append(parts, fmt.Sprintf("- %s (relevansi: %.2f)", r.Memory.Content, r.Similarity))
-				}
-				memContext = "Konteks dari memori:\n" + strings.Join(parts, "\n")
-			}
-		}
+		memContext = buildMemoryContext(s.memStore, s.provider, userPrompt, s.workspaceID)
 	}
 
 	// 2. Build initial messages
@@ -1339,6 +1372,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	if hostCtx2, err := smarassh.AllHosts(); err == nil && hostCtx2 != "(tidak ada host SSH tersimpan)" {
 		sysPrompt2 += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx2
 	}
+	sysPrompt2 += buildSkillContext()
 	if BuiltinDB != nil {
 		if profile, err := LoadProfile(BuiltinDB); err == nil {
 			sysPrompt2 += "\n\n" + profile.ToContext()
@@ -1488,7 +1522,16 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			if s.callback.OnPhaseChange != nil {
 				s.callback.OnPhaseChange("Generating", "Formulating final response...")
 			}
-			return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+			// If the "final" answer turned out to be pure DSML (happens when
+			// DeepSeek-style models end with a tool-call block but the
+			// extractor already converted those into real tool_calls) the
+			// cleaned content is empty. Fall back to thoughts+tools so the
+			// user sees something actionable instead of a blank bubble.
+			content := strings.TrimSpace(resp.Content)
+			if content == "" {
+				content = synthesizeFallbackSummary(thoughts, toolsExecuted)
+			}
+			return content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 		}
 
 		// If we are here, LLM wants to call tools
@@ -1504,6 +1547,11 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		// Update toolsExecuted list
 		for _, tc := range toolCalls {
 			toolsExecuted = append(toolsExecuted, tc.Function)
+			// Record full call for auto-skill pattern detection.
+			s.lastToolTrace = append(s.lastToolTrace, skill.TraceStep{
+				Tool: tc.Function,
+				Args: tc.Args,
+			})
 		}
 
 		// LLM requested tool calls — execute them
@@ -1555,14 +1603,19 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		// Loop continues — LLM will process tool results and either call more tools or give final answer
 	}
 
-	// Max iterations reached — try to get a final answer
+	// Max iterations reached — try to get a final answer. We explicitly
+	// instruct the model NOT to emit tool calls anymore so the final turn
+	// is pure prose. Some models (notably DeepSeek-v4 family) like to
+	// continue emitting DSML even in the final answer; stripping those
+	// tags leaves an empty string and the user sees "Tidak ada output teks"
+	// — that is the bug we're patching here.
 	if s.callback.OnPhaseChange != nil {
 		s.callback.OnPhaseChange("Generating", "Max iterations reached. Formulating final response...")
 	}
 
 	messages = append(messages, llm.Message{
-		Role:    llm.RoleSystem,
-		Content: "Maksimal iterasi tool tercapai. Berikan jawaban final berdasarkan informasi yang sudah dikumpulkan.",
+		Role: llm.RoleSystem,
+		Content: "BATAS iterasi tool tercapai. STOP calling tools. Sekarang tuliskan JAWABAN FINAL untuk user dalam Bahasa Indonesia, berdasarkan semua hasil tool yang sudah terkumpul di atas.\n\nATURAN PENTING:\n- JANGAN keluarkan tool_calls atau format DSML <|DSML|...>.\n- Jawaban harus berupa teks biasa / markdown normal.\n- Ringkas apa yang sudah dilakukan dan state akhir dari tugas.\n- Jika tugas belum selesai, katakan secara eksplisit apa yang belum selesai dan kenapa.",
 	})
 
 	resp, err := s.provider.Chat(messages)
@@ -1570,11 +1623,86 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response final: %w", err)
 	}
 
+	// Also strip DSML on the fallback path — some models still emit DSML
+	// tool-call markup in the final answer, which would otherwise leak to
+	// the platform reply.
+	var finalContent string
+	if resp != nil {
+		_, cleaned := llm.ExtractToolCallsFromContent(resp.Content)
+		finalContent = strings.TrimSpace(cleaned)
+	}
+
+	// If the fallback call still produced an empty response (pure DSML
+	// that got stripped), synthesize a useful summary from the
+	// intermediate thoughts and tool list instead of returning "".
+	// This is what prevents the "✓ Selesai. (Tidak ada output teks)"
+	// state when the model refuses to settle on a final answer.
+	if finalContent == "" {
+		finalContent = synthesizeFallbackSummary(thoughts, toolsExecuted)
+	}
+
 	if s.callback.OnPhaseChange != nil {
 		s.callback.OnPhaseChange("Done", "Finished")
 	}
 
-	return resp.Content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+	return finalContent, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+}
+
+// synthesizeFallbackSummary builds a human-readable recap when the LLM
+// couldn't produce a clean final answer. Uses any plaintext intermediate
+// thoughts plus the list of tools it ran so the user at least knows what
+// happened and can make a follow-up decision.
+func synthesizeFallbackSummary(thoughts, toolsExecuted []string) string {
+	var sb strings.Builder
+	sb.WriteString("⚠ Smara mencapai batas iterasi tool tanpa menyelesaikan jawaban final.\n\n")
+
+	// Pick the last few non-empty thoughts — they're usually the most
+	// contextual ("Saya cek X, ternyata Y, lanjut Z").
+	kept := 0
+	for i := len(thoughts) - 1; i >= 0 && kept < 3; i-- {
+		t := strings.TrimSpace(thoughts[i])
+		if t == "" {
+			continue
+		}
+		// Strip any leftover DSML shards that didn't make it through the
+		// per-iteration strip (defense in depth).
+		_, cleaned := llm.ExtractToolCallsFromContent(t)
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned == "" {
+			continue
+		}
+		if len(cleaned) > 300 {
+			cleaned = cleaned[:300] + "…"
+		}
+		sb.WriteString("• " + cleaned + "\n")
+		kept++
+	}
+	if kept == 0 {
+		sb.WriteString("(Tidak ada komentar intermediate yang bisa ditampilkan.)\n")
+	}
+
+	if len(toolsExecuted) > 0 {
+		sb.WriteString(fmt.Sprintf("\n🔧 Tools dijalankan (%d): ", len(toolsExecuted)))
+		// Dedupe sambil preserve order, batas 10
+		seen := map[string]bool{}
+		var list []string
+		for _, t := range toolsExecuted {
+			if !seen[t] {
+				seen[t] = true
+				list = append(list, t)
+				if len(list) >= 10 {
+					break
+				}
+			}
+		}
+		sb.WriteString(strings.Join(list, ", "))
+		if len(seen) > 10 {
+			sb.WriteString(fmt.Sprintf(" …dan %d lainnya", len(seen)-10))
+		}
+	}
+
+	sb.WriteString("\n\nSaran: pecah tugas jadi langkah lebih kecil atau kirim pertanyaan baru yang lebih spesifik.")
+	return sb.String()
 }
 
 // ClearHistory clears the conversation history and session registry history.
@@ -1657,6 +1785,7 @@ func (s *Supervisor) isCriticalCall(mode Mode, name string, args map[string]inte
 		"edit_file",
 		"ssh_exec",
 		"skill_run",
+		"skill_delete",
 	}
 	for _, c := range critical {
 		if name == c {

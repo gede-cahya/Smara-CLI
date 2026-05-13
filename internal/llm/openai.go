@@ -29,7 +29,7 @@ func NewOpenAIProvider(apiKey, model, host string) *OpenAIProvider {
 		apiKey: apiKey,
 		model:  model,
 		host:   host,
-		client: &http.Client{Timeout: 5 * time.Minute},
+		client: &http.Client{Timeout: 15 * time.Minute},
 	}
 }
 

@@ -71,11 +71,44 @@ func ApplyRefinement(proposedJSON []byte, db *sql.DB) (*Skill, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proposed skill invalid: %w", err)
 	}
-	newSkill.Version++
+	// Load the prior version so we can append it to the new skill's lineage
+	// history before overwriting. This is what powers the auto-refine parent
+	// tracking in the Hierarchy view: even though the file is replaced, the
+	// previous version's identity is preserved inside Lineage.
+	if prior, err := Load(newSkill.Name); err == nil {
+		AttachLineage(newSkill, prior, "feedback")
+		if newSkill.Version <= prior.Version {
+			newSkill.Version = prior.Version + 1
+		}
+	} else {
+		newSkill.Version++
+	}
 	if err := Save(newSkill, db); err != nil {
 		return nil, fmt.Errorf("failed to save refined skill: %w", err)
 	}
 	return newSkill, nil
+}
+
+// AttachLineage appends a snapshot of the prior skill version to the new
+// skill's Lineage array. Called whenever a skill is replaced by a refined
+// version so hierarchy/history views can display the chain.
+func AttachLineage(next, prior *Skill, refinedFrom string) {
+	if next == nil || prior == nil {
+		return
+	}
+	// Copy any existing lineage from the prior version first so the chain
+	// is preserved end-to-end.
+	if len(prior.Lineage) > 0 {
+		next.Lineage = append(append([]LineageEntry(nil), prior.Lineage...), next.Lineage...)
+	}
+	next.Lineage = append(next.Lineage, LineageEntry{
+		Version:     prior.Version,
+		Description: prior.Description,
+		Tags:        append([]string(nil), prior.Tags...),
+		StepCount:   len(prior.Steps),
+		RefinedAt:   time.Now(),
+		RefinedFrom: refinedFrom,
+	})
 }
 
 // BuildRefinementPrompt builds the system prompt for the LLM to refine a skill.

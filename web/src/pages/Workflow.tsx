@@ -9,6 +9,7 @@ interface WorkflowItem {
   blueprint: Blueprint
   result: string | null
   timestamp: number
+  prompt: string
 }
 
 const STORAGE_KEY = 'smara_workflow_history'
@@ -176,7 +177,8 @@ export default function Workflow() {
         id: Date.now().toString(),
         blueprint: bp,
         result: null,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        prompt: prompt.trim()
       }
       setHistory(prev => [newItem, ...prev])
       setActiveId(newItem.id)
@@ -209,7 +211,9 @@ export default function Workflow() {
       if (stepIdx < steps.length) addPhase(steps[stepIdx].phase, steps[stepIdx].desc)
     }, 2000)
 
-    const reqBody = JSON.stringify({ prompt: prompt.trim() })
+    const execPrompt = prompt.trim() || activeItem?.prompt || activeItem?.blueprint?.description || ''
+    if (!execPrompt) { setError('Prompt kosong — isi prompt atau generate blueprint baru'); setExecuting(false); return }
+    const reqBody = JSON.stringify({ prompt: execPrompt })
     setLastRequest(`POST /api/blueprint/execute\n${reqBody}`)
     console.log('[Workflow] execute start:', reqBody)
     try {

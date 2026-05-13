@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.18.3**
+**Autonomous Multi-Agent Terminal v1.19.0**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -45,6 +45,7 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **🔍 LSP Integration**: Language Server Protocol untuk Go, TypeScript, Python, dan Rust.
 - **📜 Dedicated Audit Log**: Logging terstruktur JSON Lines untuk semua tindakan agen.
 - **🕸️ Graphify — Knowledge Graph**: Parse codebase Go menjadi knowledge graph, simpan di SQLite, query dengan natural language, dan inject konteks graph ke system prompt agen secara otomatis. Export ke JSON/SVG/GraphML/Neo4j.
+- **🧬 Memory Graph — Memori Saling Terhubung**: Setiap memori bisa di-link satu sama lain dengan relasi (`refines`, `supports`, `follows`, dst.) dan bobot. **Auto-link Smart Engine** otomatis pilih mode: 🧠 semantic (cosine similarity embedding) atau 📝 lexical fallback (Jaccard token overlap dengan stopword EN+ID) — jalan untuk semua provider. Visualisasi interaktif via tab Graph di Smara Web (React Flow) atau standalone `smara memory graph` (vis-network).
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 
 ---
@@ -240,6 +241,29 @@ smara memory import backup.zip
 
 ---
 
+## 🧬 Memory Graph — Memori Saling Terhubung
+
+Setiap memori dapat dihubungkan satu sama lain. Auto-link engine otomatis pilih mode terbaik berdasarkan ketersediaan embedding di provider Anda.
+
+```bash
+# Manual link
+smara memory link 12 34 --relation refines --weight 0.8 --note "iterasi v2"
+smara memory unlink 7
+smara memory links 12
+
+# Auto-link otomatis (semantic kalau provider punya embeddings, lexical kalau tidak)
+smara memory autolink --threshold 0.78 --top-k 5
+
+# Visualisasi interaktif
+smara memory graph              # buka di browser default
+smara memory graph --port 7878  # custom port
+smara memory graph --export graph.json    # export untuk dipakai tool lain
+```
+
+Visualisasi juga tersedia di Smara Web — pindah ke tab **Memory → Graph** untuk explore graph dengan node hover, search filter, dan klik untuk drill-down ke detail memori beserta neighbor-nya. Tema mengikuti **Pastel Green Crush** design system.
+
+---
+
 ## 🌐 Smara Serve (Platform Bot)
 Smara dapat dijalankan sebagai layanan bot yang aktif terus-menerus.
 
@@ -272,6 +296,9 @@ smara serve --platform telegram --mode plan
 - `smara dashboard`: Monitoring real-time TUI.
 - `smara serve`: Jalankan platform bot (Telegram, Discord, WhatsApp).
 - `smara graphify`: Generate knowledge graph dari codebase Go (init, query, path, explain, export, list, delete).
+- `smara memory graph`: Visualisasi memory graph interaktif (vis-network di browser).
+- `smara memory link/unlink/links`: Kelola koneksi antar memori secara manual.
+- `smara memory autolink`: Bangun koneksi otomatis (semantic atau lexical fallback).
 
 ---
 

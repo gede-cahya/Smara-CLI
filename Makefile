@@ -1,4 +1,4 @@
-VERSION := 1.18.3
+VERSION := 1.19.0
 BINARY := smara
 GOFLAGS := -trimpath
 LDFLAGS := -s -w -X github.com/gede-cahya/Smara-CLI/cmd/smara.version=$(VERSION)

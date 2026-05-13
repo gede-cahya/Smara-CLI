@@ -82,6 +82,15 @@ type SmaraConfig struct {
 	ActiveWorkspaceID  int64              `mapstructure:"-"` // runtime only
 	Platforms          PlatformConfig   `mapstructure:"platforms" yaml:"platforms"`
 	SkillRegistries    []RegistryConfig `mapstructure:"skill_registries" yaml:"skill_registries"`
+
+	// AutoSkillDetect enables automatic skill capture: when the same tool-call
+	// pattern is observed repeatedly, Smara creates a skill without being asked.
+	// Default: true. Disable with `auto_skill_detect: false` in config.
+	AutoSkillDetect bool `mapstructure:"auto_skill_detect" yaml:"auto_skill_detect"`
+
+	// AutoSkillThreshold is the minimum number of times a tool-call pattern
+	// must be observed before being auto-captured as a skill. Default: 3.
+	AutoSkillThreshold int `mapstructure:"auto_skill_threshold" yaml:"auto_skill_threshold"`
 }
 
 // RegistryConfig defines a configured skill marketplace/registry source.
@@ -138,6 +147,8 @@ func DefaultConfig() *SmaraConfig {
 				URL:  "https://raw.githubusercontent.com/gede-cahya/smara-skills/main/skill-registry.json",
 			},
 		},
+		AutoSkillDetect:    true,
+		AutoSkillThreshold: 3,
 	}
 }
 
@@ -194,6 +205,8 @@ func Init(configPath string) error {
 	viper.SetDefault("smara_mcp_args", defaults.SmaraMCPArgs)
 	viper.SetDefault("smara_mcp_api_key", defaults.SmaraMCPAPIKey)
 	viper.SetDefault("skill_registries", defaults.SkillRegistries)
+	viper.SetDefault("auto_skill_detect", defaults.AutoSkillDetect)
+	viper.SetDefault("auto_skill_threshold", defaults.AutoSkillThreshold)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")

@@ -1,25 +1,63 @@
 # Binaries
 /smara
 /smara.exe
+/smara-fix*
+/smara-test
+/smara_test
+bin/
 dist/
+graphify-out/
+ui_mockup/
 
 # Configuration & Data (Local only)
 .smara/
 memory.db
 config.yaml
 
+# Per-tool config / generated
+.opencode/node_modules/
+.opencode/package-lock.json
+.kilo/
+.windsurf/
+.vscode/
+docs-site/
+
+# Embedded git repo (managed separately)
+docs-site/.git
+
 # Dependencies
 vendor/
 go.sum
 
+# Frontend deps
+web/node_modules/
+web/dist/
+.kiro/
+docs/
+
 # Temporary files
 *.tmp
 temp/
+scratch/
 
 # Compiled test binaries
 *.test
-/smara_test
 
 # Test output
 test-results-*.md
 *.out
+
+# Stray logs / build status
+BUILD_STATUS.txt
+agent.test
+config.test
+session.test
+llm.test
+nudge.test
+metrics.test
+safety.test
+memory.test
+prd dan psd
+smara-root.json
+smara.graphml
+GRAPH_REPORT.md

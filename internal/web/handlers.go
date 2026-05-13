@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -540,20 +542,40 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		type lineageEntry struct {
+			Version     int      `json:"version"`
+			Description string   `json:"description,omitempty"`
+			Tags        []string `json:"tags,omitempty"`
+			StepCount   int      `json:"step_count"`
+			RefinedAt   string   `json:"refined_at,omitempty"`
+			RefinedFrom string   `json:"refined_from,omitempty"`
+		}
 		type skillItem struct {
-			Name         string   `json:"name"`
-			Description  string   `json:"description"`
-			Version      int      `json:"version"`
-			Tags         []string `json:"tags"`
-			ParentID     string   `json:"parent_id,omitempty"`
-			CategoryPath []string `json:"category_path,omitempty"`
-			Dependencies []string `json:"dependencies,omitempty"`
+			Name         string         `json:"name"`
+			Description  string         `json:"description"`
+			Version      int            `json:"version"`
+			Tags         []string       `json:"tags"`
+			ParentID     string         `json:"parent_id,omitempty"`
+			CategoryPath []string       `json:"category_path,omitempty"`
+			Dependencies []string       `json:"dependencies,omitempty"`
+			Lineage      []lineageEntry `json:"lineage,omitempty"`
 		}
 		var items []skillItem
 		for _, n := range names {
 			sk, err := skill.Load(n)
 			if err != nil {
 				continue
+			}
+			var lin []lineageEntry
+			for _, l := range sk.Lineage {
+				lin = append(lin, lineageEntry{
+					Version:     l.Version,
+					Description: l.Description,
+					Tags:        l.Tags,
+					StepCount:   l.StepCount,
+					RefinedAt:   l.RefinedAt.Format("2006-01-02 15:04"),
+					RefinedFrom: l.RefinedFrom,
+				})
 			}
 			items = append(items, skillItem{
 				Name:         sk.Name,
@@ -563,6 +585,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 				ParentID:     sk.ParentID,
 				CategoryPath: sk.CategoryPath,
 				Dependencies: sk.Dependencies,
+				Lineage:      lin,
 			})
 		}
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"skills": items})
@@ -1120,4 +1143,129 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 		"path":    p,
 		"entries": result,
 	})
+}
+
+
+// handleSkillExport returns the entire skill tree as a downloadable JSON
+// envelope. GET /api/skills/export?source=machine-name
+//
+// The response is served with attachment headers so browsers prompt the
+// user with a save dialog.
+func (s *Server) handleSkillExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+
+	source := r.URL.Query().Get("source")
+
+	var db = underlyingDB(s)
+	envelope, err := skill.ExportAll(db, source)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// If client explicitly asks for raw JSON in body (for the app itself),
+	// skip attachment headers. Default behavior is download.
+	if r.URL.Query().Get("inline") != "1" {
+		filename := fmt.Sprintf("smara-skills-%s.json", time.Now().Format("2006-01-02"))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := skill.WriteExport(w, envelope); err != nil {
+		log.Printf("[skill-export] write error: %v", err)
+	}
+}
+
+// handleSkillTreeImport accepts a JSON envelope in the request body and
+// merges it into ~/.smara/skills/. POST /api/skills/import-tree
+//
+// Body format:
+//   {
+//     "mode": "overwrite"|"skip"|"rename",   // default overwrite
+//     "dry_run": false,                      // default false
+//     "envelope": { ... TreeExport ... }     // OR
+//     "envelope_json": "<stringified>"       // OR raw body containing
+//                                            // a naked TreeExport
+//   }
+func (s *Server) handleSkillTreeImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+
+	var req struct {
+		Mode         string            `json:"mode"`
+		DryRun       bool              `json:"dry_run"`
+		Envelope     *skill.TreeExport `json:"envelope,omitempty"`
+		EnvelopeJSON string            `json:"envelope_json,omitempty"`
+	}
+	// Read the whole body first so we can fall back to parsing it as a raw
+	// envelope when the client sends the envelope directly.
+	raw, err := readAllLimited(r.Body, 64*1024*1024) // 64 MB cap
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, "gagal baca body: "+err.Error())
+		return
+	}
+
+	var env *skill.TreeExport
+	if err := json.Unmarshal(raw, &req); err == nil && (req.Envelope != nil || req.EnvelopeJSON != "") {
+		if req.Envelope != nil {
+			env = req.Envelope
+		} else if req.EnvelopeJSON != "" {
+			e, err := skill.ReadExport(strings.NewReader(req.EnvelopeJSON))
+			if err != nil {
+				errorResponse(w, http.StatusBadRequest, "envelope_json invalid: "+err.Error())
+				return
+			}
+			env = e
+		}
+	} else {
+		// Fall back: entire body is a TreeExport envelope.
+		e, err := skill.ReadExport(strings.NewReader(string(raw)))
+		if err != nil {
+			errorResponse(w, http.StatusBadRequest, "body bukan TreeExport valid: "+err.Error())
+			return
+		}
+		env = e
+	}
+
+	mode, err := skill.ValidateImportModeString(req.Mode)
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	db := underlyingDB(s)
+	result, err := skill.ImportAll(db, env, mode, req.DryRun)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, result)
+}
+
+// underlyingDB returns the shared *sql.DB handle from the skill tracker
+// so export/import can read/write the auto_skill_patterns table. Returns
+// nil if no tracker is configured; skill JSON still works in that case.
+func underlyingDB(s *Server) *sql.DB {
+	if s == nil || s.SkillTracker == nil {
+		return nil
+	}
+	return s.SkillTracker.DB()
+}
+
+// readAllLimited reads up to max bytes and returns an error if exceeded.
+func readAllLimited(r io.Reader, max int64) ([]byte, error) {
+	limited := &io.LimitedReader{R: r, N: max + 1}
+	buf, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > max {
+		return nil, fmt.Errorf("request body terlalu besar (>%d bytes)", max)
+	}
+	return buf, nil
 }

@@ -233,6 +233,68 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "web_fetch",
+			Description: "Mengunduh konten satu halaman web (URL) dan membersihkannya menjadi teks biasa (HTML tag dihapus, navigasi/script di-strip). Gunakan ini setelah `web_search` untuk membaca detail dari link yang ditemukan — misalnya untuk mengambil data terstruktur dari sebuah artikel, daftar, atau tabel HTML. Maksimum 200 KB per halaman, di-truncate kalau lebih besar. Kalau situs pakai Cloudflare / anti-bot dan response dicurigai challenge page, tool otomatis switch ke mode headless Chromium.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"url": map[string]interface{}{
+						"type":        "string",
+						"description": "URL lengkap (https://...) yang akan di-fetch",
+					},
+					"max_chars": map[string]interface{}{
+						"type":        "integer",
+						"description": "Batas karakter teks yang dikembalikan setelah cleanup. Default 20000.",
+					},
+					"render": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"auto", "never", "always"},
+						"description": "Kontrol headless Chromium: 'auto' (default) = coba HTTP dulu, fallback ke headless kalau kena challenge; 'always' = langsung headless (lebih lambat ~3-8 detik tapi handle JS challenges); 'never' = HTTP saja, gagal kalau situs pakai Cloudflare.",
+					},
+					"wait_ms": map[string]interface{}{
+						"type":        "integer",
+						"description": "Berapa lama menunggu JS challenge pass saat mode headless (default 5000ms).",
+					},
+				},
+				"required": []string{"url"},
+			},
+		},
+		{
+			Name:        "export_data",
+			Description: "Menyimpan data terstruktur ke file lokal dalam format CSV, JSON, Markdown table, atau PDF. Gunakan ini setelah mengumpulkan data dari web_search/web_fetch untuk menyerahkan hasil ke user dalam format yang mudah dipakai. Untuk PDF dibutuhkan `pandoc` atau `wkhtmltopdf` terinstall di sistem — kalau tidak ada, tool akan fallback ke Markdown dan memberitahu user.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"format": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"csv", "json", "md", "markdown", "pdf"},
+						"description": "Format output. csv = spreadsheet, json = mesin-readable, md = tabel Markdown, pdf = dokumen siap print.",
+					},
+					"data": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of objects (baris tabel). Contoh: [{\"name\":\"Budi\",\"role\":\"Menteri X\"}, ...]. Semua object pakai keys yang sama jadi kolom.",
+						"items": map[string]interface{}{
+							"type": "object",
+						},
+					},
+					"columns": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Urutan kolom eksplisit. Kalau kosong, otomatis dari keys object pertama.",
+					},
+					"title": map[string]interface{}{
+						"type":        "string",
+						"description": "Judul dokumen (muncul di PDF/MD). Opsional.",
+					},
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file output. Kalau kosong, otomatis ke /tmp/export-<timestamp>.<ext>.",
+					},
+				},
+				"required": []string{"format", "data"},
+			},
+		},
+		{
 			Name:        "remember",
 			Description: "Menyimpan informasi penting ke memori jangka panjang agar bisa diingat di sesi atau percakapan berikutnya (lintas sesi).",
 			Parameters: map[string]interface{}{
@@ -519,6 +581,101 @@ func GetBuiltinTools() []llm.ToolFunction {
 					"skill_name": map[string]interface{}{
 						"type":        "string",
 						"description": "Nama skill yang tersimpan (misal: deploy-react)",
+					},
+				},
+				"required": []string{"skill_name"},
+			},
+		},
+		{
+			Name:        "skill_create",
+			Description: "Membuat dan menyimpan skill otomasi baru (resep multi-step tool calls) ke ~/.smara/skills/. Gunakan saat user minta 'buatkan skill' / 'simpan sebagai skill' / 'buatin routine', atau saat kamu mendeteksi pola perintah berulang yang sebaiknya di-capture untuk dipakai ulang. Skill langsung bisa dijalankan via skill_run setelah disimpan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama skill dalam kebab-case atau snake_case tanpa spasi (misal: cek-service-vps, deploy-react). Wajib.",
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Deskripsi 1-2 kalimat: apa yang dilakukan skill ini dan kapan dipakai. Wajib.",
+					},
+					"steps": map[string]interface{}{
+						"type":        "array",
+						"description": "Urutan tool calls yang akan dijalankan. Setiap step berisi {\"tool\": \"<nama_tool>\", \"args\": {...}}. Nama tool harus salah satu builtin tool Smara (misal run_command, ssh_exec, read_file, edit_file). Wajib minimal 1 step.",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"tool": map[string]interface{}{
+									"type":        "string",
+									"description": "Nama tool, misal run_command atau ssh_exec",
+								},
+								"args": map[string]interface{}{
+									"type":        "object",
+									"description": "Argumen tool. Gunakan __PARAM__nama untuk placeholder yang akan diisi runtime.",
+								},
+							},
+							"required": []string{"tool", "args"},
+						},
+					},
+					"tags": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "1-3 tag kategori, misal [\"vps\", \"monitoring\"]. Opsional.",
+					},
+					"params": map[string]interface{}{
+						"type":        "array",
+						"description": "Parameter yang bisa diisi runtime. Placeholder di args pakai format __PARAM__<name>. Opsional.",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"name":        map[string]interface{}{"type": "string"},
+								"type":        map[string]interface{}{"type": "string", "enum": []string{"string", "number", "boolean"}},
+								"description": map[string]interface{}{"type": "string"},
+								"required":    map[string]interface{}{"type": "boolean"},
+								"default":     map[string]interface{}{"type": "string"},
+							},
+						},
+					},
+					"overwrite": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Jika true, skill dengan nama sama akan ditimpa (lineage versi lama otomatis direkam). Default: false.",
+					},
+					"parent": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama skill induk di hierarchy tree. Gunakan jika skill baru ini adalah perpanjangan/spesialisasi dari skill lain yang sudah ada. Opsional.",
+					},
+					"category_path": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Jalur kategori untuk skill tree. Contoh: [\"monitoring\", \"vps\"]. Opsional.",
+					},
+					"dependencies": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Nama-nama skill lain yang dibutuhkan skill ini. Ditampilkan sebagai edge di hierarchy/constellation. Opsional.",
+					},
+				},
+				"required": []string{"name", "description", "steps"},
+			},
+		},
+		{
+			Name:        "skill_list",
+			Description: "Daftar semua skill yang tersimpan di ~/.smara/skills/. Gunakan untuk mengecek apakah skill tertentu sudah ada sebelum membuat yang baru, atau untuk menunjukkan pilihan ke user.",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "skill_delete",
+			Description: "Menghapus skill tersimpan. Gunakan hanya jika user eksplisit minta skill dihapus.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama skill yang akan dihapus",
 					},
 				},
 				"required": []string{"skill_name"},
@@ -1108,6 +1265,50 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		query, _ := args["query"].(string)
 		return searchWeb(query)
 
+	case "web_fetch":
+		rawURL, _ := args["url"].(string)
+		maxChars := 20000
+		if mc, ok := args["max_chars"].(float64); ok && mc > 0 {
+			maxChars = int(mc)
+		}
+		render := strings.ToLower(getStr(args, "render"))
+		if render == "" {
+			render = "auto"
+		}
+		waitMS := 5000
+		if wm, ok := args["wait_ms"].(float64); ok && wm > 0 {
+			waitMS = int(wm)
+		}
+
+		// Route based on render policy.
+		if render == "always" {
+			return fetchHeadless(rawURL, maxChars, waitMS)
+		}
+
+		// Normal HTTP fetch first.
+		result, err := fetchWebPage(rawURL, maxChars)
+		if err != nil {
+			// If it's a 4xx/5xx and render=auto, fall through to headless.
+			if render == "auto" && isBlockingError(err) {
+				if headlessResult, hErr := fetchHeadless(rawURL, maxChars, waitMS); hErr == nil {
+					return "⚠ HTTP fetch gagal (" + err.Error() + ") — auto-switched ke headless Chromium.\n\n" + headlessResult, nil
+				}
+			}
+			return "", err
+		}
+
+		// If HTTP succeeded but body looks like a challenge page, auto-retry
+		// with headless when render=auto.
+		if render == "auto" && looksLikeChallenge(result) {
+			if headlessResult, hErr := fetchHeadless(rawURL, maxChars, waitMS); hErr == nil {
+				return "⚠ Halaman terdeteksi anti-bot challenge — di-retry via headless Chromium.\n\n" + headlessResult, nil
+			}
+		}
+		return result, nil
+
+	case "export_data":
+		return exportData(args)
+
 	case "ssh_exec":
 		hostArg, _ := args["host"].(string)
 		command, _ := args["command"].(string)
@@ -1374,6 +1575,46 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 		return fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary), nil
 
+	case "skill_create":
+		return createSkillFromArgs(args)
+
+	case "skill_list":
+		names, err := skill.List()
+		if err != nil {
+			return "", fmt.Errorf("gagal membaca daftar skill: %w", err)
+		}
+		if len(names) == 0 {
+			return "Belum ada skill tersimpan di ~/.smara/skills/.", nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Skill tersimpan (%d):\n", len(names)))
+		for _, n := range names {
+			sk, err := skill.Load(n)
+			if err != nil {
+				sb.WriteString(fmt.Sprintf("  • %s (gagal load: %v)\n", n, err))
+				continue
+			}
+			desc := sk.Description
+			if len(desc) > 80 {
+				desc = desc[:80] + "…"
+			}
+			sb.WriteString(fmt.Sprintf("  • %s — %s (v%d, %d steps)\n", sk.Name, desc, sk.Version, len(sk.Steps)))
+		}
+		return sb.String(), nil
+
+	case "skill_delete":
+		name := getStr(args, "skill_name")
+		if name == "" {
+			return "", fmt.Errorf("argumen 'skill_name' wajib diisi")
+		}
+		if _, err := skill.Load(name); err != nil {
+			return "", fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+		}
+		if err := skill.Delete(name, BuiltinDB); err != nil {
+			return "", fmt.Errorf("gagal menghapus skill: %w", err)
+		}
+		return fmt.Sprintf("Skill '%s' dihapus.", name), nil
+
 	case "schedule_reminder":
 		promptText := getStr(args, "prompt_text")
 		when := getStr(args, "when")
@@ -1539,6 +1780,191 @@ func getStr(args map[string]interface{}, key string) string {
 		return v
 	}
 	return ""
+}
+
+// skillNameRe validates the skill name: letters/digits/hyphen/underscore only.
+var skillNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// createSkillFromArgs builds and persists a skill from the JSON arguments
+// supplied by the LLM via the skill_create builtin tool.
+func createSkillFromArgs(args map[string]interface{}) (string, error) {
+	name := strings.TrimSpace(getStr(args, "name"))
+	description := strings.TrimSpace(getStr(args, "description"))
+
+	if name == "" {
+		return "", fmt.Errorf("argumen 'name' wajib diisi")
+	}
+	if !skillNameRe.MatchString(name) {
+		return "", fmt.Errorf("nama skill hanya boleh huruf, angka, '-', dan '_' (dapat: %q)", name)
+	}
+	if len(name) > 60 {
+		return "", fmt.Errorf("nama skill terlalu panjang (max 60 karakter)")
+	}
+	if description == "" {
+		return "", fmt.Errorf("argumen 'description' wajib diisi")
+	}
+
+	rawSteps, ok := args["steps"].([]interface{})
+	if !ok || len(rawSteps) == 0 {
+		return "", fmt.Errorf("argumen 'steps' wajib berupa array minimal 1 elemen")
+	}
+
+	steps := make([]skill.Step, 0, len(rawSteps))
+	for i, raw := range rawSteps {
+		stepMap, ok := raw.(map[string]interface{})
+		if !ok {
+			return "", fmt.Errorf("steps[%d] bukan object", i)
+		}
+		tool := strings.TrimSpace(getStr(stepMap, "tool"))
+		if tool == "" {
+			return "", fmt.Errorf("steps[%d].tool wajib diisi", i)
+		}
+		var stepArgs map[string]interface{}
+		if a, ok := stepMap["args"].(map[string]interface{}); ok {
+			stepArgs = a
+		} else {
+			stepArgs = map[string]interface{}{}
+		}
+		steps = append(steps, skill.Step{Tool: tool, Args: stepArgs})
+	}
+
+	var tags []string
+	if rawTags, ok := args["tags"].([]interface{}); ok {
+		for _, t := range rawTags {
+			if s, ok := t.(string); ok && s != "" {
+				tags = append(tags, s)
+			}
+		}
+	}
+
+	var params []skill.ParamDef
+	if rawParams, ok := args["params"].([]interface{}); ok {
+		for _, p := range rawParams {
+			pm, ok := p.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			pd := skill.ParamDef{
+				Name:        getStr(pm, "name"),
+				Type:        getStr(pm, "type"),
+				Description: getStr(pm, "description"),
+			}
+			if req, ok := pm["required"].(bool); ok {
+				pd.Required = req
+			}
+			if def, ok := pm["default"]; ok {
+				pd.Default = def
+			}
+			if pd.Type == "" {
+				pd.Type = "string"
+			}
+			if pd.Name != "" {
+				params = append(params, pd)
+			}
+		}
+	}
+
+	overwrite := false
+	if o, ok := args["overwrite"].(bool); ok {
+		overwrite = o
+	}
+
+	parent := strings.TrimSpace(getStr(args, "parent"))
+	// Accept either "parent" or "parent_id" for convenience.
+	if parent == "" {
+		parent = strings.TrimSpace(getStr(args, "parent_id"))
+	}
+	if parent != "" {
+		if _, err := skill.Load(parent); err != nil {
+			return "", fmt.Errorf("skill induk '%s' tidak ditemukan — buat skill induk lebih dulu atau kosongkan field parent", parent)
+		}
+		if parent == name {
+			return "", fmt.Errorf("skill tidak bisa menjadi induk dirinya sendiri")
+		}
+	}
+
+	var categoryPath []string
+	if rawCat, ok := args["category_path"].([]interface{}); ok {
+		for _, c := range rawCat {
+			if s, ok := c.(string); ok && s != "" {
+				categoryPath = append(categoryPath, s)
+			}
+		}
+	}
+
+	var dependencies []string
+	if rawDeps, ok := args["dependencies"].([]interface{}); ok {
+		for _, d := range rawDeps {
+			if s, ok := d.(string); ok && s != "" {
+				dependencies = append(dependencies, s)
+			}
+		}
+	}
+
+	// Conflict check + lineage preservation on overwrite.
+	var priorSkill *skill.Skill
+	if existing, err := skill.Load(name); err == nil {
+		if !overwrite {
+			return "", fmt.Errorf("skill '%s' sudah ada. Gunakan overwrite=true untuk menimpa atau pilih nama lain.", name)
+		}
+		priorSkill = existing
+	}
+
+	// Version: new skill starts at 1; overwrite bumps existing
+	version := 1
+	if priorSkill != nil {
+		version = priorSkill.Version + 1
+	}
+
+	sk := &skill.Skill{
+		Name:         name,
+		Description:  description,
+		Steps:        steps,
+		Version:      version,
+		Tags:         tags,
+		Params:       params,
+		ParentID:     parent,
+		CategoryPath: categoryPath,
+		Dependencies: dependencies,
+	}
+
+	// Preserve ancestry if we're overwriting an older version.
+	if priorSkill != nil {
+		skill.AttachLineage(sk, priorSkill, "manual")
+		// Inherit relational fields if LLM did not specify them on the
+		// new version, so overwriting does not accidentally flatten the
+		// hierarchy.
+		if sk.ParentID == "" {
+			sk.ParentID = priorSkill.ParentID
+		}
+		if len(sk.CategoryPath) == 0 {
+			sk.CategoryPath = priorSkill.CategoryPath
+		}
+		if len(sk.Dependencies) == 0 {
+			sk.Dependencies = priorSkill.Dependencies
+		}
+	}
+
+	if err := sk.Validate(); err != nil {
+		return "", fmt.Errorf("skill tidak valid: %w", err)
+	}
+
+	if err := skill.Save(sk, BuiltinDB); err != nil {
+		return "", fmt.Errorf("gagal menyimpan skill: %w", err)
+	}
+
+	extra := ""
+	if parent != "" {
+		extra += fmt.Sprintf(" parent=%s", parent)
+	}
+	if len(categoryPath) > 0 {
+		extra += fmt.Sprintf(" category=%s", strings.Join(categoryPath, "/"))
+	}
+	if len(dependencies) > 0 {
+		extra += fmt.Sprintf(" deps=%v", dependencies)
+	}
+	return fmt.Sprintf("Skill '%s' v%d tersimpan di ~/.smara/skills/%s.json (%d steps, tags=%v%s). Jalankan dengan skill_run.",
+		sk.Name, sk.Version, sk.Name, len(sk.Steps), sk.Tags, extra), nil
 }
 
 // resolveHost attempts to find a host by exact name, then fuzzy search, then raw user@address.

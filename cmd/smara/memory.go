@@ -543,6 +543,11 @@ func init() {
 		memoryImportCmd,
 		memoryHistoryCmd,
 		memoryRollbackCmd,
+		memoryLinkCmd,
+		memoryUnlinkCmd,
+		memoryLinksCmd,
+		memoryAutolinkCmd,
+		memoryGraphCmd,
 	)
 }
 

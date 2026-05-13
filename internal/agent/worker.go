@@ -41,6 +41,13 @@ func NewSpecializedWorker(provider llm.Provider, mcpClients map[string]*mcp.Clie
 func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
 	// Check if task requires MCP tool call
 	if task.MCPServer != "" && task.ToolName != "" {
+		// Validate: if MCP client exists but tool doesn't, fallback to LLM
+		if client, ok := w.mcpClients[task.MCPServer]; ok && !client.HasTool(task.ToolName) {
+			return w.executeLLMTask(ctx, Task{
+				ID:          task.ID,
+				Description: task.Description + "\n\n[NOTE: Tool '" + task.ToolName + "' tidak tersedia di MCP server '" + task.MCPServer + "'. Menyelesaikan dengan LLM fallback.]",
+			})
+		}
 		return w.executeMCPTask(ctx, task)
 	}
 

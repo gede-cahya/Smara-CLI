@@ -31,7 +31,7 @@ func NewCustomProvider(name, apiKey, model, baseURL string) *CustomProvider {
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 5 * time.Minute},
+		client:  &http.Client{Timeout: 15 * time.Minute},
 	}
 }
 

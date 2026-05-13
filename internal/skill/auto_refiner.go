@@ -98,6 +98,8 @@ func AutoApplyRefinement(proposedJSON string, sk *Skill, tracker *ExecutionTrack
 	}
 	newSkill.Name = sk.Name
 	newSkill.Version = sk.Version + 1
+	// Preserve ancestry so the Hierarchy view can render the refine chain.
+	AttachLineage(newSkill, sk, "auto")
 	if err := Save(newSkill, nil); err != nil {
 		return nil, fmt.Errorf("failed to save refined skill: %w", err)
 	}

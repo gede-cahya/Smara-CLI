@@ -50,6 +50,16 @@ type ExecutionTracker struct {
 	db *sql.DB
 }
 
+// DB returns the underlying *sql.DB so adjacent packages (export,
+// auto-detect) can share the same sqlite handle without opening a
+// second connection.
+func (t *ExecutionTracker) DB() *sql.DB {
+	if t == nil {
+		return nil
+	}
+	return t.db
+}
+
 // NewExecutionTracker creates a tracker backed by the given SQLite DB.
 func NewExecutionTracker(db *sql.DB) (*ExecutionTracker, error) {
 	if err := initTrackerSchema(db); err != nil {

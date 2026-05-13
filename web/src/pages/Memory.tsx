@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Database, Search, Tag, Clock, Folder, ChevronDown, ChevronRight, Layers, Settings, Plus, Trash2, X } from 'lucide-react'
+import { Database, Search, Tag, Clock, Folder, ChevronDown, ChevronRight, Layers, Settings, Plus, Trash2, X, List, Network } from 'lucide-react'
 import { fetchJSON } from '../api'
 import type { MemoryItem, WorkspaceItem } from '../api'
+import MemoryGraph from './MemoryGraph'
 
 const CAT_CONFIG_KEY = 'smara_memory_categories'
 
@@ -43,6 +44,7 @@ export default function Memory() {
   const [showCatManager, setShowCatManager] = useState(false)
   const [newCatName, setNewCatName] = useState('')
   const [newCatKeywords, setNewCatKeywords] = useState('')
+  const [view, setView] = useState<'list' | 'graph'>('list')
 
   const loadWorkspaces = async () => {
     try {
@@ -182,24 +184,57 @@ export default function Memory() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-y-auto p-4">
-        <div className="flex items-center gap-2 mb-4">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header bar */}
+        <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-gray-800/60 shrink-0">
           <Database className="w-5 h-5 text-smara-400" />
           <h2 className="text-lg font-medium">Memory Store</h2>
-          <span className="text-xs text-gray-500 ml-2">({visibleMemories.length})</span>
+          {view === 'list' && (
+            <span className="text-xs text-gray-500 ml-2">({visibleMemories.length})</span>
+          )}
           {activeWorkspace && (
             <span className="text-xs bg-gray-800 px-2 py-0.5 rounded text-gray-400">
               {activeWorkspace}
             </span>
           )}
-          <button
-            onClick={() => setShowCatManager(!showCatManager)}
-            className="ml-auto text-xs flex items-center gap-1 text-gray-500 hover:text-smara-300 transition-colors"
-            title="Kelola Kategori"
-          >
-            <Settings className="w-3 h-3" /> Kategori
-          </button>
+
+          {/* View toggle */}
+          <div className="ml-4 flex bg-gray-900/60 border border-gray-800 rounded-md p-0.5">
+            <button
+              onClick={() => setView('list')}
+              className={`px-2.5 py-1 text-xs flex items-center gap-1 rounded transition-colors ${
+                view === 'list' ? 'bg-smara-700/30 text-smara-300' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <List className="w-3 h-3" /> List
+            </button>
+            <button
+              onClick={() => setView('graph')}
+              className={`px-2.5 py-1 text-xs flex items-center gap-1 rounded transition-colors ${
+                view === 'graph' ? 'bg-smara-700/30 text-smara-300' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <Network className="w-3 h-3" /> Graph
+            </button>
+          </div>
+
+          {view === 'list' && (
+            <button
+              onClick={() => setShowCatManager(!showCatManager)}
+              className="ml-auto text-xs flex items-center gap-1 text-gray-500 hover:text-smara-300 transition-colors"
+              title="Kelola Kategori"
+            >
+              <Settings className="w-3 h-3" /> Kategori
+            </button>
+          )}
         </div>
+
+        {view === 'graph' ? (
+          <div className="flex-1 overflow-hidden">
+            <MemoryGraph workspace={activeWorkspace} />
+          </div>
+        ) : (
+        <div className="flex-1 overflow-y-auto p-4">
 
         {showCatManager && (
           <div className="mb-4 bg-gray-900/60 border border-gray-800 rounded-lg p-3 space-y-2">
@@ -333,6 +368,8 @@ export default function Memory() {
             <Database className="w-8 h-8 mx-auto mb-2 opacity-50" />
             <p className="text-sm">Belum ada memori tersimpan di workspace ini.</p>
           </div>
+        )}
+      </div>
         )}
       </div>
     </div>

@@ -113,6 +113,15 @@ export interface SkillParam {
   default?: string | number | boolean
 }
 
+export interface SkillLineageEntry {
+  version: number
+  description?: string
+  tags?: string[]
+  step_count: number
+  refined_at?: string
+  refined_from?: string // "auto" | "manual" | "feedback"
+}
+
 export interface SkillItem {
   name: string
   description: string
@@ -122,6 +131,7 @@ export interface SkillItem {
   category_path?: string[]
   dependencies?: string[]
   params?: SkillParam[]
+  lineage?: SkillLineageEntry[]
 }
 
 export interface ModeInfo {

@@ -9,8 +9,19 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
+
+// distPath returns the absolute path to web/dist, resolving relative to the binary.
+func distPath() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return "web/dist"
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..", "web", "dist")
+}
 
 //go:embed all:dist
 var distFS embed.FS
@@ -63,7 +74,8 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try serving from disk first (development) so frontend rebuilds are picked up immediately
-	diskPath := "web/dist/" + p
+	dp := distPath()
+	diskPath := filepath.Join(dp, p)
 	if data, err := os.ReadFile(diskPath); err == nil {
 		serveData(w, r, p, data, false)
 		return
@@ -71,7 +83,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	// SPA client-side routing — try index.html on disk for unknown paths
 	if p != "index.html" {
-		if data, err := os.ReadFile("web/dist/index.html"); err == nil {
+		if data, err := os.ReadFile(filepath.Join(dp, "index.html")); err == nil {
 			serveData(w, r, "index.html", data, false)
 			return
 		}

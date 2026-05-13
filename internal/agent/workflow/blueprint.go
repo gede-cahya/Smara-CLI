@@ -221,6 +221,12 @@ Setiap agen harus memiliki:
 - tasks: daftar task spesifik
 - depends_on: role yang harus selesai dulu (untuk DAG execution)
 
+PENTING — MCP TOOL USAGE:
+- Jika task type = "mcp", mcp_server HARUS exact name dari server yang tersedia (lihat "MCP Servers tersedia")
+- tool_name HARUS exact name dari tool yang ada di server tersebut — JANGAN invent tool names
+- Kalau tidak yakin tool name yang benar, gunakan type = "llm" saja
+- Contoh tool yang valid: generate_screen_from_text, create_design_system, create_project (lihat exact names di "MCP Servers tersedia")
+
 CONTOH AGEN PER DOMAIN:
 Software: FrontendDev, BackendDev, DatabaseArchitect, DevOpsEngineer, SecurityAuditor
 Marketing: ContentStrategist, Copywriter, VisualDesigner, SEOAnalyst, CampaignManager
@@ -266,6 +272,9 @@ func extractJSON(raw string) string {
 
 func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]agent.MCPServerInfo, prompt string) (Blueprint, error) {
 	var bp Blueprint
+	if strings.TrimSpace(prompt) == "" {
+		return bp, fmt.Errorf("prompt tidak boleh kosong")
+	}
 
 	var mcpDescs []string
 	for name, info := range mcpInfo {

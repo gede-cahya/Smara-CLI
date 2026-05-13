@@ -127,6 +127,11 @@ func (c *Client) ListTools() ([]Tool, error) {
 	}
 
 	if resp.Error != nil {
+		// Gracefully handle servers that don't support tools/list
+		if resp.Error.Code == -32601 {
+			c.tools = nil
+			return nil, nil
+		}
 		return nil, resp.Error
 	}
 
@@ -183,6 +188,16 @@ func (c *Client) ServerName() string {
 // GetServerInfo returns the server info from initialization.
 func (c *Client) GetServerInfo() *ServerInfo {
 	return c.serverInfo
+}
+
+// HasTool returns whether the given tool name exists in the available tools.
+func (c *Client) HasTool(name string) bool {
+	for _, t := range c.tools {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Close terminates the MCP client connection.

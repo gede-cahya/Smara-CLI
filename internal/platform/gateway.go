@@ -9,11 +9,22 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 )
 
 // maxMessageLength is the maximum length of a single message on most platforms.
 const maxMessageLength = 4000
+
+// promptTimeout is the maximum time allowed for a single prompt processing
+// (agentic loop with tool calls). Increased to 5 minutes since complex tasks
+// involving multiple SSH commands, file edits, or deep reasoning can easily
+// exceed 2 minutes.
+const promptTimeout = 5 * time.Minute
+
+// progressHeartbeatInterval is how often the status message shows a progress
+// update so users know the bot is still working rather than hung.
+const progressHeartbeatInterval = 15 * time.Second
 
 // Gateway routes incoming messages from platform adapters to the Smara supervisor
 // and sends responses back. It manages per-channel sessions, authentication,
@@ -318,7 +329,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	})
 
 	// 4. Continuous typing indicator + timeout
-	promptCtx, promptCancel := context.WithTimeout(ctx, 120*time.Second)
+	promptCtx, promptCancel := context.WithTimeout(ctx, promptTimeout)
 	defer promptCancel()
 
 	// Keep sending typing indicator every 4 seconds
@@ -337,6 +348,30 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		}
 	}()
 
+	// Heartbeat progress updates: every 15s, update status message with elapsed
+	// time so the user knows the bot is still working (not frozen).
+	startHeartbeat := time.Now()
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(progressHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-promptCtx.Done():
+				return
+			case <-ticker.C:
+				elapsed := time.Since(startHeartbeat)
+				secs := int(elapsed.Seconds())
+				remaining := int(promptTimeout.Seconds()) - secs
+				if remaining < 0 {
+					remaining = 0
+				}
+				updateStatus(fmt.Sprintf("⏳ Masih memproses... %ds berlalu (est. maks %ds tersisa)", secs, remaining))
+			}
+		}
+	}()
+
 	// 5. Process via supervisor
 	log.Printf("[gateway] Calling supervisor.ProcessPrompt: %q", msg.Content)
 	startTime := time.Now()
@@ -344,9 +379,10 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	latencyMs := time.Since(startTime).Milliseconds()
 	log.Printf("[gateway] supervisor.ProcessPrompt done in %dms, err=%v", latencyMs, err)
 
-	// Stop typing indicator
+	// Stop typing indicator & heartbeat
 	promptCancel()
 	<-typingDone
+	<-heartbeatDone
 
 	// Clear callbacks
 	g.supervisor.SetCallback(agent.AgenticCallback{})
@@ -365,7 +401,8 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		}
 		errText := err.Error()
 		if promptCtx.Err() != nil {
-			errText = "Timeout: proses terlalu lama (>120 detik)"
+			totalSec := int(time.Since(startHeartbeat).Seconds())
+			errText = fmt.Sprintf("Timeout: proses berjalan %ds dan melewati batas maksimal %ds.\n\nTips:\n• Pecah tugas jadi langkah-langkah lebih kecil\n• Gunakan perintah spesifik (misal \"cek service X\" daripada \"cek semua\")\n• Coba lagi dengan /ask atau kirim pesan baru", totalSec, int(promptTimeout.Seconds()))
 		}
 		// Update status message with error instead of sending new one
 		if statusMsgID != "" {
@@ -393,7 +430,18 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	}
 
 	// 9. Build final response with stats footer
-	finalResp := result.Response
+	// Defense-in-depth: sanitize DSML here too. The supervisor strips DSML
+	// during the agentic loop, but edge cases (max-iterations fallback,
+	// models emitting malformed DSML near the final answer) can still leak
+	// raw tool-call markup. sanitizeDSML is idempotent and cheap.
+	finalResp := sanitizeDSML(result.Response)
+	if finalResp == "" {
+		// If the supervisor's final response was entirely DSML that we
+		// just stripped, fall back to the intermediate thoughts (last
+		// few reasoning steps) + tools executed so the user gets
+		// something actionable instead of a misleading "Selesai".
+		finalResp = buildFallbackSummary(result.Thoughts, result.ToolsExecuted)
+	}
 	if latencyMs > 2000 {
 		duration := time.Duration(latencyMs) * time.Millisecond
 		footer := fmt.Sprintf("\n\n⏱ %.1fs", duration.Seconds())
@@ -444,52 +492,17 @@ func phaseEmoji(phase string) string {
 }
 
 // sanitizeDSML strips leaked DSML tool-calling markup from AI responses.
+// This is a defense-in-depth safeguard; the supervisor should already strip
+// DSML before returning, but some edge cases (e.g., max-iterations fallback,
+// models emitting malformed DSML near the answer) can let fragments through.
+// We delegate to llm.ExtractToolCallsFromContent which handles all known
+// format variants including double full-width pipes (U+FF5C).
 func sanitizeDSML(text string) string {
 	if text == "" {
 		return text
 	}
-	// DSML tags use fullwidth pipe characters (U+FF5C)
-	dsmlOpen := string([]rune{0xFF5C, 0xFF5C}) + "DSML" + string([]rune{0xFF5C, 0xFF5C})
-	// Remove complete DSML blocks
-	for {
-		start := strings.Index(text, "<"+dsmlOpen)
-		if start == -1 {
-			break
-		}
-		end := strings.Index(text[start:], "</"+dsmlOpen)
-		if end == -1 {
-			closeIdx := strings.Index(text[start:], ">")
-			if closeIdx == -1 {
-				text = text[:start]
-			} else {
-				text = text[:start] + text[start+closeIdx+1:]
-			}
-			continue
-		}
-		endClose := strings.Index(text[start+end:], ">")
-		if endClose == -1 {
-			text = text[:start]
-		} else {
-			text = text[:start] + text[start+end+endClose+1:]
-		}
-	}
-	// Remove orphan DSML tags
-	for {
-		idx := strings.Index(text, "<"+dsmlOpen)
-		if idx == -1 {
-			idx = strings.Index(text, "</"+dsmlOpen)
-		}
-		if idx == -1 {
-			break
-		}
-		end := strings.Index(text[idx:], ">")
-		if end == -1 {
-			text = text[:idx]
-		} else {
-			text = text[:idx] + text[idx+end+1:]
-		}
-	}
-	return strings.TrimSpace(text)
+	_, cleaned := llm.ExtractToolCallsFromContent(text)
+	return strings.TrimSpace(cleaned)
 }
 
 // sendReply sends a response back to the platform where the message originated.
@@ -545,4 +558,54 @@ func splitMessage(content string, maxLen int) []string {
 	}
 
 	return parts
+}
+
+
+// buildFallbackSummary composes a useful reply when the supervisor's final
+// response is empty (typically because the model emitted only DSML tool
+// calls that got stripped, or hit the max-iteration cap). Returning an
+// empty string in Telegram looks like the bot froze; this function lets
+// the user see the intermediate progress instead.
+func buildFallbackSummary(thoughts []string, tools []string) string {
+	var sb strings.Builder
+	sb.WriteString("⚠ Smara tidak menghasilkan jawaban final yang jelas — tool loop berhenti tanpa kesimpulan.\n\n")
+
+	// Keep the last 3 non-empty thoughts.
+	kept := 0
+	for i := len(thoughts) - 1; i >= 0 && kept < 3; i-- {
+		t := strings.TrimSpace(thoughts[i])
+		t = sanitizeDSML(t)
+		if t == "" {
+			continue
+		}
+		if len(t) > 260 {
+			t = t[:260] + "…"
+		}
+		sb.WriteString("• " + t + "\n")
+		kept++
+	}
+	if kept == 0 {
+		sb.WriteString("(Tidak ada komentar intermediate yang bisa ditampilkan.)\n")
+	}
+
+	if len(tools) > 0 {
+		seen := map[string]bool{}
+		var list []string
+		for _, t := range tools {
+			if !seen[t] {
+				seen[t] = true
+				list = append(list, t)
+				if len(list) >= 8 {
+					break
+				}
+			}
+		}
+		sb.WriteString(fmt.Sprintf("\n🔧 Tools dijalankan (%d unik dari %d total): %s", len(seen), len(tools), strings.Join(list, ", ")))
+		if len(seen) > 8 {
+			sb.WriteString(fmt.Sprintf(" +%d lainnya", len(seen)-8))
+		}
+	}
+
+	sb.WriteString("\n\nSaran: pecah permintaan jadi 1-2 langkah yang lebih spesifik, atau kirim `/clear` lalu coba ulang.")
+	return sb.String()
 }
