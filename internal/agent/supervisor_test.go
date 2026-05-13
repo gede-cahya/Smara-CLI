@@ -249,7 +249,7 @@ func TestNewSupervisor_Defaults(t *testing.T) {
 	assert.NotNil(t, s.taskCh)
 	assert.NotNil(t, s.resultCh)
 	assert.Equal(t, 4, s.maxWorkers)
-	assert.Equal(t, 10, s.maxIterations)
+	assert.Equal(t, 30, s.maxIterations)
 	assert.Equal(t, ModeAsk, s.mode)
 	assert.NotNil(t, s.history)
 	assert.Empty(t, s.history)

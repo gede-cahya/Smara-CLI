@@ -728,10 +728,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Alt { // Ctrl+Shift+V via bracketed paste
 				// Handled by msg.Paste above
 			} else {
+				// 1. Try image clipboard first.
+				if img, err := clipboard.ReadImage(); err == nil && img != nil {
+					ref := fmt.Sprintf("[image:%s]", img.Path)
+					m.textarea.InsertString(ref + " ")
+					sizeKB := img.Size / 1024
+					m.showToast(fmt.Sprintf("📎 Image attached (%dKB · %s) → %s", sizeKB, img.Source, img.Path))
+					return m, nil
+				}
+				// 2. Fall back to text clipboard.
 				if text, err := clipboard.Read(); err == nil && text != "" {
 					m.textarea.InsertString(text)
 				} else {
-					m.showToast("Clipboard tidak tersedia di terminal ini")
+					m.showToast("Clipboard tidak tersedia di terminal ini (text & image kosong)")
 				}
 			}
 			return m, nil
@@ -1760,6 +1769,10 @@ func TUIPrintError(format string, args ...interface{}) {
 
 // processFileMentions searches for @filename in the prompt and injects file content
 func (m *AppModel) processFileMentions(prompt string) string {
+	// First pass: extract [image:/path] references and surface them as
+	// system attachments so the agent knows an image is in scope.
+	prompt = m.processImageRefs(prompt)
+
 	re := regexp.MustCompile(`@([\w\.\/\-]+)`)
 	matches := re.FindAllStringSubmatch(prompt, -1)
 	if len(matches) == 0 {
@@ -1803,6 +1816,43 @@ func (m *AppModel) processFileMentions(prompt string) string {
 
 	m.renderMessages()
 	return contextBuilder.String() + "\nPrompt User:\n" + prompt
+}
+
+// processImageRefs scans for [image:/path/to/file.png] tokens in the prompt.
+// For each match, it surfaces a system-level attachment notice in the chat
+// and appends a normalized hint to the prompt the agent receives so the
+// model knows there is an image referenced — without trying to inline its
+// bytes (TUI prompts go through the LLM in plain text only).
+//
+// If/when the active provider supports vision messages, the supervisor can
+// upgrade the [image:...] tokens into multimodal content blocks. For now,
+// the path stays in the prompt and built-in tools (e.g. read_file or an
+// OCR tool) can pick it up.
+func (m *AppModel) processImageRefs(prompt string) string {
+	re := regexp.MustCompile(`\[image:([^\]]+)\]`)
+	matches := re.FindAllStringSubmatch(prompt, -1)
+	if len(matches) == 0 {
+		return prompt
+	}
+	for _, match := range matches {
+		path := strings.TrimSpace(match[1])
+		st, err := os.Stat(path)
+		if err != nil {
+			m.messages = append(m.messages, ChatMessage{
+				Role:    "System",
+				Content: fmt.Sprintf("⚠ Image tidak ditemukan: %s (%v)", path, err),
+				Time:    time.Now(),
+			})
+			continue
+		}
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "System",
+			Content: fmt.Sprintf("🖼  Image attached: %s (%d KB)", path, st.Size()/1024),
+			Time:    time.Now(),
+		})
+	}
+	m.renderMessages()
+	return prompt
 }
 
 // SetGlobalProgram sets the global program for log injection

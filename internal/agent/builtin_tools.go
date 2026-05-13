@@ -24,6 +24,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/nudge"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/gede-cahya/Smara-CLI/internal/ui/clipboard"
 	"github.com/gede-cahya/Smara-CLI/internal/workspace"
 )
 
@@ -908,6 +909,55 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"query"},
 			},
 		},
+		{
+			Name: "analyze_image",
+			Description: "Analisa file gambar (PNG/JPG/WEBP). Otomatis pilih backend terbaik: " +
+				"(1) OCR via tesseract jika terpasang untuk ekstraksi teks; " +
+				"(2) metadata file (dimensi, ukuran, format) selalu tersedia. " +
+				"Pakai untuk screenshot, foto dokumen, diagram, dll. " +
+				"Path bisa absolut atau relatif terhadap cwd. Format `[image:/path]` di prompt user " +
+				"juga otomatis dikenali.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke file gambar (.png, .jpg, .jpeg, .webp, .gif, .bmp). Bisa juga raw `[image:/path]` token.",
+					},
+					"ocr_lang": map[string]interface{}{
+						"type":        "string",
+						"description": "Bahasa OCR (default: 'eng+ind' untuk dokumen Indonesia/Inggris). Pakai 'eng' untuk Inggris saja, 'ind' untuk Bahasa.",
+					},
+					"include_metadata": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Sertakan metadata file (default: true)",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
+			Name:        "clip_paste_image",
+			Description: "Ambil gambar dari clipboard sistem dan simpan ke file PNG. Mengembalikan path file yang bisa langsung dipakai oleh analyze_image. Jalan di Linux (X11/Wayland), macOS, dan Windows.",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name: "clip_copy_image",
+			Description: "Salin file gambar ke clipboard sistem. Berguna kalau agen perlu kasih hasil generate gambar/diagram ke user untuk paste di app lain.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke file gambar yang akan di-copy",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
 	}
 }
 
@@ -1769,6 +1819,44 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			b.WriteString(fmt.Sprintf("- %s --[%s]--> %s\n", e.Source, e.Relation, e.Target))
 		}
 		return b.String(), nil
+
+	case "analyze_image":
+		path := getStr(args, "path")
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		// Strip [image:...] wrapper if user/agent passed the raw token.
+		path = strings.TrimSpace(path)
+		if strings.HasPrefix(path, "[image:") && strings.HasSuffix(path, "]") {
+			path = strings.TrimSuffix(strings.TrimPrefix(path, "[image:"), "]")
+		}
+		ocrLang := getStr(args, "ocr_lang")
+		if ocrLang == "" {
+			ocrLang = "eng+ind"
+		}
+		includeMeta := true
+		if v, ok := args["include_metadata"].(bool); ok {
+			includeMeta = v
+		}
+		return analyzeImageFile(path, ocrLang, includeMeta)
+
+	case "clip_paste_image":
+		res, err := clipboard.ReadImage()
+		if err != nil {
+			return "", fmt.Errorf("paste image gagal: %w", err)
+		}
+		return fmt.Sprintf("✓ Image disimpan: %s\n  size: %d bytes\n  source: %s\n  Pakai analyze_image dengan path tersebut untuk analisa lebih lanjut.",
+			res.Path, res.Size, res.Source), nil
+
+	case "clip_copy_image":
+		path := getStr(args, "path")
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		if err := clipboard.WriteImage(path); err != nil {
+			return "", fmt.Errorf("copy image gagal: %w", err)
+		}
+		return fmt.Sprintf("✓ Image %s sudah masuk clipboard sistem", path), nil
 
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)

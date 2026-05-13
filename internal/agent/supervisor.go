@@ -120,7 +120,7 @@ func NewSupervisor(provider llm.Provider, memStore memory.MemoryStore) *Supervis
 		taskCh:          make(chan Task, 100),
 		resultCh:        make(chan TaskResult, 100),
 		maxWorkers:      4,
-		maxIterations:   10,
+		maxIterations:   30,
 		mode:            ModeAsk, // default mode
 		history:         make([]llm.Message, 0),
 		stats:           Stats{SessionStart: time.Now()},
@@ -1439,15 +1439,19 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		s.callback.OnPhaseChange("Thinking", "Analyzing the request and planning approach...")
 	}
 
-	// 4. Agentic loop
-	for iteration := 0; iteration < s.maxIterations; iteration++ {
+	// 4. Agentic loop with adaptive iteration budget.
+	// Budget is mode-aware (ASK small, WORKFLOW large) and self-extending
+	// while the model is making progress. Stuck-loop detector terminates
+	// early when the same tool call repeats too often.
+	budget := NewIterationBudget(s.mode, s.maxIterations)
+	for iteration := 0; budget.ShouldContinue(iteration); iteration++ {
 		if ctx.Err() != nil {
 			return "", "", nil, nil, ctx.Err()
 		}
 
 		// Callback: report iteration
 		if s.callback.OnIteration != nil {
-			s.callback.OnIteration(iteration+1, s.maxIterations)
+			s.callback.OnIteration(iteration+1, budget.Limit())
 		}
 
 		// Call LLM with tools
@@ -1544,7 +1548,8 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			thoughts = append(thoughts, resp.Content)
 		}
 
-		// Update toolsExecuted list
+		// Update toolsExecuted list AND record fingerprints for stuck-loop detection.
+		stuckLoop := false
 		for _, tc := range toolCalls {
 			toolsExecuted = append(toolsExecuted, tc.Function)
 			// Record full call for auto-skill pattern detection.
@@ -1552,6 +1557,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				Tool: tc.Function,
 				Args: tc.Args,
 			})
+			// Update budget; flag if a stuck loop is detected.
+			if budget.RecordToolCalls(tc.Function, tc.Args) {
+				stuckLoop = true
+			}
 		}
 
 		// LLM requested tool calls — execute them
@@ -1598,6 +1607,20 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				toolMsg.Content = fmt.Sprintf("Error: %s", err)
 			}
 			messages = append(messages, toolMsg)
+		}
+
+		// Stuck-loop bailout: if we detect the same tool+args repeating,
+		// inject a steering message and exit the loop early so we don't
+		// keep wasting tokens on a clearly stuck model.
+		if stuckLoop {
+			messages = append(messages, llm.Message{
+				Role: llm.RoleSystem,
+				Content: "STOP: Tool yang sama dipanggil berulang dengan argumen yang sama. " +
+					"Berhenti memanggil tool. Jelaskan ke user apa yang sudah dilakukan, " +
+					"apa hasilnya, dan apa yang menyebabkan loop ini (mis. permission denied, " +
+					"service tidak ada, atau argumen salah). Berikan saran langkah berikutnya.",
+			})
+			break
 		}
 
 		// Loop continues — LLM will process tool results and either call more tools or give final answer

@@ -43,41 +43,48 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 		contentWidth = 20
 	}
 
-	// Time stamp
-	timeStr := r.theme.MessageTime.Render(time.Now().Format("15:04"))
+	// Time stamp — soft muted with leading dot for visual rhythm
+	timeStr := r.theme.MessageTime.Render("◦ " + time.Now().Format("15:04"))
 
-	// Role prefix with icon
+	// Role prefix — text only, no background to avoid the trailing
+	// "ghost block" artifact next to the timestamp.
 	var prefix string
 	var bubbleStyle lipgloss.Style
 	var icon string
 
 	switch role {
 	case "User":
-		icon = "💬"
-		prefix = r.theme.MessageUser.Foreground(r.theme.AccentBlue).Bold(true).Render(fmt.Sprintf("%s You", icon))
+		icon = "👤"
+		prefix = lipgloss.NewStyle().Foreground(r.theme.AccentBlue).Bold(true).Render(fmt.Sprintf("%s  You", icon))
 		bubbleStyle = r.theme.MessageUser.Width(contentWidth)
 	case "Agent":
 		modeLabel := strings.ToUpper(mode)
 		icon = r.modeIcon(mode)
 		prefixColor := r.theme.ModeColor(mode)
-		prefix = lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render(fmt.Sprintf("%s Smara [%s]", icon, modeLabel))
-		bubbleStyle = r.theme.MessageAgent.Width(contentWidth)
+		modelTag := ""
+		if modelName != "" {
+			modelTag = "  " + lipgloss.NewStyle().Foreground(ClrMuted).Faint(true).Render("· "+modelName)
+		}
+		prefix = lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render(fmt.Sprintf("%s  Smara", icon)) +
+			"  " + lipgloss.NewStyle().Foreground(prefixColor).Background(ClrSurface).Padding(0, 1).Render(modeLabel) +
+			modelTag
+		bubbleStyle = r.theme.MessageAgent.Width(contentWidth).BorderForeground(prefixColor)
 	case "System":
 		icon = "🔔"
+		var col = r.theme.AccentYellow
 		if strings.HasPrefix(content, "Error") {
 			icon = "❌"
-			prefix = r.theme.MessageSystem.Foreground(r.theme.AccentRed).Bold(true).Render(fmt.Sprintf("%s System", icon))
-		} else {
-			prefix = r.theme.MessageSystem.Foreground(r.theme.AccentYellow).Bold(true).Render(fmt.Sprintf("%s System", icon))
+			col = r.theme.AccentRed
 		}
-		bubbleStyle = r.theme.MessageSystem.Width(contentWidth)
+		prefix = lipgloss.NewStyle().Foreground(col).Bold(true).Render(fmt.Sprintf("%s  System", icon))
+		bubbleStyle = r.theme.MessageSystem.Width(contentWidth).BorderForeground(col)
 	case "Terminal":
-		icon = "$"
-		prefix = r.theme.MessageTerminal.Foreground(r.theme.AccentGreen).Bold(true).Render(fmt.Sprintf("%s Terminal", icon))
+		icon = "▸"
+		prefix = lipgloss.NewStyle().Foreground(r.theme.AccentGreen).Bold(true).Render(fmt.Sprintf("%s  Terminal", icon))
 		bubbleStyle = r.theme.MessageTerminal.Width(contentWidth)
 	default:
 		icon = "🌀"
-		prefix = r.theme.MessageAgent.Foreground(r.theme.AccentGreen).Bold(true).Render(fmt.Sprintf("%s Smara", icon))
+		prefix = lipgloss.NewStyle().Foreground(r.theme.AccentGreen).Bold(true).Render(fmt.Sprintf("%s  Smara", icon))
 		bubbleStyle = r.theme.MessageAgent.Width(contentWidth)
 	}
 
@@ -102,8 +109,9 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 		toolsBlock = r.renderTools(tools)
 	}
 
-	// Assemble the bubble
-	sb.WriteString(fmt.Sprintf("%s %s\n", timeStr, prefix))
+	// Header line: time · prefix (no overlapping background)
+	headerLine := timeStr + "  " + prefix
+	sb.WriteString(headerLine + "\n")
 	if thinkingBlock != "" {
 		sb.WriteString(thinkingBlock)
 		sb.WriteString("\n")

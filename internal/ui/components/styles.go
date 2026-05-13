@@ -261,27 +261,52 @@ func NewStyles() Styles {
 			Background(ClrGreen).Foreground(ClrBase),
 
 		// ── Chat messages ────────────────────────────────────
+		// Design: left accent ribbon + subtle surface background.
+		// Each role gets its own accent color via the renderer (Border = ribbon).
 		ChatUser: lipgloss.NewStyle().
 			Foreground(ClrText).
 			Background(ClrSurface).
-			Padding(1, 2),
+			Padding(0, 2).
+			BorderStyle(lipgloss.ThickBorder()).
+			BorderLeft(true).
+			BorderForeground(ClrBlue).
+			BorderBackground(ClrBase).
+			MarginLeft(1),
 
 		ChatAgent: lipgloss.NewStyle().
 			Foreground(ClrText).
-			Padding(1, 2),
+			Background(ClrSurface).
+			Padding(0, 2).
+			BorderStyle(lipgloss.ThickBorder()).
+			BorderLeft(true).
+			BorderForeground(ClrAccent).
+			BorderBackground(ClrBase).
+			MarginLeft(1),
 
 		ChatSystem: lipgloss.NewStyle().
 			Foreground(ClrSubtext).
-			Padding(0, 2),
+			Background(ClrSurface).
+			Padding(0, 2).
+			BorderStyle(lipgloss.ThickBorder()).
+			BorderLeft(true).
+			BorderForeground(ClrAmber).
+			BorderBackground(ClrBase).
+			MarginLeft(1),
 
 		ChatTerminal: lipgloss.NewStyle().
 			Foreground(ClrGreen).
 			Background(ClrSurface).
-			Padding(1, 2),
+			Padding(0, 2).
+			BorderStyle(lipgloss.ThickBorder()).
+			BorderLeft(true).
+			BorderForeground(ClrGreen).
+			BorderBackground(ClrBase).
+			MarginLeft(1),
 
 		ChatTime: lipgloss.NewStyle().
 			Foreground(ClrMuted).
-			Faint(true),
+			Faint(true).
+			MarginRight(1),
 
 		ChatDivider: lipgloss.NewStyle().
 			Foreground(ClrBorder),

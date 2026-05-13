@@ -367,6 +367,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	gateway.SetMetrics(collector)
+
+	// Apply configurable per-prompt timeout (workflow tasks can be long).
+	if cfg.PlatformPromptTimeout > 0 {
+		gateway.SetPromptTimeout(time.Duration(cfg.PlatformPromptTimeout) * time.Second)
+		ui.PrintInfo("Prompt timeout: %ds (dari config)", cfg.PlatformPromptTimeout)
+	}
+	if cfg.AgentMaxIterations > 0 {
+		supervisor.SetMaxIterations(cfg.AgentMaxIterations)
+		ui.PrintInfo("Agent max iterations: %d (dari config)", cfg.AgentMaxIterations)
+	}
 	collector.Start(ctx, 2*time.Second)
 	ui.PrintSuccess("Metrics collector aktif → %s", metricsPath)
 

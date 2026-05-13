@@ -91,6 +91,18 @@ type SmaraConfig struct {
 	// AutoSkillThreshold is the minimum number of times a tool-call pattern
 	// must be observed before being auto-captured as a skill. Default: 3.
 	AutoSkillThreshold int `mapstructure:"auto_skill_threshold" yaml:"auto_skill_threshold"`
+
+	// PlatformPromptTimeout limits how long a single Telegram/Discord/WhatsApp
+	// prompt may run, in seconds. Long-running workflow tasks (multi-step
+	// SSH, file edits, deep reasoning) often exceed the previous 300s default.
+	// Set 0 to use the built-in default (10 minutes).
+	PlatformPromptTimeout int `mapstructure:"platform_prompt_timeout" yaml:"platform_prompt_timeout"`
+
+	// AgentMaxIterations caps the agentic loop (think → tool → observe) per
+	// prompt. Default: 30. Increase if your tasks chain many tool calls
+	// (e.g. multi-host SSH + service restart + verification). Set 0 to use
+	// the built-in default.
+	AgentMaxIterations int `mapstructure:"agent_max_iterations" yaml:"agent_max_iterations"`
 }
 
 // RegistryConfig defines a configured skill marketplace/registry source.
@@ -149,6 +161,8 @@ func DefaultConfig() *SmaraConfig {
 		},
 		AutoSkillDetect:    true,
 		AutoSkillThreshold: 3,
+		PlatformPromptTimeout: 600, // 10 minutes; was hardcoded 300s
+		AgentMaxIterations:    30, // was hardcoded 10
 	}
 }
 
@@ -207,6 +221,8 @@ func Init(configPath string) error {
 	viper.SetDefault("skill_registries", defaults.SkillRegistries)
 	viper.SetDefault("auto_skill_detect", defaults.AutoSkillDetect)
 	viper.SetDefault("auto_skill_threshold", defaults.AutoSkillThreshold)
+	viper.SetDefault("platform_prompt_timeout", defaults.PlatformPromptTimeout)
+	viper.SetDefault("agent_max_iterations", defaults.AgentMaxIterations)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")

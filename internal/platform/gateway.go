@@ -17,10 +17,9 @@ import (
 const maxMessageLength = 4000
 
 // promptTimeout is the maximum time allowed for a single prompt processing
-// (agentic loop with tool calls). Increased to 5 minutes since complex tasks
-// involving multiple SSH commands, file edits, or deep reasoning can easily
-// exceed 2 minutes.
-const promptTimeout = 5 * time.Minute
+// (agentic loop with tool calls). Default 10 minutes; configurable per-instance
+// via Gateway.SetPromptTimeout (and `platform_prompt_timeout` in config.yaml).
+const defaultPromptTimeout = 10 * time.Minute
 
 // progressHeartbeatInterval is how often the status message shows a progress
 // update so users know the bot is still working rather than hung.
@@ -30,23 +29,25 @@ const progressHeartbeatInterval = 15 * time.Second
 // and sends responses back. It manages per-channel sessions, authentication,
 // and rate limiting.
 type Gateway struct {
-	adapters    map[string]PlatformAdapter
-	supervisor  *agent.Supervisor
-	sessions    map[string]*PlatformSession // channelID → session
-	auth        *AuthManager
-	rateLimiter *RateLimiter
-	metrics     *metrics.MetricsCollector
-	mu          sync.RWMutex
+	adapters      map[string]PlatformAdapter
+	supervisor    *agent.Supervisor
+	sessions      map[string]*PlatformSession // channelID → session
+	auth          *AuthManager
+	rateLimiter   *RateLimiter
+	metrics       *metrics.MetricsCollector
+	promptTimeout time.Duration
+	mu            sync.RWMutex
 }
 
 // NewGateway creates a new Gateway with the given supervisor.
 func NewGateway(supervisor *agent.Supervisor) *Gateway {
 	return &Gateway{
-		adapters:    make(map[string]PlatformAdapter),
-		supervisor:  supervisor,
-		sessions:    make(map[string]*PlatformSession),
-		auth:        NewAuthManager(),
-		rateLimiter: NewRateLimiter(RateLimitConfig{RequestsPerMinute: 20, BurstSize: 5}),
+		adapters:      make(map[string]PlatformAdapter),
+		supervisor:    supervisor,
+		sessions:      make(map[string]*PlatformSession),
+		auth:          NewAuthManager(),
+		rateLimiter:   NewRateLimiter(RateLimitConfig{RequestsPerMinute: 20, BurstSize: 5}),
+		promptTimeout: defaultPromptTimeout,
 	}
 }
 
@@ -63,6 +64,16 @@ func (g *Gateway) SetRateLimiter(rl *RateLimiter) {
 // SetMetrics configures the metrics collector for the gateway.
 func (g *Gateway) SetMetrics(mc *metrics.MetricsCollector) {
 	g.metrics = mc
+}
+
+// SetPromptTimeout overrides the default per-prompt timeout. Pass 0 to keep
+// the default (10 minutes). Must be called before Start.
+func (g *Gateway) SetPromptTimeout(d time.Duration) {
+	if d <= 0 {
+		g.promptTimeout = defaultPromptTimeout
+		return
+	}
+	g.promptTimeout = d
 }
 
 // RegisterAdapter adds a platform adapter to the gateway.
@@ -329,7 +340,11 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	})
 
 	// 4. Continuous typing indicator + timeout
-	promptCtx, promptCancel := context.WithTimeout(ctx, promptTimeout)
+	timeout := g.promptTimeout
+	if timeout <= 0 {
+		timeout = defaultPromptTimeout
+	}
+	promptCtx, promptCancel := context.WithTimeout(ctx, timeout)
 	defer promptCancel()
 
 	// Keep sending typing indicator every 4 seconds
@@ -363,7 +378,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 			case <-ticker.C:
 				elapsed := time.Since(startHeartbeat)
 				secs := int(elapsed.Seconds())
-				remaining := int(promptTimeout.Seconds()) - secs
+				remaining := int(timeout.Seconds()) - secs
 				if remaining < 0 {
 					remaining = 0
 				}
@@ -402,7 +417,17 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		errText := err.Error()
 		if promptCtx.Err() != nil {
 			totalSec := int(time.Since(startHeartbeat).Seconds())
-			errText = fmt.Sprintf("Timeout: proses berjalan %ds dan melewati batas maksimal %ds.\n\nTips:\n• Pecah tugas jadi langkah-langkah lebih kecil\n• Gunakan perintah spesifik (misal \"cek service X\" daripada \"cek semua\")\n• Coba lagi dengan /ask atau kirim pesan baru", totalSec, int(promptTimeout.Seconds()))
+			errText = fmt.Sprintf(
+				"Timeout: proses berjalan %ds dan melewati batas maksimal %ds.\n\n"+
+					"Tips:\n"+
+					"• Pecah tugas jadi langkah-langkah lebih kecil\n"+
+					"• Gunakan perintah spesifik (mis. \"cek service X\" daripada \"cek semua\")\n"+
+					"• Untuk task panjang (multi-SSH, deep reasoning), naikkan timeout di config:\n"+
+					"    platform_prompt_timeout: 1200   # 20 menit\n"+
+					"  lalu restart bot.\n"+
+					"• Atau coba lagi dengan /ask untuk respons singkat tanpa tool",
+				totalSec, int(timeout.Seconds()),
+			)
 		}
 		// Update status message with error instead of sending new one
 		if statusMsgID != "" {

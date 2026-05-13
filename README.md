@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.19.0**
+**Autonomous Multi-Agent Terminal v1.19.1**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -46,6 +46,8 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **📜 Dedicated Audit Log**: Logging terstruktur JSON Lines untuk semua tindakan agen.
 - **🕸️ Graphify — Knowledge Graph**: Parse codebase Go menjadi knowledge graph, simpan di SQLite, query dengan natural language, dan inject konteks graph ke system prompt agen secara otomatis. Export ke JSON/SVG/GraphML/Neo4j.
 - **🧬 Memory Graph — Memori Saling Terhubung**: Setiap memori bisa di-link satu sama lain dengan relasi (`refines`, `supports`, `follows`, dst.) dan bobot. **Auto-link Smart Engine** otomatis pilih mode: 🧠 semantic (cosine similarity embedding) atau 📝 lexical fallback (Jaccard token overlap dengan stopword EN+ID) — jalan untuk semua provider. Visualisasi interaktif via tab Graph di Smara Web (React Flow) atau standalone `smara memory graph` (vis-network).
+- **🖼️ Clipboard Image & Vision Tools**: Ctrl+V di TUI ambil gambar dari clipboard sistem (X11/Wayland/macOS/Windows), simpan ke `~/.smara/clip-images/`, dan inject `[image:/path]` ke prompt. Built-in tool `analyze_image` ekstrak metadata + OCR (tesseract); `clip_paste_image` & `clip_copy_image` untuk agent.
+- **🧠 Adaptive Iteration Budget**: Batas eksekusi tool dinamis per mode (ASK 5, RUSH 15, WORKFLOW 30, dst.) dengan auto-extension saat model produktif dan stuck-loop detector kalau tool yang sama dipanggil berulang. Configurable via `agent_max_iterations`.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 
 ---
