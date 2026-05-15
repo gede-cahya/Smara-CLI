@@ -50,6 +50,11 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **🧠 Adaptive Iteration Budget**: Batas eksekusi tool dinamis per mode (ASK 5, RUSH 15, WORKFLOW 30, dst.) dengan auto-extension saat model produktif dan stuck-loop detector kalau tool yang sama dipanggil berulang. Configurable via `agent_max_iterations`.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
 - **🌥️ Cloud Memory**: Sinkronisasi memori local-first antar device/workspace via Turso/libSQL embedded replica, dengan conflict policy, audit log redacted, dan mode headless CI.
+- **🧾 Run History & Replay**: Semua workflow dapat dicatat sebagai run terstruktur, ditampilkan via `smara run history`, dan diulang dengan `smara run replay`.
+- **🧪 Eval Suite**: `smara eval run` untuk smoke/evaluasi provider aktif dengan output human-readable atau JSON.
+- **🛡️ Policy CLI**: `smara policy` untuk allow/ask/deny tool automation berdasarkan risk, action, dan target.
+- **⏱️ Scheduler & Sharing**: `smara schedule` untuk job lokal terjadwal dan `smara share` untuk export/import artifact berbagi.
+- **💾 Memory Save Compatibility**: `smara memory save <content>` kembali tersedia untuk backward compatibility local/cloud memory.
 
 ---
 

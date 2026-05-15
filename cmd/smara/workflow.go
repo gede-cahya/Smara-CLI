@@ -11,6 +11,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/runlog"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
 )
 
@@ -136,60 +137,7 @@ var workflowRunCmd = &cobra.Command{
 	Short: "Jalankan custom workflow",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
-		cw, err := workflow.LoadCustomWorkflow(name)
-		if err != nil {
-			return fmt.Errorf("gagal load workflow '%s': %w", name, err)
-		}
-		if workflowProjectDir != "" {
-			cw.ProjectDir = workflowProjectDir
-		}
-
-		cfg := config.Get()
-		providerCfg := llm.ProviderConfig{
-			Name:   cfg.Provider,
-			Model:  cfg.Model,
-			Host:   cfg.OllamaHost,
-			APIKey: "",
-		}
-		switch cfg.Provider {
-		case "openai":
-			providerCfg.APIKey = cfg.OpenAIAPIKey
-			providerCfg.Host = cfg.OpenAIBaseURL
-		case "openrouter":
-			providerCfg.APIKey = cfg.OpenRouterAPIKey
-			if cfg.Model == "" || cfg.Model == "minimax-m2.5:cloud" {
-				providerCfg.Model = cfg.OpenRouterModel
-			}
-		case "anthropic":
-			providerCfg.APIKey = cfg.AnthropicAPIKey
-			if cfg.Model == "" || cfg.Model == "minimax-m2.5:cloud" {
-				providerCfg.Model = cfg.AnthropicModel
-			}
-		case "custom":
-			providerCfg.APIKey = cfg.CustomAPIKey
-			providerCfg.Host = cfg.CustomBaseURL
-		}
-		provider, err := llm.NewProvider(providerCfg)
-		if err != nil {
-			return fmt.Errorf("gagal inisialisasi provider: %w", err)
-		}
-
-		// Build lightweight supervisor
-		supervisor, err := getSupervisorForSkill()
-		if err != nil {
-			return fmt.Errorf("gagal inisialisasi supervisor: %w", err)
-		}
-		defer supervisor.Close()
-
-		ui.PrintInfo("Menjalankan custom workflow '%s'...", name)
-		result, err := workflow.RunCustomWorkflow(supervisor, provider, cw)
-		if err != nil {
-			return fmt.Errorf("workflow gagal: %w", err)
-		}
-		ui.PrintSuccess("%s", result.FinalSummary)
-		fmt.Printf("Project dir: %s\n", result.ProjectPath)
-		return nil
+		return runWorkflowCommand(args[0], workflowProjectDir, nil)
 	},
 }
 
@@ -247,6 +195,92 @@ var workflowImportCmd = &cobra.Command{
 		ui.PrintSuccess("Workflow '%s' berhasil di-import (%d agent)", name, len(cw.Agents))
 		return nil
 	},
+}
+
+func runWorkflowCommand(name, projectDir string, metadata map[string]string) error {
+	cfg := config.Get()
+	run, err := runlog.Start(runlog.StartOptions{
+		Kind:     "workflow",
+		Name:     name,
+		Provider: cfg.Provider,
+		Model:    cfg.Model,
+		Project:  projectDir,
+		Metadata: metadata,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Run ID: %s\n", run.ID)
+
+	result, execErr := executeCustomWorkflow(name, projectDir)
+	if execErr != nil {
+		_ = runlog.Finish(run.ID, "failed", "", execErr)
+		return execErr
+	}
+	_ = runlog.AddEvent(run.ID, "workflow_result", result.FinalSummary, map[string]string{"project_dir": result.ProjectPath})
+	if err := runlog.Finish(run.ID, "success", result.FinalSummary, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+func executeCustomWorkflow(name, projectDir string) (*workflow.CustomWorkflowResult, error) {
+	cw, err := workflow.LoadCustomWorkflow(name)
+	if err != nil {
+		return nil, fmt.Errorf("gagal load workflow '%s': %w", name, err)
+	}
+	if projectDir != "" {
+		cw.ProjectDir = projectDir
+	}
+
+	provider, err := providerFromConfig()
+	if err != nil {
+		return nil, fmt.Errorf("gagal inisialisasi provider: %w", err)
+	}
+
+	supervisor, err := getSupervisorForSkill()
+	if err != nil {
+		return nil, fmt.Errorf("gagal inisialisasi supervisor: %w", err)
+	}
+	defer supervisor.Close()
+
+	ui.PrintInfo("Menjalankan custom workflow '%s'...", name)
+	result, err := workflow.RunCustomWorkflow(supervisor, provider, cw)
+	if err != nil {
+		return nil, fmt.Errorf("workflow gagal: %w", err)
+	}
+	ui.PrintSuccess("%s", result.FinalSummary)
+	fmt.Printf("Project dir: %s\n", result.ProjectPath)
+	return result, nil
+}
+
+func providerFromConfig() (llm.Provider, error) {
+	cfg := config.Get()
+	providerCfg := llm.ProviderConfig{
+		Name:   cfg.Provider,
+		Model:  cfg.Model,
+		Host:   cfg.OllamaHost,
+		APIKey: "",
+	}
+	switch cfg.Provider {
+	case "openai":
+		providerCfg.APIKey = cfg.OpenAIAPIKey
+		providerCfg.Host = cfg.OpenAIBaseURL
+	case "openrouter":
+		providerCfg.APIKey = cfg.OpenRouterAPIKey
+		if cfg.Model == "" || cfg.Model == "minimax-m2.5:cloud" {
+			providerCfg.Model = cfg.OpenRouterModel
+		}
+	case "anthropic":
+		providerCfg.APIKey = cfg.AnthropicAPIKey
+		if cfg.Model == "" || cfg.Model == "minimax-m2.5:cloud" {
+			providerCfg.Model = cfg.AnthropicModel
+		}
+	case "custom":
+		providerCfg.APIKey = cfg.CustomAPIKey
+		providerCfg.Host = cfg.CustomBaseURL
+	}
+	return llm.NewProvider(providerCfg)
 }
 
 func init() {

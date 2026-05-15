@@ -1009,7 +1009,7 @@ func (s *SQLiteStore) GetMemoryByID(id int64) (*Memory, error) {
 	var m Memory
 	var tagsJSON, metadataJSON sql.NullString
 	var expiresAt sql.NullTime
-	var categoryID sql.NullInt64
+	var categoryID, workspaceID sql.NullInt64
 
 	row := s.db.QueryRow(
 		`SELECT id, workspace_id, content, embedding, tags, source, created_at, updated_at, expires_at, category_id, metadata, version 
@@ -1017,13 +1017,16 @@ func (s *SQLiteStore) GetMemoryByID(id int64) (*Memory, error) {
 		id,
 	)
 	var embBlob []byte
-	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
+	if err := row.Scan(&m.ID, &workspaceID, &m.Content, &embBlob, &tagsJSON, &m.Source, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &categoryID, &metadataJSON, &m.Version); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("gagal membaca memory: %w", err)
 	}
 
+	if workspaceID.Valid {
+		m.WorkspaceID = workspaceID.Int64
+	}
 	if len(embBlob) > 0 {
 		m.Embedding = bytesToFloat32(embBlob)
 	}

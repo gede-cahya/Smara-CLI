@@ -41,9 +41,23 @@ sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ind
 sudo pacman -S tesseract tesseract-data-eng tesseract-data-ind
 ```
 
+
+### 🧰 Automation & Reliability Tooling
+
+Tambahan fitur CLI untuk memperkuat workflow release dan operasi harian:
+
+- **Run History & Replay** — `smara run history/show/replay` mencatat eksekusi workflow dan metadata provider/model.
+- **Eval Suite** — `smara eval run` menjalankan suite evaluasi provider aktif dengan dukungan output JSON.
+- **Policy CLI** — `smara policy list/set/check` untuk mengatur allow/ask/deny automation berdasarkan tool/action/target/risk.
+- **Scheduler** — `smara schedule` menyimpan dan mengelola job lokal terjadwal.
+- **Sharing** — `smara share` untuk export/import artifact berbagi.
+- **Memory compatibility fix** — `smara memory save <content>` kembali tersedia, dan `memory get` aman untuk memori lama dengan `workspace_id` NULL.
+
 ## Tested
 
 - Build: `go build ./...` ✓
+- Tests: `go test ./...` ✓
+- Cross-compile: Linux AMD64, macOS AMD64/ARM64, Windows AMD64 ✓
 - Manual test di Telegram VPS: photo + caption "ini gambar apa" → bot jawab dengan metadata JPEG 267×108 + OCR result ✓
 - Backward compat: pesan teks tanpa attachment tetap jalan seperti biasa ✓
 

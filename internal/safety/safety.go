@@ -30,24 +30,24 @@ const (
 
 // ToolAction maps a tool name to its action type.
 var toolActions = map[string]ActionType{
-	"view_file":        ActionRead,
-	"read_file":        ActionRead,
-	"list_directory":   ActionRead,
-	"list_dir":         ActionRead,
-	"search_memories":  ActionRead,
-	"remember":         ActionWrite,
-	"write_file":       ActionWrite,
-	"edit_file":        ActionWrite,
-	"patch_file":       ActionWrite,
-	"execute_command":  ActionExecute,
-	"run_command":      ActionExecute,
-	"run_terminal":     ActionExecute,
-	"delete_file":      ActionDelete,
+	"view_file":         ActionRead,
+	"read_file":         ActionRead,
+	"list_directory":    ActionRead,
+	"list_dir":          ActionRead,
+	"search_memories":   ActionRead,
+	"remember":          ActionWrite,
+	"write_file":        ActionWrite,
+	"edit_file":         ActionWrite,
+	"patch_file":        ActionWrite,
+	"execute_command":   ActionExecute,
+	"run_command":       ActionExecute,
+	"run_terminal":      ActionExecute,
+	"delete_file":       ActionDelete,
 	"analyze_workspace": ActionRead,
-	"grep_search":      ActionRead,
-	"search_path":      ActionRead,
-	"get_cwd":          ActionRead,
-	"web_search":       ActionRead,
+	"grep_search":       ActionRead,
+	"search_path":       ActionRead,
+	"get_cwd":           ActionRead,
+	"web_search":        ActionRead,
 }
 
 // Engine is the safety engine that enforces execution rules.
@@ -127,6 +127,25 @@ func (e *Engine) CanExecute(toolName string) (bool, string) {
 		return true, ""
 	default:
 		return false, "mode tidak dikenal"
+	}
+}
+
+// EvaluatePolicy checks the explicit policy file without changing legacy mode behavior.
+func (e *Engine) EvaluatePolicy(toolName, target string) (bool, PolicyResult, string) {
+	policy, err := LoadPolicy()
+	if err != nil {
+		return false, PolicyResult{Decision: DecisionDeny, Risk: RiskHigh, Reason: err.Error()}, err.Error()
+	}
+	result := policy.Evaluate(PolicyRequest{Tool: toolName, Target: target})
+	switch result.Decision {
+	case DecisionAllow:
+		return true, result, ""
+	case DecisionAsk:
+		return false, result, fmt.Sprintf("tool '%s' membutuhkan konfirmasi policy (%s)", toolName, result.Risk)
+	case DecisionDeny:
+		return false, result, fmt.Sprintf("tool '%s' ditolak policy (%s): %s", toolName, result.Risk, result.Reason)
+	default:
+		return false, result, "decision policy tidak dikenal"
 	}
 }
 

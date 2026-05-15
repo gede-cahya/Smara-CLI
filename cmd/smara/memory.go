@@ -45,6 +45,34 @@ func openMemoryStore(ctx context.Context, cfg *config.SmaraConfig) (*memory.SQLi
 	return store, store.Close, nil
 }
 
+var memorySaveCmd = &cobra.Command{
+	Use:   "save <content>",
+	Short: "Simpan memori baru",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg := config.Get()
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
+		if err != nil {
+			return fmt.Errorf("gagal membuka database: %w", err)
+		}
+		defer closeStore()
+
+		content := strings.Join(args, " ")
+		tags, _ := cmd.Flags().GetString("tags")
+		source, _ := cmd.Flags().GetString("source")
+		if strings.TrimSpace(source) == "" {
+			source = "user"
+		}
+
+		m, err := store.Save(content, tags, source, cfg.ActiveWorkspaceID, nil)
+		if err != nil {
+			return fmt.Errorf("gagal menyimpan memori: %w", err)
+		}
+		ui.PrintSuccess("  ✓ Memori #%d tersimpan.", m.ID)
+		return nil
+	},
+}
+
 var memoryListCmd = &cobra.Command{
 	Use:     "list",
 	Short:   "Tampilkan memori terbaru",
@@ -541,6 +569,9 @@ func init() {
 	memorySearchCmd.Flags().IntP("limit", "n", 5, "jumlah hasil pencarian")
 	memorySearchCmd.Flags().Bool("hybrid", false, "gunakan hybrid search (semantic + keyword)")
 
+	memorySaveCmd.Flags().String("tags", "", "tags memori (pisahkan dengan koma)")
+	memorySaveCmd.Flags().String("source", "user", "source memori")
+
 	memoryUpdateCmd.Flags().String("content", "", "konten baru")
 	memoryUpdateCmd.Flags().String("tags", "", "tags baru (pisahkan dengan koma)")
 	memoryUpdateCmd.Flags().String("source", "", "source baru")
@@ -557,6 +588,7 @@ func init() {
 	memoryImportCmd.Flags().Bool("skip-duplicates", true, "lewati memori duplikat")
 
 	memoryCmd.AddCommand(
+		memorySaveCmd,
 		memoryListCmd,
 		memorySearchCmd,
 		memoryClearCmd,
