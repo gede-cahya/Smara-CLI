@@ -178,15 +178,14 @@ func TestCapText_TruncatesAndAnnotates(t *testing.T) {
 	assert.Contains(t, out, strings.Repeat("x", 20))
 }
 
-
 func TestLooksLikeChallenge(t *testing.T) {
 	cases := map[string]bool{
-		"<html><body><h1>Just a moment...</h1></body></html>":                               true,
-		"<script>cf_chl_opt={}</script>":                                                   true,
-		"<div id='cf-browser-verification'>Checking your browser before accessing</div>":  true,
-		"<title>Checking your browser</title>":                                              true,
-		"<html><body><h1>Article headline</h1><p>normal content here</p></body></html>":    false,
-		"":                                                                                 false,
+		"<html><body><h1>Just a moment...</h1></body></html>":                            true,
+		"<script>cf_chl_opt={}</script>":                                                 true,
+		"<div id='cf-browser-verification'>Checking your browser before accessing</div>": true,
+		"<title>Checking your browser</title>":                                           true,
+		"<html><body><h1>Article headline</h1><p>normal content here</p></body></html>":  false,
+		"": false,
 	}
 	for html, want := range cases {
 		assert.Equal(t, want, looksLikeChallenge(html), "html=%q", html[:min(50, len(html))])
@@ -202,13 +201,13 @@ func min(a, b int) int {
 
 func TestIsBlockingError(t *testing.T) {
 	cases := map[string]bool{
-		"HTTP 403 dari https://x.com": true,
-		"HTTP 503 Service Unavailable": true,
+		"HTTP 403 dari https://x.com":       true,
+		"HTTP 503 Service Unavailable":      true,
 		"gagal connect: Cloudflare blocked": true,
-		"Forbidden": true,
-		"timeout exceeded": false,
-		"dns lookup failed": false,
-		"": false,
+		"Forbidden":                         true,
+		"timeout exceeded":                  false,
+		"dns lookup failed":                 false,
+		"":                                  false,
 	}
 	for msg, want := range cases {
 		var err error

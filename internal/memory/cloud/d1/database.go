@@ -44,10 +44,10 @@ const (
 
 // cfAPIResponse wraps the Cloudflare API response envelope.
 type cfAPIResponse struct {
-	Success  bool              `json:"success"`
-	Errors   []cfAPIError      `json:"errors"`
-	Messages []string          `json:"messages"`
-	Result   json.RawMessage   `json:"result"`
+	Success    bool            `json:"success"`
+	Errors     []cfAPIError    `json:"errors"`
+	Messages   []string        `json:"messages"`
+	Result     json.RawMessage `json:"result"`
 	ResultInfo *cfResultInfo   `json:"result_info,omitempty"`
 }
 
@@ -74,10 +74,10 @@ type cfD1Database struct {
 
 // cfD1QueryResult is the shape of the D1 query API response.
 type cfD1QueryResult struct {
-	Success  bool             `json:"success"`
-	Errors   []cfAPIError     `json:"errors"`
-	Messages []string         `json:"messages"`
-	Result   []cfD1QueryMeta  `json:"result"`
+	Success  bool            `json:"success"`
+	Errors   []cfAPIError    `json:"errors"`
+	Messages []string        `json:"messages"`
+	Result   []cfD1QueryMeta `json:"result"`
 }
 
 type cfD1QueryMeta struct {

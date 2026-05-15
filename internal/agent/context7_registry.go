@@ -13,12 +13,12 @@ import (
 
 // Context7RegistryEntry maps keywords to a Context7 library for auto-resolve.
 type Context7RegistryEntry struct {
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	Tags           []string `json:"tags"`
-	Keywords       []string `json:"keywords"`
-	Context7Library string  `json:"context7_library"`
-	SkillFile      string   `json:"skill_file,omitempty"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Tags            []string `json:"tags"`
+	Keywords        []string `json:"keywords"`
+	Context7Library string   `json:"context7_library"`
+	SkillFile       string   `json:"skill_file,omitempty"`
 }
 
 // Context7RegistryManifest is the top-level curated library index.

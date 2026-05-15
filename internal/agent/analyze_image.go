@@ -3,7 +3,7 @@ package agent
 import (
 	"fmt"
 	"image"
-	_ "image/gif"  // register decoders
+	_ "image/gif" // register decoders
 	_ "image/jpeg"
 	_ "image/png"
 	"os"

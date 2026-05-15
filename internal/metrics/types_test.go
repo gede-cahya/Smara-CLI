@@ -119,8 +119,8 @@ func TestErrorEntry_Struct(t *testing.T) {
 	now := time.Now()
 	ee := ErrorEntry{
 		Timestamp: now,
-		Source:      "telegram",
-		Message:     "connection failed",
+		Source:    "telegram",
+		Message:   "connection failed",
 	}
 	assert.Equal(t, now, ee.Timestamp)
 	assert.Equal(t, "telegram", ee.Source)

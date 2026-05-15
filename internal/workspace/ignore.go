@@ -47,7 +47,7 @@ func (m *IgnoreMatcher) IsIgnored(targetPath string, isDir bool) bool {
 	if rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
 		return true
 	}
-	
+
 	// Normalize path for matching (some matchers prefer / separators)
 	relPath := filepath.ToSlash(rel)
 

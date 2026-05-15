@@ -34,13 +34,13 @@ type MetricsCollector struct {
 	mcpServers map[string]*mcpCounter
 
 	// Memory & sync
-	memoryTotal   int
+	memoryTotal    int
 	memoryUnsynced int
-	memoryDBSize  int64
-	syncEnabled   bool
-	syncLastAt    time.Time
-	syncPending   int
-	syncStatus    string
+	memoryDBSize   int64
+	syncEnabled    bool
+	syncLastAt     time.Time
+	syncPending    int
+	syncStatus     string
 
 	// Sessions
 	activeSessions int
@@ -73,10 +73,10 @@ type mcpCounter struct {
 // NewCollector creates a new MetricsCollector.
 func NewCollector(filePath, provider, model string) *MetricsCollector {
 	return &MetricsCollector{
-		startedAt:  time.Now(),
-		filePath:   filePath,
-		platforms:  make(map[string]*platformCounter),
-		mcpServers: make(map[string]*mcpCounter),
+		startedAt:   time.Now(),
+		filePath:    filePath,
+		platforms:   make(map[string]*platformCounter),
+		mcpServers:  make(map[string]*mcpCounter),
 		llmProvider: provider,
 		llmModel:    model,
 		syncStatus:  "idle",

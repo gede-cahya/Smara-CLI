@@ -73,11 +73,11 @@ func TestAgentSpec_Struct(t *testing.T) {
 
 func TestTask_Struct(t *testing.T) {
 	task := Task{
-		ID:        "t1",
+		ID:          "t1",
 		Description: "desc",
-		Type:      "mcp",
-		MCPServer: "figma",
-		ToolName:  "create_design",
+		Type:        "mcp",
+		MCPServer:   "figma",
+		ToolName:    "create_design",
 	}
 	assert.Equal(t, "t1", task.ID)
 	assert.Equal(t, "desc", task.Description)

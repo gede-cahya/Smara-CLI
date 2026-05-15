@@ -212,11 +212,11 @@ func (p *TursoProvider) localFrameNo(ctx context.Context) (int64, error) {
 type tursoUsageResponse struct {
 	Database struct {
 		Usage struct {
-			RowsRead    int64  `json:"rows_read"`
-			RowsWritten int64  `json:"rows_written"`
-			StorageUsed int64  `json:"storage_bytes"`
+			RowsRead    int64 `json:"rows_read"`
+			RowsWritten int64 `json:"rows_written"`
+			StorageUsed int64 `json:"storage_bytes"`
 		} `json:"usage"`
-		SizeLimit int64 `json:"size_limit_bytes"`
+		SizeLimit     int64 `json:"size_limit_bytes"`
 		RowsReadLimit int64 `json:"rows_read_limit"`
 	} `json:"database"`
 }

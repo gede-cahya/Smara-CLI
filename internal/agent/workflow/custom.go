@@ -13,11 +13,11 @@ import (
 
 // CustomAgent defines a manually-configured agent in a custom workflow.
 type CustomAgent struct {
-	Role        string            `json:"role"`
-	Description string            `json:"description"`
-	Skills      []string          `json:"skills,omitempty"`
-	Tasks       []Task            `json:"tasks"`
-	DependsOn   []string          `json:"depends_on,omitempty"`
+	Role        string              `json:"role"`
+	Description string              `json:"description"`
+	Skills      []string            `json:"skills,omitempty"`
+	Tasks       []Task              `json:"tasks"`
+	DependsOn   []string            `json:"depends_on,omitempty"`
 	InputsFrom  map[string][]string `json:"inputs_from,omitempty"`
 }
 

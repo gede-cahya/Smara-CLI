@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/gede-cahya/Smara-CLI/internal/memory"
 )
 
 func setupTestDaemon(t *testing.T) (*Daemon, *memory.SQLiteStore, string, func()) {

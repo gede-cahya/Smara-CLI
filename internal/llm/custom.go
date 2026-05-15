@@ -148,7 +148,7 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 	if c.model == "minimax-auto" {
 		// If using the proxy auto-model, we might need a different embedding model
 		// or let the proxy handle it. For now, we try to be more generic.
-		model = "text-embedding-ada-002" 
+		model = "text-embedding-ada-002"
 	}
 
 	reqBody := openAIEmbedRequest{
@@ -177,7 +177,7 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 	if resp.StatusCode != http.StatusOK {
 		// Log and return nil error to avoid breaking the chat flow if embeddings are not available
 		// This is common in custom/local providers
-		return nil, nil 
+		return nil, nil
 	}
 
 	var embedResp openAIEmbedResponse

@@ -3,9 +3,9 @@ package agent
 import (
 	"testing"
 
+	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 )
 
 func TestModePrompts_ContainSSHInstructions(t *testing.T) {

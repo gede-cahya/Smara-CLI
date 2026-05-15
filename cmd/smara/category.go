@@ -18,8 +18,8 @@ var categoryCmd = &cobra.Command{
 }
 
 var categoryListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Tampilkan daftar kategori",
+	Use:     "list",
+	Short:   "Tampilkan daftar kategori",
 	Aliases: []string{"ls"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.Get()
@@ -30,15 +30,15 @@ var categoryListCmd = &cobra.Command{
 		defer store.Close()
 
 		all, _ := cmd.Flags().GetBool("all")
-		
+
 		var categories []memory.Category
-		
+
 		if all {
 			categories, err = store.ListCategories(cfg.ActiveWorkspaceID, true)
 		} else {
 			categories, err = store.ListCategories(cfg.ActiveWorkspaceID, false)
 		}
-		
+
 		if err != nil {
 			return fmt.Errorf("gagal membaca kategori: %w", err)
 		}
@@ -50,7 +50,7 @@ var categoryListCmd = &cobra.Command{
 
 		fmt.Println()
 		fmt.Printf("  Kategori di workspace '%s' (%d):\n\n", cfg.ActiveWorkspace, len(categories))
-		
+
 		for _, cat := range categories {
 			prefix := "  "
 			if cat.ParentID != nil {
@@ -63,7 +63,7 @@ var categoryListCmd = &cobra.Command{
 			fmt.Printf("       Dibuat: %s\n", cat.CreatedAt.Format("2006-01-02 15:04"))
 			fmt.Println()
 		}
-		
+
 		return nil
 	},
 }
@@ -145,7 +145,7 @@ var categoryGetCmd = &cobra.Command{
 		}
 		fmt.Printf("  Dibuat:      %s\n", cat.CreatedAt.Format("2006-01-02 15:04"))
 		fmt.Println()
-		
+
 		// Show memory count
 		stats, err := store.GetCategoryStats(id)
 		if err == nil {
@@ -153,7 +153,7 @@ var categoryGetCmd = &cobra.Command{
 			fmt.Printf("    - Jumlah memori: %d\n", stats["memory_count"])
 			fmt.Printf("    - Subkategori:   %d\n", stats["subcategory_count"])
 		}
-		
+
 		return nil
 	},
 }
@@ -264,21 +264,21 @@ var categoryStatsCmd = &cobra.Command{
 		fmt.Printf("    Memori:       %d\n", stats["memory_count"])
 		fmt.Printf("    Subkategori:  %d\n", stats["subcategory_count"])
 		fmt.Println()
-		
+
 		return nil
 	},
 }
 
 func init() {
 	categoryListCmd.Flags().Bool("all", false, "tampilkan semua kategori termasuk subkategori")
-	
+
 	categoryCreateCmd.Flags().String("description", "", "deskripsi kategori")
 	categoryCreateCmd.Flags().String("parent", "", "ID kategori parent")
-	
+
 	categoryUpdateCmd.Flags().String("name", "", "nama baru")
 	categoryUpdateCmd.Flags().String("description", "", "deskripsi baru")
 	categoryUpdateCmd.Flags().String("parent", "", "ID parent baru")
-	
+
 	categoryDeleteCmd.Flags().Int64("reassign-to", 0, "pindahkan memori ke kategori ini")
 
 	categoryCmd.AddCommand(

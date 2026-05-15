@@ -38,7 +38,7 @@ func mainDebugTar() {
 		}
 
 		fmt.Printf("Found file: %s (Type: %v)\n", header.Name, header.Typeflag)
-		
+
 		if header.Typeflag == tar.TypeReg {
 			base := filepath.Base(header.Name)
 			fmt.Printf("  Base: %s\n", base)

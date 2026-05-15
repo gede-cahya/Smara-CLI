@@ -14,8 +14,8 @@ import (
 // ExecutionTrace represents one completed user prompt that caused a sequence
 // of tool calls. It is the atomic unit of pattern detection.
 type ExecutionTrace struct {
-	PromptText string
-	Steps      []TraceStep
+	PromptText  string
+	Steps       []TraceStep
 	CompletedAt time.Time
 }
 
@@ -71,13 +71,13 @@ func EnsureAutoDetectTable(db *sql.DB) error {
 
 // PatternRecord is a row from auto_skill_patterns.
 type PatternRecord struct {
-	Fingerprint     string
-	Count           int
-	FirstSeen       time.Time
-	LastSeen        time.Time
-	Trace           ExecutionTrace
-	SamplePrompt    string
-	CapturedSkill   string
+	Fingerprint   string
+	Count         int
+	FirstSeen     time.Time
+	LastSeen      time.Time
+	Trace         ExecutionTrace
+	SamplePrompt  string
+	CapturedSkill string
 }
 
 // RecordTrace upserts a trace observation and returns the updated record.

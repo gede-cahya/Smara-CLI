@@ -203,7 +203,6 @@ func TestBuiltinTools_IncludeSkillCreate(t *testing.T) {
 	assert.True(t, names["skill_run"], "skill_run should still be registered")
 }
 
-
 // TestSkillCreate_EndToEnd verifies LLM can create a skill via ExecuteBuiltinTool
 // and then run it via skill_run — simulating the full bot flow.
 func TestSkillCreate_EndToEnd(t *testing.T) {
@@ -240,7 +239,6 @@ func TestSkillCreate_EndToEnd(t *testing.T) {
 	_, err = skill.Load("say-hi")
 	require.Error(t, err)
 }
-
 
 // TestSkillCreate_OverwritePreservesLineage verifies that when a skill is
 // overwritten via skill_create, the previous version's description/tags/step

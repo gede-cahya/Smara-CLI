@@ -92,7 +92,7 @@ func extractDocumentText(path string) (text string, source string, err error) {
 	case ".pdf":
 		return extractPDF(path)
 	case ".docx", ".odt", ".rtf", ".doc", ".epub", ".html", ".htm":
-	return extractWithPandoc(path)
+		return extractWithPandoc(path)
 	case ".txt", ".md", ".markdown", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml",
 		".toml", ".ini", ".cfg", ".conf", ".rst", ".tex", ".sh", ".bash", ".zsh",
 		".py", ".go", ".js", ".ts", ".tsx", ".jsx", ".rs", ".java", ".c", ".cpp",

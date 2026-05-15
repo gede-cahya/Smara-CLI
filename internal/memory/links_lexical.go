@@ -19,14 +19,14 @@ const (
 
 // AutoLinkReport describes the outcome of an auto-link run.
 type AutoLinkReport struct {
-	Mode             AutoLinkMode `json:"mode"`
-	Created          int          `json:"created"`
-	MemoriesScanned  int          `json:"memories_scanned"`
-	WithEmbedding    int          `json:"with_embedding"`
-	EmbeddingRatio   float64      `json:"embedding_ratio"`
-	Threshold        float64      `json:"threshold"`
-	TopK             int          `json:"top_k"`
-	FellBackToLexical bool        `json:"fell_back_to_lexical"`
+	Mode              AutoLinkMode `json:"mode"`
+	Created           int          `json:"created"`
+	MemoriesScanned   int          `json:"memories_scanned"`
+	WithEmbedding     int          `json:"with_embedding"`
+	EmbeddingRatio    float64      `json:"embedding_ratio"`
+	Threshold         float64      `json:"threshold"`
+	TopK              int          `json:"top_k"`
+	FellBackToLexical bool         `json:"fell_back_to_lexical"`
 }
 
 // AutoLinkSmart runs the best available similarity engine:

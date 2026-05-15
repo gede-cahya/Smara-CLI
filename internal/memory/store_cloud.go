@@ -156,7 +156,7 @@ func OpenStoreWithCloud(ctx context.Context, cfg *config.SmaraConfig, ccfg cloud
 		if keyErr != nil {
 			return nil, nil, fmt.Errorf("OpenStoreWithCloud: encryption at rest enabled but key unavailable: %w", keyErr)
 		}
-		_ = keyInfo // keyInfo.Source is available for audit logging if needed
+		_ = keyInfo                         // keyInfo.Source is available for audit logging if needed
 		ccfg.EncryptionKey = string(encKey) // populate for Validate
 		provider = cloud.NewEncryptedProvider(provider, encKey)
 		// Zero the local copy after wrapping.

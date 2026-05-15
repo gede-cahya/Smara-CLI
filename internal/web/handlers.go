@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
-	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 )
 
 // --- Status ---
@@ -30,14 +30,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	mode := s.Supervisor.GetMode()
 	modeInfo := agent.GetModeInfo(mode)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":      "running",
-		"mode":        string(mode),
-		"mode_label":  modeInfo.Label,
-		"mode_desc":   modeInfo.Description,
-		"mode_emoji":  modeInfo.Emoji,
-		"provider":    s.Supervisor.GetProvider().Name(),
-		"workspace":   s.Cfg.ActiveWorkspace,
-		"version":     "1.0.0",
+		"status":     "running",
+		"mode":       string(mode),
+		"mode_label": modeInfo.Label,
+		"mode_desc":  modeInfo.Description,
+		"mode_emoji": modeInfo.Emoji,
+		"provider":   s.Supervisor.GetProvider().Name(),
+		"workspace":  s.Cfg.ActiveWorkspace,
+		"version":    "1.0.0",
 	})
 }
 
@@ -76,17 +76,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 // --- WebSocket ---
 
 type wsMessage struct {
-	Type        string `json:"type"`
-	Payload     string `json:"payload"`
-	Mode        string `json:"mode,omitempty"`
-	Phase       string `json:"phase,omitempty"`
-	Description string `json:"description,omitempty"`
-	Tool        string `json:"tool,omitempty"`
-	Server      string `json:"server,omitempty"`
-	Output      string `json:"output,omitempty"`
+	Type        string                 `json:"type"`
+	Payload     string                 `json:"payload"`
+	Mode        string                 `json:"mode,omitempty"`
+	Phase       string                 `json:"phase,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Tool        string                 `json:"tool,omitempty"`
+	Server      string                 `json:"server,omitempty"`
+	Output      string                 `json:"output,omitempty"`
 	Args        map[string]interface{} `json:"args,omitempty"`
-	Role        string `json:"role,omitempty"`
-	Stats       *wsStats `json:"stats,omitempty"`
+	Role        string                 `json:"role,omitempty"`
+	Stats       *wsStats               `json:"stats,omitempty"`
 }
 
 type wsStats struct {
@@ -247,8 +247,8 @@ func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filters := memory.MemoryFilters{
-		Limit: limit,
-		SortBy: "created_at",
+		Limit:   limit,
+		SortBy:  "created_at",
 		SortDir: "DESC",
 		SearchFilters: memory.SearchFilters{
 			Tags:    tags,
@@ -289,7 +289,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 
 	wsID := s.resolveWorkspaceID()
 	mems, err := s.MemStore.SearchFullText(req.Query, wsID, memory.MemoryFilters{
-		Limit: req.Limit,
+		Limit:         req.Limit,
 		SearchFilters: memory.SearchFilters{MinScore: 0.1},
 	})
 	if err != nil {
@@ -452,8 +452,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{
-			"mode":       string(s.Supervisor.GetMode()),
-			"mode_info":  agent.GetModeInfo(s.Supervisor.GetMode()),
+			"mode":      string(s.Supervisor.GetMode()),
+			"mode_info": agent.GetModeInfo(s.Supervisor.GetMode()),
 		})
 		return
 	}
@@ -764,11 +764,11 @@ func (s *Server) handleSkillStats(w http.ResponseWriter, r *http.Request) {
 		rate = float64(success) / float64(total) * 100
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"skill_name":   name,
-		"total_runs":   total,
-		"success_rate": rate,
+		"skill_name":      name,
+		"total_runs":      total,
+		"success_rate":    rate,
 		"avg_duration_ms": avgMs,
-		"last_run":     lastRun,
+		"last_run":        lastRun,
 	})
 }
 
@@ -1156,7 +1156,6 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 // handleSkillExport returns the entire skill tree as a downloadable JSON
 // envelope. GET /api/skills/export?source=machine-name
 //
@@ -1193,13 +1192,14 @@ func (s *Server) handleSkillExport(w http.ResponseWriter, r *http.Request) {
 // merges it into ~/.smara/skills/. POST /api/skills/import-tree
 //
 // Body format:
-//   {
-//     "mode": "overwrite"|"skip"|"rename",   // default overwrite
-//     "dry_run": false,                      // default false
-//     "envelope": { ... TreeExport ... }     // OR
-//     "envelope_json": "<stringified>"       // OR raw body containing
-//                                            // a naked TreeExport
-//   }
+//
+//	{
+//	  "mode": "overwrite"|"skip"|"rename",   // default overwrite
+//	  "dry_run": false,                      // default false
+//	  "envelope": { ... TreeExport ... }     // OR
+//	  "envelope_json": "<stringified>"       // OR raw body containing
+//	                                         // a naked TreeExport
+//	}
 func (s *Server) handleSkillTreeImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "only POST")

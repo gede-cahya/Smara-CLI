@@ -30,8 +30,8 @@ type TransferLogEntry struct {
 	RemotePath string    `json:"remote_path"`
 	Direction  string    `json:"direction"` // upload / download
 	Bytes      int64     `json:"bytes"`
-	Method     string    `json:"method"`      // sftp / scp
-	Status     string    `json:"status"`      // success / error
+	Method     string    `json:"method"` // sftp / scp
+	Status     string    `json:"status"` // success / error
 	ErrorMsg   string    `json:"error_msg"`
 	Duration   int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`

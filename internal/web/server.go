@@ -13,14 +13,14 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
-	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:     func(r *http.Request) bool { return true },
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
@@ -40,12 +40,12 @@ type Server struct {
 
 // ChatSession tracks a single WebSocket conversation.
 type ChatSession struct {
-	ID         string
-	Conn       *websocket.Conn
-	History    []llm.Message
-	Workspace  string
-	Mode       agent.Mode
-	mu         sync.Mutex
+	ID        string
+	Conn      *websocket.Conn
+	History   []llm.Message
+	Workspace string
+	Mode      agent.Mode
+	mu        sync.Mutex
 }
 
 func (cs *ChatSession) WriteJSON(v interface{}) error {

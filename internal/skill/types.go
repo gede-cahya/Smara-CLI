@@ -10,7 +10,7 @@ import (
 // ParamDef defines a configurable parameter for a skill.
 type ParamDef struct {
 	Name        string      `json:"name"`
-	Type        string      `json:"type"`        // string, number, boolean
+	Type        string      `json:"type"` // string, number, boolean
 	Description string      `json:"description"`
 	Required    bool        `json:"required"`
 	Default     interface{} `json:"default,omitempty"`
@@ -48,7 +48,7 @@ type Skill struct {
 	ParentID     string         `json:"parent_id,omitempty"`
 	CategoryPath []string       `json:"category_path,omitempty"`
 	Dependencies []string       `json:"dependencies,omitempty"`
-	Lineage      []LineageEntry `json:"lineage,omitempty"` // history of prior versions
+	Lineage      []LineageEntry `json:"lineage,omitempty"`  // history of prior versions
 	Children     []string       `json:"children,omitempty"` // derived, not persisted
 }
 

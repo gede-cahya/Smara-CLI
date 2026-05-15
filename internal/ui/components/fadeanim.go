@@ -70,10 +70,10 @@ func (fw *FadeWave) Render() string {
 
 	// Age thresholds for the gradient
 	const (
-		accentMs    = 80
-		brightMs    = 250
-		subtextMs   = 600
-		dimMs       = 1000
+		accentMs  = 80
+		brightMs  = 250
+		subtextMs = 600
+		dimMs     = 1000
 	)
 
 	var sb strings.Builder

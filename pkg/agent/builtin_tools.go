@@ -200,7 +200,7 @@ func GetBuiltinTools() []llm.ToolFunction {
 			Name:        "get_cwd",
 			Description: "Mendapatkan path absolut dari direktori kerja saat ini.",
 			Parameters: map[string]interface{}{
-				"type": "object",
+				"type":       "object",
 				"properties": map[string]interface{}{},
 			},
 		},
@@ -231,13 +231,13 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 
 		cmd := exec.Command("sh", "-c", cmdStr)
-		
+
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
-		
+
 		var fullOutput strings.Builder
 		var mu sync.Mutex
-		
+
 		if err := cmd.Start(); err != nil {
 			return "", fmt.Errorf("gagal memulai perintah: %w", err)
 		}
@@ -273,7 +273,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			}
 			return output, fmt.Errorf("eksekusi gagal: %w\nOutput: %s", err, output)
 		}
-		
+
 		result := strings.TrimSpace(fullOutput.String())
 		if result == "" {
 			result = "Perintah berhasil dieksekusi tanpa output (exit code 0)."
@@ -284,20 +284,20 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if len(result) > maxOutputLen {
 			result = result[:maxOutputLen] + "\n... (output dipotong karena terlalu panjang)"
 		}
-		
+
 		return result, nil
-	
+
 	case "view_file":
 		path, ok := args["path"].(string)
 		if !ok {
 			return "", fmt.Errorf("argumen 'path' tidak valid")
 		}
-		
+
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca file: %w", err)
 		}
-		
+
 		lines := strings.Split(string(data), "\n")
 		startLine := 1
 		if sl, ok := args["start_line"].(float64); ok {
@@ -307,15 +307,19 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if el, ok := args["end_line"].(float64); ok {
 			endLine = int(el)
 		}
-		
-		if startLine < 1 { startLine = 1 }
-		if endLine > len(lines) { endLine = len(lines) }
-		
+
+		if startLine < 1 {
+			startLine = 1
+		}
+		if endLine > len(lines) {
+			endLine = len(lines)
+		}
+
 		var sb strings.Builder
 		for i := startLine; i <= endLine; i++ {
 			sb.WriteString(fmt.Sprintf("%4d | %s\n", i, lines[i-1]))
 		}
-		
+
 		return sb.String(), nil
 
 	case "read_file":
@@ -365,7 +369,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'path' tidak valid")
 		}
-		
+
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca direktori: %w", err)
@@ -384,7 +388,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 				result += fmt.Sprintf("[FILE] %s (%d bytes)\n", entry.Name(), size)
 			}
 		}
-		
+
 		if result == "" {
 			return fmt.Sprintf("Direktori '%s' kosong.", path), nil
 		}
@@ -395,24 +399,24 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if d, ok := args["depth"].(float64); ok {
 			depth = int(d)
 		}
-		
+
 		var summary strings.Builder
 		summary.WriteString("### Workspace Analysis Summary\n\n")
-		
+
 		cwd, _ := os.Getwd()
 		summary.WriteString(fmt.Sprintf("**Working Directory:** %s\n\n", cwd))
-		
+
 		summary.WriteString("**Directory Structure:**\n")
 		err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
-			
+
 			rel, _ := filepath.Rel(cwd, path)
 			if rel == "." {
 				return nil
 			}
-			
+
 			// Skip hidden dirs and node_modules
 			if strings.HasPrefix(rel, ".") || strings.Contains(rel, "node_modules") || strings.Contains(rel, "vendor") {
 				if info.IsDir() {
@@ -420,7 +424,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 				}
 				return nil
 			}
-			
+
 			level := strings.Count(rel, string(os.PathSeparator))
 			if level >= depth {
 				if info.IsDir() {
@@ -428,7 +432,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 				}
 				return nil
 			}
-			
+
 			indent := strings.Repeat("  ", level)
 			if info.IsDir() {
 				summary.WriteString(fmt.Sprintf("%s- 📁 %s/\n", indent, info.Name()))
@@ -437,18 +441,18 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			}
 			return nil
 		})
-		
+
 		if err != nil {
 			return "", err
 		}
-		
+
 		return summary.String(), nil
 
 	case "edit_file":
 		path, _ := args["path"].(string)
 		oldContent, _ := args["old_content"].(string)
 		newContent, _ := args["new_content"].(string)
-		
+
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca file: %w", err)
@@ -467,22 +471,26 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		// Jika start_line/end_line diberikan, cari hanya di range tersebut
 		content := string(data)
 		if okStart, okEnd := args["start_line"] != nil, args["end_line"] != nil; okStart || okEnd {
-			if startLine < 1 { startLine = 1 }
-			if endLine > len(lines) { endLine = len(lines) }
-			
+			if startLine < 1 {
+				startLine = 1
+			}
+			if endLine > len(lines) {
+				endLine = len(lines)
+			}
+
 			subContent := strings.Join(lines[startLine-1:endLine], "\n")
 			if !strings.Contains(subContent, oldContent) {
 				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d. Gunakan view_file untuk verifikasi.", startLine, endLine)
 			}
-			
+
 			// Lakukan penggantian hanya di bagian tersebut
 			newSubContent := strings.Replace(subContent, oldContent, newContent, 1)
-			
+
 			// Gabungkan kembali
 			finalLines := append(lines[:startLine-1], strings.Split(newSubContent, "\n")...)
 			finalLines = append(finalLines, lines[endLine:]...)
 			finalContent := strings.Join(finalLines, "\n")
-			
+
 			err = os.WriteFile(path, []byte(finalContent), 0644)
 			if err != nil {
 				return "", fmt.Errorf("gagal menulis file: %w", err)
@@ -518,18 +526,18 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		// Gunakan grep -r -n untuk hasil rekursif dengan nomor baris
 		cmd := exec.Command("grep", "-r", "-n", "--exclude-dir=.git", "--exclude-dir=node_modules", query, searchPathStr)
 		output, _ := cmd.CombinedOutput() // Grep returns exit code 1 if no matches
-		
+
 		res := string(output)
 		if res == "" {
 			return "Tidak ada hasil ditemukan.", nil
 		}
-		
+
 		// Batasi output agar tidak terlalu besar
 		lines := strings.Split(res, "\n")
 		if len(lines) > 50 {
 			res = strings.Join(lines[:50], "\n") + "\n... (output dipotong karena terlalu panjang)"
 		}
-		
+
 		return res, nil
 
 	case "search_path":
@@ -570,7 +578,7 @@ func searchPath(query, root string, logFn func(string, string)) (string, error) 
 		if err != nil {
 			return nil // Skip errors
 		}
-		
+
 		// Skip hidden directories like .git
 		if info.IsDir() && strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != ".." {
 			return filepath.SkipDir
@@ -600,46 +608,46 @@ func searchPath(query, root string, logFn func(string, string)) (string, error) 
 
 func searchWeb(query string) (string, error) {
 	searchURL := fmt.Sprintf("https://duckduckgo.com/html/?q=%s", url.QueryEscape(query))
-	
+
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Gunakan User-Agent stealth untuk menghindari blokir
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("gagal menghubungi search engine: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("search engine mengembalikan status: %d", resp.StatusCode)
 	}
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
-	
+
 	html := string(body)
-	
+
 	// Regex sederhana untuk mengekstrak hasil (title, link, snippet)
 	// Struktur: <a class="result__a" href="URL">TITLE</a> ... <a class="result__snippet">SNIPPET</a>
 	re := regexp.MustCompile(`(?s)<div class="result__body">.*?<a class="result__a" href="(.*?)">(.*?)</a>.*?<a class="result__snippet".*?>(.*?)</a>`)
 	matches := re.FindAllStringSubmatch(html, 10)
-	
+
 	if len(matches) == 0 {
 		return "Tidak ada hasil pencarian yang ditemukan atau format halaman berubah.", nil
 	}
-	
+
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("### Hasil Pencarian Internet untuk: '%s'\n\n", query))
-	
+
 	for i, m := range matches {
 		link := m[1]
 		// Bersihkan link jika melalui proxy DDG
@@ -650,13 +658,13 @@ func searchWeb(query string) (string, error) {
 				link = decoded
 			}
 		}
-		
+
 		title := cleanHTML(m[2])
 		snippet := cleanHTML(m[3])
-		
+
 		sb.WriteString(fmt.Sprintf("%d. **%s**\n   - Link: %s\n   - %s\n\n", i+1, title, link, snippet))
 	}
-	
+
 	return sb.String(), nil
 }
 

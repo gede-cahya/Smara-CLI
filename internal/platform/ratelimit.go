@@ -8,10 +8,10 @@ import (
 // RateLimiter implements a simple per-user rate limiter using a sliding window.
 // No external dependencies — uses a map of timestamps per user.
 type RateLimiter struct {
-	mu              sync.Mutex
-	maxPerMinute    int
-	burstSize       int
-	userTimestamps  map[string][]time.Time // userID → list of request timestamps
+	mu             sync.Mutex
+	maxPerMinute   int
+	burstSize      int
+	userTimestamps map[string][]time.Time // userID → list of request timestamps
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration.

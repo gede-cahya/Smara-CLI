@@ -150,7 +150,6 @@ func truncateForContext(s string) string {
 	return s[:max] + "…"
 }
 
-
 // detectIntroduction returns the inferred user statement when the prompt
 // looks like a self-introduction. Returns ("", false) if no clear intro
 // pattern matches.

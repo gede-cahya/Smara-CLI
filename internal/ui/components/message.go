@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	lipgloss "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/glamour"
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -153,7 +153,7 @@ func (r *MessageRenderer) RenderStream(content, thinking string, mode string, el
 	icon := r.modeIcon(mode)
 	modeLabel := strings.ToUpper(mode)
 	prefixColor := r.theme.ModeColor(mode)
-	
+
 	modelLabel := ""
 	if modelName != "" {
 		modelLabel = fmt.Sprintf(" (%s)", modelName)

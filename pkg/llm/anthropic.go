@@ -53,9 +53,9 @@ type anthropicTool struct {
 }
 
 type anthropicChatResponse struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Model string `json:"model"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Model   string `json:"model"`
 	Content []struct {
 		Type  string                 `json:"type"`
 		Text  string                 `json:"text,omitempty"`

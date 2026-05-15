@@ -11,14 +11,14 @@ import (
 // markdownFrontmatter is the YAML structure for skill metadata in markdown files.
 // It mirrors the Skill struct for easy unmarshaling.
 type markdownFrontmatter struct {
-	Name        string                 `yaml:"name"`
-	Description string                 `yaml:"description"`
-	Version     int                    `yaml:"version"`
-	Tags        []string               `yaml:"tags,omitempty"`
-	Author      string                 `yaml:"author,omitempty"`
-	SourceURL   string                 `yaml:"source_url,omitempty"`
-	Params      []ParamDef             `yaml:"params,omitempty"`
-	Steps       []Step                 `yaml:"steps"`
+	Name        string     `yaml:"name"`
+	Description string     `yaml:"description"`
+	Version     int        `yaml:"version"`
+	Tags        []string   `yaml:"tags,omitempty"`
+	Author      string     `yaml:"author,omitempty"`
+	SourceURL   string     `yaml:"source_url,omitempty"`
+	Params      []ParamDef `yaml:"params,omitempty"`
+	Steps       []Step     `yaml:"steps"`
 }
 
 // ParseMarkdownSkill parses a skill from markdown-with-frontmatter format.

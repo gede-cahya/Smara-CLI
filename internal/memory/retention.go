@@ -9,8 +9,8 @@ import (
 // RetentionPolicy defines how long memories should be kept.
 type RetentionPolicy struct {
 	WorkspaceID int64
-	TTLDays     int           // Time to live in days
-	MaxMemories int           // Maximum number of memories to keep (0 = unlimited)
+	TTLDays     int // Time to live in days
+	MaxMemories int // Maximum number of memories to keep (0 = unlimited)
 	CreatedAt   time.Time
 }
 

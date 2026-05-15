@@ -146,7 +146,7 @@ func TestNodeGraphRenderDebug(t *testing.T) {
 	for i, l := range lines {
 		trimmed := strings.TrimSpace(l)
 		if trimmed != "" {
-			t.Logf("line %d: %q", i, trimmed[:min(len(trimmed),80)])
+			t.Logf("line %d: %q", i, trimmed[:min(len(trimmed), 80)])
 		}
 	}
 	for _, label := range []string{"Orchestra", "Frontend", "Backend", "Database", "QA"} {
@@ -157,7 +157,9 @@ func TestNodeGraphRenderDebug(t *testing.T) {
 }
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }
 

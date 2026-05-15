@@ -11,23 +11,23 @@ import (
 
 // SkillExecution tracks one run of a skill.
 type SkillExecution struct {
-	ID             int64           `json:"id"`
-	SkillName      string          `json:"skill_name"`
-	RunID          string          `json:"run_id"`
-	StartedAt      time.Time       `json:"started_at"`
-	DurationMs     int64           `json:"duration_ms"`
-	Success        bool            `json:"success"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
-	TriggeredBy    string          `json:"triggered_by"`
-	Workspace      string          `json:"workspace,omitempty"`
-	Mode           string          `json:"mode,omitempty"`
-	StepResults    []StepResultRaw `json:"step_results,omitempty"`
+	ID           int64           `json:"id"`
+	SkillName    string          `json:"skill_name"`
+	RunID        string          `json:"run_id"`
+	StartedAt    time.Time       `json:"started_at"`
+	DurationMs   int64           `json:"duration_ms"`
+	Success      bool            `json:"success"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+	TriggeredBy  string          `json:"triggered_by"`
+	Workspace    string          `json:"workspace,omitempty"`
+	Mode         string          `json:"mode,omitempty"`
+	StepResults  []StepResultRaw `json:"step_results,omitempty"`
 }
 
 type StepResultRaw struct {
-	Step         int    `json:"step"`
-	Tool         string `json:"tool"`
-	Success      bool   `json:"success"`
+	Step          int    `json:"step"`
+	Tool          string `json:"tool"`
+	Success       bool   `json:"success"`
 	OutputPreview string `json:"output_preview,omitempty"`
 }
 
@@ -192,8 +192,8 @@ func (t *ExecutionTracker) GetTimeline(skillName string, limit int) ([]SkillExec
 
 // GetTopSkills returns the most-used skills by run count.
 func (t *ExecutionTracker) GetTopSkills(n int) ([]struct {
-	Name       string `json:"name"`
-	RunCount   int    `json:"run_count"`
+	Name        string  `json:"name"`
+	RunCount    int     `json:"run_count"`
 	SuccessRate float64 `json:"success_rate"`
 }, error) {
 	if n <= 0 {
@@ -208,14 +208,14 @@ func (t *ExecutionTracker) GetTopSkills(n int) ([]struct {
 	}
 	defer rows.Close()
 	var out []struct {
-		Name       string `json:"name"`
-		RunCount   int    `json:"run_count"`
+		Name        string  `json:"name"`
+		RunCount    int     `json:"run_count"`
 		SuccessRate float64 `json:"success_rate"`
 	}
 	for rows.Next() {
 		var item struct {
-			Name       string `json:"name"`
-			RunCount   int    `json:"run_count"`
+			Name        string  `json:"name"`
+			RunCount    int     `json:"run_count"`
 			SuccessRate float64 `json:"success_rate"`
 		}
 		if err := rows.Scan(&item.Name, &item.RunCount, &item.SuccessRate); err == nil {
@@ -339,12 +339,18 @@ func (t *ExecutionTracker) LogRun(skillName, runID, triggeredBy, workspace, mode
 		_ = errMsg
 	}
 	return t.LogExecution(SkillExecution{
-		SkillName:   skillName,
-		RunID:       runID,
-		StartedAt:   start,
-		DurationMs:  time.Since(start).Milliseconds(),
-		Success:     result.Success,
-		ErrorMessage: func() string { if result.Success { return "" } else { return result.Summary } }(),
+		SkillName:  skillName,
+		RunID:      runID,
+		StartedAt:  start,
+		DurationMs: time.Since(start).Milliseconds(),
+		Success:    result.Success,
+		ErrorMessage: func() string {
+			if result.Success {
+				return ""
+			} else {
+				return result.Summary
+			}
+		}(),
 		TriggeredBy: triggeredBy,
 		Workspace:   workspace,
 		Mode:        mode,

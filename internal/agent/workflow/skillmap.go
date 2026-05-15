@@ -7,27 +7,27 @@ import (
 // KeywordMap groups keywords by domain for flexible matching.
 var roleKeywords = map[string][]string{
 	// Software
-	"frontend":  {"stitch", "figma", "screen", "ui", "react", "component"},
-	"backend":   {"file", "edit", "terminal", "code", "run", "command", "api", "server"},
-	"database":  {"sql", "db", "migrate", "database", "query", "schema"},
-	"devops":    {"deploy", "docker", "ssh", "vercel", "container", "ci", "pipeline"},
-	"qa":        {"file", "view", "read", "terminal", "test", "check", "audit"},
+	"frontend": {"stitch", "figma", "screen", "ui", "react", "component"},
+	"backend":  {"file", "edit", "terminal", "code", "run", "command", "api", "server"},
+	"database": {"sql", "db", "migrate", "database", "query", "schema"},
+	"devops":   {"deploy", "docker", "ssh", "vercel", "container", "ci", "pipeline"},
+	"qa":       {"file", "view", "read", "terminal", "test", "check", "audit"},
 	// Marketing
-	"content":   {"write", "edit", "view", "content", "copy", "blog"},
-	"copywriter": {"write", "edit", "view", "content", "copy", "text"},
-	"seo":       {"search", "keyword", "rank", "analytics"},
+	"content":         {"write", "edit", "view", "content", "copy", "blog"},
+	"copywriter":      {"write", "edit", "view", "content", "copy", "text"},
+	"seo":             {"search", "keyword", "rank", "analytics"},
 	"visual_designer": {"stitch", "figma", "screen", "design", "image", "graphic"},
 	// Legal
-	"legal":     {"write", "edit", "view", "read", "document", "clause", "contract"},
-	"contract":  {"write", "edit", "view", "document", "clause", "template"},
+	"legal":      {"write", "edit", "view", "read", "document", "clause", "contract"},
+	"contract":   {"write", "edit", "view", "document", "clause", "template"},
 	"compliance": {"check", "audit", "verify", "read", "document"},
 	// Data
-	"data":      {"file", "read", "write", "csv", "table", "query", "pandas"},
+	"data":          {"file", "read", "write", "csv", "table", "query", "pandas"},
 	"visualization": {"chart", "graph", "dashboard", "plot", "screen"},
 	// Design
-	"brand":     {"stitch", "figma", "design", "brand", "identity"},
+	"brand":       {"stitch", "figma", "design", "brand", "identity"},
 	"illustrator": {"stitch", "figma", "image", "draw", "design"},
-	"typography": {"font", "text", "style", "design"},
+	"typography":  {"font", "text", "style", "design"},
 }
 
 // MapRoleToMCP maps a role to relevant MCP server names based on keyword matching.

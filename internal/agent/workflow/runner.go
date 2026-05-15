@@ -19,7 +19,7 @@ type Runner struct {
 	MaxConcurrency int
 
 	// Callbacks for TUI progress
-	OnWaveStart  func(wave int, roles []string)
+	OnWaveStart    func(wave int, roles []string)
 	OnWaveComplete func(wave int, results map[string][]agent.TaskResult)
 	OnTaskComplete func(role, taskID string, result agent.TaskResult)
 }

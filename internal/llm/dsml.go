@@ -33,8 +33,8 @@ var (
 	dsmlTagNormalizeRe = regexp.MustCompile(`(?s)</?\s*\|(?:\s*\|)*\s*DSML\s*\|(?:\s*\|)*\s*([^>]*?)>`)
 
 	// Regexes for normalized format <|DSML|...>
-	dsmlInvokeRe = regexp.MustCompile(`<\|DSML\|invoke\s+name="([^"]+)"\s*>`)
-	dsmlParamRe  = regexp.MustCompile(`<\|DSML\|parameter\s+name="([^"]+)"(?:\s+string="true")?\s*>(.*?)</\|DSML\|parameter\s*>`)
+	dsmlInvokeRe  = regexp.MustCompile(`<\|DSML\|invoke\s+name="([^"]+)"\s*>`)
+	dsmlParamRe   = regexp.MustCompile(`<\|DSML\|parameter\s+name="([^"]+)"(?:\s+string="true")?\s*>(.*?)</\|DSML\|parameter\s*>`)
 	dsmlOpenTagRe = regexp.MustCompile(`<\|DSML\|[^>]*>`)
 )
 

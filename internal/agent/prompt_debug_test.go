@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrintSSHPromptForReview(t *testing.T) {

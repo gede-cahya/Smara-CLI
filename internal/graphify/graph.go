@@ -10,16 +10,16 @@ import (
 
 // Node represents a graph node (function, type, variable, concept, etc.)
 type Node struct {
-	ID           string                 `json:"id"`
-	Label        string                 `json:"label"`
-	Type         string                 `json:"type"`          // function, class, type, variable, concept, doc
-	SourceFile   string                 `json:"source_file"`
-	SourceLine   int                    `json:"source_line"`
-	Language     string                 `json:"language"`
-	Content      string                 `json:"content"`       // signature, docstring, or summary
-	Community    int                    `json:"community"`
-	GodScore     float64                `json:"god_score"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	Label      string                 `json:"label"`
+	Type       string                 `json:"type"` // function, class, type, variable, concept, doc
+	SourceFile string                 `json:"source_file"`
+	SourceLine int                    `json:"source_line"`
+	Language   string                 `json:"language"`
+	Content    string                 `json:"content"` // signature, docstring, or summary
+	Community  int                    `json:"community"`
+	GodScore   float64                `json:"god_score"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Edge represents a relationship between two nodes
@@ -27,8 +27,8 @@ type Edge struct {
 	ID              string  `json:"id"`
 	Source          string  `json:"source"`
 	Target          string  `json:"target"`
-	Relation        string  `json:"relation"`         // calls, imports, contains, semantically_similar_to, rationale_for
-	Confidence      string  `json:"confidence"`       // EXTRACTED, INFERRED, AMBIGUOUS
+	Relation        string  `json:"relation"`   // calls, imports, contains, semantically_similar_to, rationale_for
+	Confidence      string  `json:"confidence"` // EXTRACTED, INFERRED, AMBIGUOUS
 	ConfidenceScore float64 `json:"confidence_score"`
 	SourceFile      string  `json:"source_file"`
 	InferredReason  string  `json:"inferred_reason,omitempty"`
@@ -36,13 +36,13 @@ type Edge struct {
 
 // Graph is an in-memory knowledge graph
 type Graph struct {
-	ID          string                 `json:"id"`
-	RootPath    string                 `json:"root_path"`
-	Nodes       map[string]*Node       `json:"nodes"`
-	Edges       []*Edge                `json:"edges"`
-	Adjacency   map[string][]string    `json:"-"` // nodeID -> list of target nodeIDs
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	mu          sync.RWMutex
+	ID        string                 `json:"id"`
+	RootPath  string                 `json:"root_path"`
+	Nodes     map[string]*Node       `json:"nodes"`
+	Edges     []*Edge                `json:"edges"`
+	Adjacency map[string][]string    `json:"-"` // nodeID -> list of target nodeIDs
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	mu        sync.RWMutex
 }
 
 // NewGraph creates a new empty graph.
@@ -175,8 +175,8 @@ func (g *Graph) ShortestPath(from, to string) []string {
 	}
 
 	type queueItem struct {
-		node   string
-		path   []string
+		node string
+		path []string
 	}
 
 	visited := map[string]bool{from: true}

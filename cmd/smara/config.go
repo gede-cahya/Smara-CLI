@@ -43,8 +43,8 @@ var configGetCmd = &cobra.Command{
 }
 
 var configListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Tampilkan semua konfigurasi",
+	Use:     "list",
+	Short:   "Tampilkan semua konfigurasi",
 	Aliases: []string{"ls"},
 	Run: func(cmd *cobra.Command, args []string) {
 		settings := config.AllSettings()

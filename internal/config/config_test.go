@@ -84,9 +84,9 @@ func TestPlatformConfig_Struct(t *testing.T) {
 			RateBurst:  5,
 		},
 		Discord: PlatformBotConfig{
-			Token:     "test-token",
-			Enabled:   true,
-			GuildIDs:  []string{"12345"},
+			Token:    "test-token",
+			Enabled:  true,
+			GuildIDs: []string{"12345"},
 		},
 	}
 	assert.True(t, pc.WhatsApp.Enabled)

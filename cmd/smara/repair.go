@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/spf13/cobra"
 	"github.com/gede-cahya/Smara-CLI/internal/repair"
+	"github.com/spf13/cobra"
 )
 
 var (

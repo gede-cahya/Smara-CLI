@@ -13,9 +13,9 @@
 //   - Region   = not used (D1 is global/regional at account level)
 //
 // Getting a Cloudflare API Token:
-//   1. Go to https://dash.cloudflare.com/profile/api-tokens
-//   2. Create a token with "D1" permissions (Edit)
-//   3. Account ID is in the dashboard URL: dash.cloudflare.com/<account_id>
+//  1. Go to https://dash.cloudflare.com/profile/api-tokens
+//  2. Create a token with "D1" permissions (Edit)
+//  3. Account ID is in the dashboard URL: dash.cloudflare.com/<account_id>
 package d1
 
 import (

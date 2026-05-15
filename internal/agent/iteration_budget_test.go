@@ -4,9 +4,9 @@ import "testing"
 
 func TestIterationBudget_ModeDefaults(t *testing.T) {
 	cases := []struct {
-		mode      Mode
-		wantBase  int
-		wantHard  int
+		mode     Mode
+		wantBase int
+		wantHard int
 	}{
 		{ModeAsk, 5, 15},
 		{ModeRush, 15, 40},

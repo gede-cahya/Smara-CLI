@@ -57,7 +57,7 @@ func FormatNudges(nudges []Nudge) string {
 		return ""
 	}
 	var lines []string
-	lines = append(lines, "📌 Nudge:" )
+	lines = append(lines, "📌 Nudge:")
 	for i, n := range nudges {
 		lines = append(lines, fmt.Sprintf("   %d. [%s] %s", i+1, n.Type, n.Text))
 	}

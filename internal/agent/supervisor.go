@@ -18,9 +18,9 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
-	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
+	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 )
 
 // MCPServerInfo holds detailed MCP server information.
@@ -93,14 +93,14 @@ type Supervisor struct {
 	// running through RunAgenticLoop. Tool handlers (e.g.
 	// request_iteration_budget) read/mutate this through helper methods.
 	// It is nil between prompts.
-	activeBudget   *IterationBudget
-	activeBudgetMu sync.RWMutex
-	autoDiscovered      bool
-	workspaceID         int64 // active workspace ID
-	stats               Stats // usage statistics
-	safetyEngine        *safety.Engine
-	cognitiveValidator  *cognitive.Validator
-	lspManager          *lsp.Manager
+	activeBudget       *IterationBudget
+	activeBudgetMu     sync.RWMutex
+	autoDiscovered     bool
+	workspaceID        int64 // active workspace ID
+	stats              Stats // usage statistics
+	safetyEngine       *safety.Engine
+	cognitiveValidator *cognitive.Validator
+	lspManager         *lsp.Manager
 
 	// lastToolTrace records the sequence of tool calls (with args) made
 	// during the current ProcessPrompt invocation. It is reset at the start
@@ -1015,9 +1015,9 @@ func (s *Supervisor) DeleteSession(id string) error {
 
 // SearchResult holds a single session search result with relevance.
 type SearchResult struct {
-	Session   *session.Session
-	Score     float64
-	Snippet   string
+	Session *session.Session
+	Score   float64
+	Snippet string
 }
 
 // SearchSessions searches sessions using AI embeddings for semantic relevance.
@@ -1673,7 +1673,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	}
 
 	messages = append(messages, llm.Message{
-		Role: llm.RoleSystem,
+		Role:    llm.RoleSystem,
 		Content: "BATAS iterasi tool tercapai. STOP calling tools. Sekarang tuliskan JAWABAN FINAL untuk user dalam Bahasa Indonesia, berdasarkan semua hasil tool yang sudah terkumpul di atas.\n\nATURAN PENTING:\n- JANGAN keluarkan tool_calls atau format DSML <|DSML|...>.\n- Jawaban harus berupa teks biasa / markdown normal.\n- Ringkas apa yang sudah dilakukan dan state akhir dari tugas.\n- Jika tugas belum selesai, katakan secara eksplisit apa yang belum selesai dan kenapa.",
 	})
 

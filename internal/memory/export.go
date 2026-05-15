@@ -23,13 +23,13 @@ const (
 
 // ExportOptions contains options for exporting memories.
 type ExportOptions struct {
-	Format          ExportFormat
+	Format            ExportFormat
 	IncludeEmbeddings bool
 	IncludeMetadata   bool
-	DateFrom        *time.Time
-	DateTo          *time.Time
-	Categories      []int64
-	Tags            []string
+	DateFrom          *time.Time
+	DateTo            *time.Time
+	Categories        []int64
+	Tags              []string
 }
 
 // ExportMemories exports memories based on the provided options.
@@ -137,8 +137,8 @@ func (s *SQLiteStore) exportJSON(memories []Memory, options ExportOptions) ([]by
 		return nil, "", fmt.Errorf("gagal marshal JSON: %w", err)
 	}
 
-	filename := fmt.Sprintf("smara_memories_%d_%s.json", 
-		memories[0].WorkspaceID, 
+	filename := fmt.Sprintf("smara_memories_%d_%s.json",
+		memories[0].WorkspaceID,
 		time.Now().Format("20060102_150405"))
 
 	return data, filename, nil
@@ -205,8 +205,8 @@ func (s *SQLiteStore) exportCSV(memories []Memory, options ExportOptions) ([]byt
 		return nil, "", fmt.Errorf("gagal flush CSV: %w", err)
 	}
 
-	filename := fmt.Sprintf("smara_memories_%d_%s.csv", 
-		memories[0].WorkspaceID, 
+	filename := fmt.Sprintf("smara_memories_%d_%s.csv",
+		memories[0].WorkspaceID,
 		time.Now().Format("20060102_150405"))
 
 	return buf.Bytes(), filename, nil
@@ -215,7 +215,7 @@ func (s *SQLiteStore) exportCSV(memories []Memory, options ExportOptions) ([]byt
 // exportMarkdown exports memories as Markdown.
 func (s *SQLiteStore) exportMarkdown(memories []Memory, options ExportOptions) ([]byte, string, error) {
 	var sb strings.Builder
-	
+
 	sb.WriteString("# Smara Memory Export\n\n")
 	sb.WriteString(fmt.Sprintf("**Workspace ID:** %d\n", memories[0].WorkspaceID))
 	sb.WriteString(fmt.Sprintf("**Exported:** %s\n", time.Now().Format("2006-01-02 15:04")))
@@ -224,25 +224,25 @@ func (s *SQLiteStore) exportMarkdown(memories []Memory, options ExportOptions) (
 
 	for _, m := range memories {
 		sb.WriteString(fmt.Sprintf("## Memory #%d\n\n", m.ID))
-		
+
 		sb.WriteString("| Field | Value |\n")
 		sb.WriteString("|-------|-------|\n")
 		sb.WriteString(fmt.Sprintf("| Source | %s |\n", m.Source))
 		sb.WriteString(fmt.Sprintf("| Created | %s |\n", m.CreatedAt.Format("2006-01-02 15:04")))
 		sb.WriteString(fmt.Sprintf("| Updated | %s |\n", m.UpdatedAt.Format("2006-01-02 15:04")))
-		
+
 		if len(m.Tags) > 0 {
 			sb.WriteString(fmt.Sprintf("| Tags | %s |\n", strings.Join(m.Tags, ", ")))
 		}
-		
+
 		if m.CategoryID != nil {
 			sb.WriteString(fmt.Sprintf("| Category ID | %d |\n", *m.CategoryID))
 		}
-		
+
 		if m.ExpiresAt != nil {
 			sb.WriteString(fmt.Sprintf("| Expires | %s |\n", m.ExpiresAt.Format("2006-01-02")))
 		}
-		
+
 		sb.WriteString(fmt.Sprintf("| Version | %d |\n", m.Version))
 		sb.WriteString("|---|---|\n")
 		sb.WriteString("\n")
@@ -275,8 +275,8 @@ func (s *SQLiteStore) exportMarkdown(memories []Memory, options ExportOptions) (
 		sb.WriteString("---\n\n")
 	}
 
-	filename := fmt.Sprintf("smara_memories_%d_%s.md", 
-		memories[0].WorkspaceID, 
+	filename := fmt.Sprintf("smara_memories_%d_%s.md",
+		memories[0].WorkspaceID,
 		time.Now().Format("20060102_150405"))
 
 	return []byte(sb.String()), filename, nil
@@ -343,7 +343,7 @@ func (s *SQLiteStore) exportZIP(memories []Memory, options ExportOptions) ([]byt
 		"```\n\n" +
 		"## Generated\n\n" +
 		time.Now().Format("2006-01-02 15:04:05") + "\n"
-	
+
 	readmeFile, err := zipWriter.Create("README.md")
 	if err != nil {
 		return nil, "", err
@@ -358,8 +358,8 @@ func (s *SQLiteStore) exportZIP(memories []Memory, options ExportOptions) ([]byt
 		return nil, "", err
 	}
 
-	filename := fmt.Sprintf("smara_memories_%d_%s.zip", 
-		memories[0].WorkspaceID, 
+	filename := fmt.Sprintf("smara_memories_%d_%s.zip",
+		memories[0].WorkspaceID,
 		time.Now().Format("20060102_150405"))
 
 	return buf.Bytes(), filename, nil
@@ -407,11 +407,11 @@ func (s *SQLiteStore) importJSON(workspaceID int64, data []byte, options ImportO
 			Version     int                    `json:"version"`
 			Embedding   []float32              `json:"embedding,omitempty"`
 		}
-		
+
 		if err := json.Unmarshal(data, &exportMemories); err != nil {
 			return 0, fmt.Errorf("gagal unmarshal JSON: %w", err)
 		}
-		
+
 		// Convert to Memory
 		for _, em := range exportMemories {
 			memories = append(memories, Memory{
@@ -514,7 +514,7 @@ func (s *SQLiteStore) importJSON(workspaceID int64, data []byte, options ImportO
 // importCSV imports memories from CSV data.
 func (s *SQLiteStore) importCSV(workspaceID int64, data []byte, options ImportOptions) (int, error) {
 	reader := csv.NewReader(bytes.NewReader(data))
-	
+
 	// Read header
 	header, err := reader.Read()
 	if err != nil {

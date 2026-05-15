@@ -195,11 +195,11 @@ func (r *SessionRegistry) SetMode(sessionID string, mode string) {
 
 // SessionManager manages sessions with persistence and MCP integration.
 type SessionManager struct {
-	registry    *SessionRegistry
-	store       *session.SQLiteStore
-	mcpClients  map[string]*mcp.Client
-	mu          sync.RWMutex
-	saveOnTurn  bool // auto-save after each conversation turn
+	registry   *SessionRegistry
+	store      *session.SQLiteStore
+	mcpClients map[string]*mcp.Client
+	mu         sync.RWMutex
+	saveOnTurn bool // auto-save after each conversation turn
 }
 
 // NewSessionManager creates a new session manager with persistence.

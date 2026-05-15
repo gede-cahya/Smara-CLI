@@ -119,20 +119,20 @@ func htmlToText(html string) string {
 
 func decodeEntities(s string) string {
 	replacements := map[string]string{
-		"&amp;":  "&",
-		"&lt;":   "<",
-		"&gt;":   ">",
-		"&quot;": "\"",
-		"&apos;": "'",
-		"&#39;":  "'",
-		"&nbsp;": " ",
+		"&amp;":    "&",
+		"&lt;":     "<",
+		"&gt;":     ">",
+		"&quot;":   "\"",
+		"&apos;":   "'",
+		"&#39;":    "'",
+		"&nbsp;":   " ",
 		"&hellip;": "…",
-		"&mdash;": "—",
-		"&ndash;": "–",
-		"&rsquo;": "'",
-		"&lsquo;": "'",
-		"&rdquo;": "\"",
-		"&ldquo;": "\"",
+		"&mdash;":  "—",
+		"&ndash;":  "–",
+		"&rsquo;":  "'",
+		"&lsquo;":  "'",
+		"&rdquo;":  "\"",
+		"&ldquo;":  "\"",
 	}
 	for old, new := range replacements {
 		s = strings.ReplaceAll(s, old, new)
@@ -437,7 +437,6 @@ func valueToString(v interface{}) string {
 		return fmt.Sprintf("%v", v)
 	}
 }
-
 
 // isBlockingError returns true if the HTTP error looks like a case where
 // switching to a headless browser might succeed: 403, 503, 429, or any

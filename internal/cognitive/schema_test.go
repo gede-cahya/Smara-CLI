@@ -484,11 +484,11 @@ func TestPropertySchema_Struct(t *testing.T) {
 	minLen := 5
 	prop := PropertySchema{
 		Type:        TypeString,
-		Description:   "desc",
-		MinLength:     &minLen,
-		Required:      true,
-		Items:         &PropertySchema{Type: TypeString},
-		Properties:    map[string]PropertySchema{"nested": {Type: TypeInteger}},
+		Description: "desc",
+		MinLength:   &minLen,
+		Required:    true,
+		Items:       &PropertySchema{Type: TypeString},
+		Properties:  map[string]PropertySchema{"nested": {Type: TypeInteger}},
 	}
 	assert.Equal(t, TypeString, prop.Type)
 	assert.Equal(t, "desc", prop.Description)

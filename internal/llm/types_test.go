@@ -135,4 +135,3 @@ func TestToolCall_JSON(t *testing.T) {
 	assert.Equal(t, tc.Function, decoded.Function)
 	assert.Equal(t, float64(1), decoded.Args["x"]) // JSON numbers unmarshal as float64
 }
-

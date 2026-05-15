@@ -6,9 +6,9 @@ import "sync"
 // It supports whitelist (allow only specific users) and blacklist (block specific users).
 // If AllowedUsers is empty, all users are allowed (unless blacklisted).
 type AuthManager struct {
-	mu       sync.RWMutex
-	allowed  map[string]map[string]bool // platform → set of allowed user IDs
-	blocked  map[string]map[string]bool // platform → set of blocked user IDs
+	mu      sync.RWMutex
+	allowed map[string]map[string]bool // platform → set of allowed user IDs
+	blocked map[string]map[string]bool // platform → set of blocked user IDs
 }
 
 // NewAuthManager creates a new AuthManager.

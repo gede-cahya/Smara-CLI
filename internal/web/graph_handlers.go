@@ -51,10 +51,10 @@ func (s *Server) handleGraphInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"graph_id":    req.Name,
-		"node_count":  g.NodeCount(),
-		"edge_count":  g.EdgeCount(),
-		"root_path":   req.Path,
+		"graph_id":   req.Name,
+		"node_count": g.NodeCount(),
+		"edge_count": g.EdgeCount(),
+		"root_path":  req.Path,
 	})
 }
 

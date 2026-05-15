@@ -128,7 +128,7 @@ func TestIsAlreadyEncrypted(t *testing.T) {
 		{"encrypted", enc, true},
 		{"plaintext with spaces", "hello world", false},
 		{"plaintext json", `{"key":"value"}`, false},
-		{"short base64-like", "dGVzdA", false},  // 6 chars, too short (< 38)
+		{"short base64-like", "dGVzdA", false}, // 6 chars, too short (< 38)
 		{"empty", "", false},
 		{"plaintext code", "func main() {}", false},
 	}
@@ -274,7 +274,7 @@ type fakeProvider struct {
 	closeCalled bool
 }
 
-func (f *fakeProvider) Name() string                                       { return f.name }
+func (f *fakeProvider) Name() string { return f.name }
 func (f *fakeProvider) Login(ctx context.Context, _ LoginOptions) (*Credentials, error) {
 	return nil, nil
 }

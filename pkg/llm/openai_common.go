@@ -131,7 +131,7 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	
+
 	// Add context headers for OpenRouter (ignored by others)
 	httpReq.Header.Set("HTTP-Referer", "https://github.com/gede-cahya/Smara-CLI")
 	httpReq.Header.Set("X-Title", "Smara CLI")

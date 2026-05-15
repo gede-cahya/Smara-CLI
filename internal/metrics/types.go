@@ -4,15 +4,15 @@ import "time"
 
 // Metrics holds the full operational snapshot written to metrics.json.
 type Metrics struct {
-	StartedAt      time.Time                  `json:"started_at"`
-	UpdatedAt      time.Time                  `json:"updated_at"`
+	StartedAt      time.Time                   `json:"started_at"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
 	Platforms      map[string]*PlatformMetrics `json:"platforms"`
-	LLM            LLMMetrics                 `json:"llm"`
-	MCP            []MCPMetrics               `json:"mcp"`
-	Memory         MemoryMetrics              `json:"memory"`
-	Sync           SyncMetrics                `json:"sync"`
-	RecentErrors   []ErrorEntry               `json:"recent_errors"`
-	ActiveSessions int                        `json:"active_sessions"`
+	LLM            LLMMetrics                  `json:"llm"`
+	MCP            []MCPMetrics                `json:"mcp"`
+	Memory         MemoryMetrics               `json:"memory"`
+	Sync           SyncMetrics                 `json:"sync"`
+	RecentErrors   []ErrorEntry                `json:"recent_errors"`
+	ActiveSessions int                         `json:"active_sessions"`
 }
 
 // PlatformMetrics holds per-platform statistics.

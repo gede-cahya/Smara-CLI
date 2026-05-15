@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newRealSupervisor(t *testing.T, mode Mode) *Supervisor {

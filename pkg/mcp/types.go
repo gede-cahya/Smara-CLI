@@ -35,8 +35,8 @@ func (e *RPCError) Error() string {
 
 // ServerInfo describes an MCP server's capabilities.
 type ServerInfo struct {
-	Name         string `json:"name"`
-	Version      string `json:"version"`
+	Name            string `json:"name"`
+	Version         string `json:"version"`
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
@@ -86,7 +86,7 @@ type ClientInfo struct {
 // MCPServerConfig represents user-configured MCP server settings.
 type MCPServerConfig struct {
 	Name    string            `json:"name"`
-	Type    string            `json:"type"`    // "local" or "remote"
+	Type    string            `json:"type"` // "local" or "remote"
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	URL     string            `json:"url,omitempty"`     // for remote servers

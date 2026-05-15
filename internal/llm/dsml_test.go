@@ -15,7 +15,7 @@ func TestExtractToolCallsFromContent(t *testing.T) {
 		expectFunc     string
 		expectArgs     map[string]string
 		expectContains string // content should contain this after cleaning
-		expectCleanLen int  // approximate cleaned length
+		expectCleanLen int    // approximate cleaned length
 	}{
 		{
 			name: "ssh_exec DSML block",

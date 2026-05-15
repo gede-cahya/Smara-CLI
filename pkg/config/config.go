@@ -24,10 +24,10 @@ type PlatformBotConfig struct {
 	Token        string   `mapstructure:"token" yaml:"token"`
 	AllowedUsers []string `mapstructure:"allowed_users" yaml:"allowed_users"`
 	BlockedUsers []string `mapstructure:"blocked_users" yaml:"blocked_users"`
-	GuildIDs     []string `mapstructure:"guild_ids" yaml:"guild_ids"`       // Discord only
+	GuildIDs     []string `mapstructure:"guild_ids" yaml:"guild_ids"`         // Discord only
 	AllowedRoles []string `mapstructure:"allowed_roles" yaml:"allowed_roles"` // Discord only
-	RateLimit    int      `mapstructure:"rate_limit" yaml:"rate_limit"`     // requests per minute
-	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`     // burst size
+	RateLimit    int      `mapstructure:"rate_limit" yaml:"rate_limit"`       // requests per minute
+	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`       // burst size
 }
 
 // WhatsAppConfig holds config specifically for WhatsApp.

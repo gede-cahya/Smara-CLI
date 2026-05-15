@@ -108,9 +108,10 @@ func ClassifyTrace(trace ExecutionTrace) (categoryPath []string, tags []string) 
 // specialization/extension of it.
 //
 // Example:
-//   existing "cek-service-vps"  = [ssh_exec, ssh_exec]
-//   new trace                    = [ssh_exec, ssh_exec, run_command]
-//   → "cek-service-vps" becomes the parent of the new skill.
+//
+//	existing "cek-service-vps"  = [ssh_exec, ssh_exec]
+//	new trace                    = [ssh_exec, ssh_exec, run_command]
+//	→ "cek-service-vps" becomes the parent of the new skill.
 //
 // Only captured patterns (those with a captured_skill) are considered so
 // we don't parent to a pattern that was never actually saved as a skill.

@@ -43,20 +43,20 @@ import (
 //
 // Fields:
 //   - ID:        local primary key (memories.id) — used by callers to
-//                target the live row when persisting the resolution.
+//     target the live row when persisting the resolution.
 //   - CloudID:   memories.cloud_id (UUID v7). Must be identical for local
-//                and remote when Resolve is invoked; the resolver uses
-//                this to assert the rows really are two versions of the
-//                same logical memory.
+//     and remote when Resolve is invoked; the resolver uses
+//     this to assert the rows really are two versions of the
+//     same logical memory.
 //   - Content:   memories.content snapshot. Merge policies concatenate
-//                this; LWW / archive-loser policies pass it through to
-//                the loser version.
+//     this; LWW / archive-loser policies pass it through to
+//     the loser version.
 //   - DeviceID:  memories.device_id of the writer. Used as the LWW
-//                tiebreaker (lexicographic ascending) and embedded in
-//                the merge-content separator.
+//     tiebreaker (lexicographic ascending) and embedded in
+//     the merge-content separator.
 //   - Version:   memories.version. Merge bumps to max+1; LWW preserves
-//                the winner's version on the live row and uses the
-//                loser's version when archiving.
+//     the winner's version on the live row and uses the
+//     loser's version when archiving.
 //   - UpdatedAt: memories.updated_at. Primary LWW selection key.
 type MemoryRow struct {
 	ID        int64
@@ -77,18 +77,18 @@ type MemoryRow struct {
 //
 // Fields:
 //   - ID:        memory_versions.id. Zero when returned by Resolve;
-//                populated by the storage layer on INSERT.
+//     populated by the storage layer on INSERT.
 //   - MemoryID:  memory_versions.memory_id — the live memories.id whose
-//                history this row joins.
+//     history this row joins.
 //   - Content:   the loser's content snapshot.
 //   - Version:   the loser's memories.version at the time of conflict.
 //   - ChangedBy: device_id of the loser's writer (for "who made the
-//                edit we discarded?").
+//     edit we discarded?").
 //   - Reason:    free-form annotation; resolvers use the literal
-//                "conflict-loser" so SyncManager queries can filter
-//                conflict-archived versions.
+//     "conflict-loser" so SyncManager queries can filter
+//     conflict-archived versions.
 //   - CreatedAt: memory_versions.created_at. Zero when returned by
-//                Resolve; populated by the storage layer on INSERT.
+//     Resolve; populated by the storage layer on INSERT.
 type MemoryVersionRow struct {
 	ID        int64
 	MemoryID  int64
@@ -113,12 +113,12 @@ type MemoryVersionRow struct {
 //     Implementations MUST set winner.CloudID equal to local.CloudID
 //     (which equals remote.CloudID by precondition).
 //   - loser:  optional archived version that captures the discarded
-//             edit. nil when no archival is needed (e.g. the manual
-//             policy defers archival to the user). When non-nil, the
-//             caller will INSERT it into memory_versions.
+//     edit. nil when no archival is needed (e.g. the manual
+//     policy defers archival to the user). When non-nil, the
+//     caller will INSERT it into memory_versions.
 //   - err:    nil on a successful in-band resolution. Implementations
-//             return ErrManualConflict to signal "do not modify the
-//             live row; surface this to the user via cloud_conflicts".
+//     return ErrManualConflict to signal "do not modify the
+//     live row; surface this to the user via cloud_conflicts".
 //
 // Resolve MUST be deterministic for the lww, archive-loser, and
 // merge-content policies: identical (local, remote) inputs MUST produce

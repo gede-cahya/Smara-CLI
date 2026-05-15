@@ -28,16 +28,16 @@ type ollamaChatRequest struct {
 }
 
 type ollamaMessage struct {
-	Role       string                    `json:"role"`
-	Content    string                    `json:"content,omitempty"`
-	ToolCalls  []ollamaToolCall          `json:"tool_calls,omitempty"`
-	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 // ollamaTool represents a tool definition sent to Ollama.
 type ollamaTool struct {
-	Type     string          `json:"type"`
-	Function ollamaToolFunc  `json:"function"`
+	Type     string         `json:"type"`
+	Function ollamaToolFunc `json:"function"`
 }
 
 type ollamaToolFunc struct {
@@ -58,15 +58,15 @@ type ollamaToolCallFunc struct {
 
 type ollamaChatResponse struct {
 	Message struct {
-		Role      string             `json:"role"`
-		Content   string             `json:"content"`
-		Thinking  string             `json:"thinking,omitempty"` // thinking/reasoning content from thinking models
-		ToolCalls []ollamaToolCall   `json:"tool_calls,omitempty"`
+		Role      string           `json:"role"`
+		Content   string           `json:"content"`
+		Thinking  string           `json:"thinking,omitempty"` // thinking/reasoning content from thinking models
+		ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 	} `json:"message"`
-	Done           bool   `json:"done"`
-	Model          string `json:"model"`
-	TotalDuration  int64  `json:"total_duration"`
-	EvalCount      int    `json:"eval_count"`
+	Done          bool   `json:"done"`
+	Model         string `json:"model"`
+	TotalDuration int64  `json:"total_duration"`
+	EvalCount     int    `json:"eval_count"`
 }
 
 type ollamaEmbedRequest struct {

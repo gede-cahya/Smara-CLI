@@ -26,8 +26,8 @@ type SessionPicker struct {
 	selected int
 	filter   string
 	active   bool
-	deleting bool       // confirmation mode for deletion
-	deleteID string    // session ID pending deletion
+	deleting bool   // confirmation mode for deletion
+	deleteID string // session ID pending deletion
 }
 
 // NewSessionPicker creates a new session picker.

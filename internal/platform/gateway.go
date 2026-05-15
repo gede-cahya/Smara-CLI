@@ -617,7 +617,6 @@ func splitMessage(content string, maxLen int) []string {
 	return parts
 }
 
-
 // buildFallbackSummary composes a useful reply when the supervisor's final
 // response is empty (typically because the model emitted only DSML tool
 // calls that got stripped, or hit the max-iteration cap). Returning an

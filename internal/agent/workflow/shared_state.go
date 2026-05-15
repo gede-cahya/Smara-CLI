@@ -18,11 +18,11 @@ type WaveStatus struct {
 
 // SharedState provides a common workspace for inter-agent communication.
 type SharedState struct {
-	ProjectDir    string                 `json:"project_dir"`
-	Artifacts     map[string]string      `json:"artifacts"`     // role → output path mapping
-	Contracts     map[string]interface{} `json:"contracts"`     // API contracts, schema defs
-	CompletedWaves []WaveStatus          `json:"completed_waves,omitempty"`
-	mu            sync.RWMutex
+	ProjectDir     string                 `json:"project_dir"`
+	Artifacts      map[string]string      `json:"artifacts"` // role → output path mapping
+	Contracts      map[string]interface{} `json:"contracts"` // API contracts, schema defs
+	CompletedWaves []WaveStatus           `json:"completed_waves,omitempty"`
+	mu             sync.RWMutex
 }
 
 // NewSharedState creates a shared state for a workflow project.

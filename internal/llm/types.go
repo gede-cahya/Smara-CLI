@@ -15,8 +15,8 @@ const (
 type Message struct {
 	Role             Role       `json:"role"`
 	Content          string     `json:"content"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"` // ID of the tool call this message responds to
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`   // Tool calls requested by the assistant
+	ToolCallID       string     `json:"tool_call_id,omitempty"`      // ID of the tool call this message responds to
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // Tool calls requested by the assistant
 	ReasoningContent string     `json:"reasoning_content,omitempty"` // DeepSeek reasoning/thinking content that must be passed back
 }
 

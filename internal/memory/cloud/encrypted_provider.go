@@ -6,16 +6,16 @@
 //
 // Data flow (Push):
 //
-//   Local memories.content (plaintext)
-//     → EncryptedProvider.Push encrypts in-place for pending rows
-//     → inner.Push() sends encrypted content to cloud
-//     → EncryptedProvider decrypts the same rows back to plaintext
+//	Local memories.content (plaintext)
+//	  → EncryptedProvider.Push encrypts in-place for pending rows
+//	  → inner.Push() sends encrypted content to cloud
+//	  → EncryptedProvider decrypts the same rows back to plaintext
 //
 // Data flow (Pull):
 //
-//   Cloud returns encrypted content
-//     → inner.Pull() stores encrypted content in local memories
-//     → EncryptedProvider.Pull decrypts content back to plaintext
+//	Cloud returns encrypted content
+//	  → inner.Pull() stores encrypted content in local memories
+//	  → EncryptedProvider.Pull decrypts content back to plaintext
 //
 // The encrypt-before-push/decrypt-after-push cycle ensures that:
 //   - Cloud storage always contains encrypted content.

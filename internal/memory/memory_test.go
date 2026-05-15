@@ -13,20 +13,20 @@ import (
 
 func setupTestDB(t *testing.T) (*SQLiteStore, func()) {
 	t.Helper()
-	
+
 	// Create temp directory
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	
+
 	store, err := NewSQLiteStore(dbPath)
 	require.NoError(t, err)
 	require.NotNil(t, store)
-	
+
 	cleanup := func() {
 		store.Close()
 		os.Remove(dbPath)
 	}
-	
+
 	return store, cleanup
 }
 
@@ -67,22 +67,22 @@ func TestSaveWithOptions(t *testing.T) {
 	source := "test"
 	workspaceID := int64(2)
 	embedding := []float32{0.5, 0.6, 0.7}
-	
+
 	// Create a category first
 	cat, err := store.CreateCategory("Test Category", "Test description", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	metadata := map[string]interface{}{
 		"key1": "value1",
 		"key2": 123,
 	}
-	
+
 	expiresAt := time.Now().AddDate(0, 0, 7) // 7 days from now
-	
+
 	mem, err := store.SaveWithOptions(content, tags, source, workspaceID, embedding, &cat.ID, metadata, &expiresAt)
 	require.NoError(t, err)
 	require.NotNil(t, mem)
-	
+
 	assert.Equal(t, content, mem.Content)
 	assert.Equal(t, cat.ID, *mem.CategoryID)
 	assert.Equal(t, metadata, mem.Metadata)
@@ -142,14 +142,14 @@ func TestListMemoriesWithFilters(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(4)
-	
+
 	// Create test memories
 	_, err := store.Save("Memory 1", "tag1", "test", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	_, err = store.Save("Memory 2", "tag2", "test", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	// Test with tag filter
 	filters := MemoryFilters{
 		SearchFilters: SearchFilters{
@@ -157,7 +157,7 @@ func TestListMemoriesWithFilters(t *testing.T) {
 		},
 		Limit: 10,
 	}
-	
+
 	memories, total, err := store.ListMemoriesWithFilters(workspaceID, filters)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(memories))
@@ -170,7 +170,7 @@ func TestCreateAndGetCategory(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(5)
-	
+
 	cat, err := store.CreateCategory("Test Category", "Test description", workspaceID, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, cat)
@@ -189,11 +189,11 @@ func TestListCategories(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(6)
-	
+
 	// Create multiple categories
 	_, err := store.CreateCategory("Category 1", "", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	_, err = store.CreateCategory("Category 2", "", workspaceID, nil)
 	require.NoError(t, err)
 
@@ -207,7 +207,7 @@ func TestDeleteExpiredMemories(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(7)
-	
+
 	// Create memory with past expiry
 	pastExpiry := time.Now().AddDate(0, 0, -1) // 1 day ago
 	_, err := store.SaveWithOptions(
@@ -221,7 +221,7 @@ func TestDeleteExpiredMemories(t *testing.T) {
 		&pastExpiry,
 	)
 	require.NoError(t, err)
-	
+
 	// Create memory with future expiry
 	futureExpiry := time.Now().AddDate(0, 0, 1) // 1 day from now
 	_, err = store.SaveWithOptions(
@@ -247,11 +247,11 @@ func TestExportImportJSON(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(8)
-	
+
 	// Create test memories
 	_, err := store.Save("Export test 1", "tag1", "test", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	_, err = store.Save("Export test 2", "tag2", "test", workspaceID, nil)
 	require.NoError(t, err)
 
@@ -279,7 +279,7 @@ func TestMemoryVersioning(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(10)
-	
+
 	// Create memory
 	mem, err := store.Save("Original content", "tag1", "test", workspaceID, nil)
 	require.NoError(t, err)
@@ -311,11 +311,11 @@ func TestSearchFullText(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(11)
-	
+
 	// Create test memories
 	_, err := store.Save("Database optimization techniques", "db,sql", "test", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	_, err = store.Save("Go programming language basics", "go,code", "test", workspaceID, nil)
 	require.NoError(t, err)
 
@@ -326,7 +326,7 @@ func TestSearchFullText(t *testing.T) {
 		},
 		Limit: 10,
 	}
-	
+
 	results, err := store.SearchFullText("database", workspaceID, filters)
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
@@ -338,7 +338,7 @@ func TestSearchHybrid(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(12)
-	
+
 	// Create test memory with embedding
 	_, err := store.Save("Machine learning and AI systems", "ml,ai", "test", workspaceID, []float32{0.8, 0.1, 0.1})
 	require.NoError(t, err)
@@ -356,7 +356,7 @@ func TestRetentionPolicy(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(13)
-	
+
 	// Set retention policy
 	err := store.SetRetentionPolicy(workspaceID, 30) // 30 days
 	require.NoError(t, err)
@@ -364,7 +364,7 @@ func TestRetentionPolicy(t *testing.T) {
 	// Create memory
 	mem, err := store.Save("Test memory", "test", "test", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	// Verify expiry was NOT set (SetRetentionPolicy only updates existing memories)
 	assert.Nil(t, mem.ExpiresAt)
 }
@@ -374,18 +374,18 @@ func TestGetMemoryStats(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(14)
-	
+
 	// Create test memories
 	_, err := store.Save("Memory 1", "tag1", "test", workspaceID, []float32{0.1, 0.2, 0.3})
 	require.NoError(t, err)
-	
+
 	_, err = store.Save("Memory 2", "tag2", "test", workspaceID, nil)
 	require.NoError(t, err)
 
 	// Get stats
 	stats, err := store.GetMemoryStats(workspaceID)
 	require.NoError(t, err)
-	
+
 	assert.Equal(t, 2, stats["total"])
 	assert.Equal(t, 1, stats["with_embedding"])
 	assert.Equal(t, 0, stats["expired"])
@@ -396,7 +396,7 @@ func TestRunCleanup(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(15)
-	
+
 	// Create expired memory
 	pastExpiry := time.Now().AddDate(0, 0, -1)
 	_, err := store.SaveWithOptions(
@@ -414,7 +414,7 @@ func TestRunCleanup(t *testing.T) {
 	// Run cleanup
 	results, err := store.RunCleanup(workspaceID)
 	require.NoError(t, err)
-	
+
 	assert.Equal(t, 1, results["expired_deleted"])
 }
 
@@ -487,7 +487,7 @@ func TestDeleteMemory(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(16)
-	
+
 	// Create memory
 	mem, err := store.Save("To be deleted", "delete", "test", workspaceID, nil)
 	require.NoError(t, err)
@@ -507,11 +507,11 @@ func TestClearAllMemories(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(17)
-	
+
 	// Create multiple memories
 	_, err := store.Save("Memory 1", "tag1", "test", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	_, err = store.Save("Memory 2", "tag2", "test", workspaceID, nil)
 	require.NoError(t, err)
 
@@ -530,7 +530,7 @@ func TestGetUnsyncedMemories(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(18)
-	
+
 	// Create memory without sync
 	mem, err := store.Save("Unsynced memory", "unsynced", "test", workspaceID, nil)
 	require.NoError(t, err)
@@ -556,7 +556,7 @@ func TestCategoryWithSubcategories(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(19)
-	
+
 	// Create parent category
 	parent, err := store.CreateCategory("Parent", "Parent category", workspaceID, nil)
 	require.NoError(t, err)
@@ -583,7 +583,7 @@ func TestUpdateCategory(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(20)
-	
+
 	// Create category
 	cat, err := store.CreateCategory("Original", "Original description", workspaceID, nil)
 	require.NoError(t, err)
@@ -608,11 +608,11 @@ func TestDeleteCategoryWithReassign(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(21)
-	
+
 	// Create categories
 	cat1, err := store.CreateCategory("Category 1", "", workspaceID, nil)
 	require.NoError(t, err)
-	
+
 	cat2, err := store.CreateCategory("Category 2", "", workspaceID, nil)
 	require.NoError(t, err)
 
@@ -645,7 +645,7 @@ func TestExportFormats(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(22)
-	
+
 	// Create test memory
 	_, err := store.Save("Export test", "tag1,tag2", "test", workspaceID, nil)
 	require.NoError(t, err)
@@ -697,7 +697,7 @@ func TestImportValidation(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(23)
-	
+
 	// Test import with invalid JSON
 	invalidJSON := []byte(`{invalid}`)
 	_, err := store.ImportMemories(workspaceID, invalidJSON, ExportJSON, ImportOptions{})
@@ -715,7 +715,7 @@ func TestVersionDiff(t *testing.T) {
 	defer cleanup()
 
 	workspaceID := int64(24)
-	
+
 	// Create memory
 	mem, err := store.Save("Version 1", "tag1", "test", workspaceID, nil)
 	require.NoError(t, err)
@@ -737,7 +737,7 @@ func TestVersionDiff(t *testing.T) {
 	diffs, err := store.CompareVersions(mem.ID, versions[0].ID, versions[1].ID)
 	require.NoError(t, err)
 	assert.NotEmpty(t, diffs)
-	
+
 	// Should have differences in content and tags
 	hasContentDiff := false
 	hasTagsDiff := false
@@ -765,12 +765,12 @@ func TestFTS5Availability(t *testing.T) {
 
 func TestConcurrentMemoryOperations(t *testing.T) {
 	t.Skip("Skipping concurrent test due to SQLite locking")
-	
+
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	workspaceID := int64(25)
-	
+
 	// Create multiple memories concurrently
 	done := make(chan bool)
 	for i := 0; i < 5; i++ {

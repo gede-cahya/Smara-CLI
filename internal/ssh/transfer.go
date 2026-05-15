@@ -15,9 +15,9 @@ import (
 type TransferMethod string
 
 const (
-	TransferMethodAuto  TransferMethod = "auto"
-	TransferMethodSFTP  TransferMethod = "sftp"
-	TransferMethodSCP   TransferMethod = "scp"
+	TransferMethodAuto TransferMethod = "auto"
+	TransferMethodSFTP TransferMethod = "sftp"
+	TransferMethodSCP  TransferMethod = "scp"
 )
 
 // TransferConfig holds options for upload/download operations.

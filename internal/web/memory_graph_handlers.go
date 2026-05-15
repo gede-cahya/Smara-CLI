@@ -49,9 +49,10 @@ func (s *Server) handleMemoryGraph(w http.ResponseWriter, r *http.Request) {
 }
 
 // /api/memories/links
-//   GET ?memory_id=N        → list all links for a memory
-//   POST {source,target,relation,weight,note}
-//   DELETE ?id=N            → remove link by id
+//
+//	GET ?memory_id=N        → list all links for a memory
+//	POST {source,target,relation,weight,note}
+//	DELETE ?id=N            → remove link by id
 func (s *Server) handleMemoryLinks(w http.ResponseWriter, r *http.Request) {
 	store := s.asSQLiteStore()
 	if store == nil {

@@ -3,10 +3,10 @@ package integrations
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/internal/cognitive"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewEngine_CognitiveValidator(t *testing.T) {

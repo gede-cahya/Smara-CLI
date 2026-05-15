@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
-	stdsync "sync"
 	"strings"
+	stdsync "sync"
 
 	"github.com/spf13/cobra"
 

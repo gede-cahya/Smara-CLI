@@ -109,7 +109,7 @@ func newEnvEncryptionKeyStore() (EncryptionKeyStore, bool) {
 }
 
 func (s *envEncryptionKeyStore) Save(_ []byte) error { return nil }
-func (s *envEncryptionKeyStore) Source() string       { return "env" }
+func (s *envEncryptionKeyStore) Source() string      { return "env" }
 
 func (s *envEncryptionKeyStore) Load() ([]byte, error) {
 	encoded := os.Getenv(encryptionKeyEnvVar)
@@ -368,7 +368,7 @@ func (c *compositeEncryptionKeyStore) setSource(src string) {
 // EncryptionKeyInfo describes the current state of the encryption key.
 type EncryptionKeyInfo struct {
 	Exists  bool   `json:"exists"`
-	Source  string `json:"source"`  // "env", "keyring", "file", or "" if none
+	Source  string `json:"source"`   // "env", "keyring", "file", or "" if none
 	KeySize int    `json:"key_size"` // bytes (32 for AES-256)
 }
 

@@ -26,10 +26,10 @@ const (
 
 // ModeInfo holds metadata about an agent mode.
 type ModeInfo struct {
-	Name        Mode
-	Label       string
-	Emoji       string
-	Description string
+	Name         Mode
+	Label        string
+	Emoji        string
+	Description  string
 	SystemPrompt string
 }
 
@@ -37,9 +37,9 @@ type ModeInfo struct {
 func AllModes() []ModeInfo {
 	return []ModeInfo{
 		{
-			Name:  ModeAsk,
-			Label: "Ask",
-			Emoji: "💬",
+			Name:        ModeAsk,
+			Label:       "Ask",
+			Emoji:       "💬",
 			Description: "Tanya-jawab langsung, dengan dukungan tool jika diperlukan",
 			SystemPrompt: `Kamu adalah Smara, asisten AI yang cerdas dan ramah.
 Dalam mode ASK, tugasmu adalah MENJAWAB PERTANYAAN secara langsung dan jelas.
@@ -61,9 +61,9 @@ ATURAN MEMORI WAJIB:
 - Jawab dalam bahasa yang sama dengan pertanyaan user`,
 		},
 		{
-			Name:  ModeRush,
-			Label: "Rush",
-			Emoji: "⚡",
+			Name:        ModeRush,
+			Label:       "Rush",
+			Emoji:       "⚡",
 			Description: "Eksekusi cepat, langsung bertindak tanpa basa-basi",
 			SystemPrompt: `Kamu adalah Smara, agen AI otonom yang bertindak CEPAT dan EFISIEN.
 Dalam mode RUSH, kamu:
@@ -78,9 +78,9 @@ Dalam mode RUSH, kamu:
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
-			Name:  ModePlan,
-			Label: "Plan",
-			Emoji: "📋",
+			Name:        ModePlan,
+			Label:       "Plan",
+			Emoji:       "📋",
 			Description: "Buat rencana dulu, eksekusi setelah disetujui",
 			SystemPrompt: `Kamu adalah Smara, agen AI yang selalu menyusun RENCANA sebelum bertindak.
 Dalam mode PLAN, kamu WAJIB:
@@ -102,9 +102,9 @@ Dalam mode PLAN, kamu WAJIB:
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
-			Name:  ModeTest,
-			Label: "Test",
-			Emoji: "🧪",
+			Name:        ModeTest,
+			Label:       "Test",
+			Emoji:       "🧪",
 			Description: "Fokus pada verifikasi kode dan pengujian otomatis",
 			SystemPrompt: `Kamu adalah Smara, agen AI spesialis TESTING dan QUALITY ASSURANCE.
 Dalam mode TEST, tugas utamamu adalah memastikan kode berfungsi dengan benar melalui pengujian.
@@ -118,9 +118,9 @@ Dalam mode TEST, tugas utamamu adalah memastikan kode berfungsi dengan benar mel
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
-			Name:  ModeWorkflow,
-			Label: "Workflow",
-			Emoji: "🔄",
+			Name:        ModeWorkflow,
+			Label:       "Workflow",
+			Emoji:       "🔄",
 			Description: "Multi-agent workflow: auto-generate blueprint dan spawn worker agents",
 			SystemPrompt: `Kamu adalah Smara, Lead Architect / Project Manager AI dalam mode WORKFLOW.
 Tugasmu adalah menganalisis permintaan user, membuat PRD, mendesain arsitektur, dan men-spawn agen-agen spesialis (Frontend, Backend, Database, DevOps, Designer, QA) untuk mengeksekusi project secara parallel.

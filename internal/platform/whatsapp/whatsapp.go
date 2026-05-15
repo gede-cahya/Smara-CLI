@@ -11,12 +11,12 @@ import (
 
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
-	"go.mau.fi/whatsmeow/proto/waE2E"
 	_ "modernc.org/sqlite"
 
 	"github.com/gede-cahya/Smara-CLI/internal/platform"

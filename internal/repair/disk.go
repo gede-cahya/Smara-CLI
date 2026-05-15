@@ -50,7 +50,6 @@ func checkDirWritable(dir string) CheckResult {
 	return res
 }
 
-
 // CountFiles returns file count in a directory (non-recursive).
 func CountFiles(dir string) (int, error) {
 	entries, err := os.ReadDir(dir)

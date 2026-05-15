@@ -8,20 +8,20 @@ import (
 
 func TestIsIdentityQuery(t *testing.T) {
 	cases := map[string]bool{
-		"siapa nama saya":          true,
-		"Siapa Nama Saya?":         true,
-		"saya siapa":               true,
-		"nama saya apa":            true,
-		"who am i":                 true,
-		"what's my name":           true,
-		"call me by my name":       true,
-		"do you know me":           true,
-		"profil saya bagaimana":    true,
-		"apakah kamu kenal saya":   true,
-		"halo saya mau bertanya":   false,
-		"apa cuaca hari ini":       false,
-		"saya mau coding":          false,
-		"":                         false,
+		"siapa nama saya":        true,
+		"Siapa Nama Saya?":       true,
+		"saya siapa":             true,
+		"nama saya apa":          true,
+		"who am i":               true,
+		"what's my name":         true,
+		"call me by my name":     true,
+		"do you know me":         true,
+		"profil saya bagaimana":  true,
+		"apakah kamu kenal saya": true,
+		"halo saya mau bertanya": false,
+		"apa cuaca hari ini":     false,
+		"saya mau coding":        false,
+		"":                       false,
 	}
 	for input, want := range cases {
 		assert.Equal(t, want, isIdentityQuery(input), "input=%q", input)

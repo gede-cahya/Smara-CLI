@@ -52,8 +52,8 @@ func TestSession_Struct(t *testing.T) {
 func TestSession_ArchivedFields(t *testing.T) {
 	now := time.Now()
 	s := Session{
-		IsArchived:  true,
-		ArchivedAt:  &now,
+		IsArchived: true,
+		ArchivedAt: &now,
 	}
 	assert.True(t, s.IsArchived)
 	assert.NotNil(t, s.ArchivedAt)

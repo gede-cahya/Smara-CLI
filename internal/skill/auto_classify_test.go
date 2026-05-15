@@ -102,9 +102,9 @@ func TestFindParentBySubpattern_NoFalsePositive(t *testing.T) {
 
 	// Completely unrelated pattern registered
 	other := &Skill{
-		Name:  "other",
-		Steps: []Step{{Tool: "run_command", Args: map[string]interface{}{"command": "ls"}}},
-		Version: 1,
+		Name:        "other",
+		Steps:       []Step{{Tool: "run_command", Args: map[string]interface{}{"command": "ls"}}},
+		Version:     1,
 		Description: "other",
 	}
 	require.NoError(t, Save(other, nil))
@@ -135,9 +135,9 @@ func TestFindParentBySubpattern_LongestPrefixWins(t *testing.T) {
 
 	// Two captured skills: short is a prefix of long, both prefix of extended
 	shortSk := &Skill{
-		Name:  "short",
-		Steps: []Step{{Tool: "ssh_exec", Args: map[string]interface{}{"h": "1"}}},
-		Version: 1,
+		Name:        "short",
+		Steps:       []Step{{Tool: "ssh_exec", Args: map[string]interface{}{"h": "1"}}},
+		Version:     1,
 		Description: "short",
 	}
 	require.NoError(t, Save(shortSk, nil))

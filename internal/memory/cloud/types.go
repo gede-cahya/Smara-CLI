@@ -193,9 +193,9 @@ func unmarshalFromStorage(data []byte) (*Credentials, error) {
 // libSQL DSN at runtime instead.
 type DatabaseInfo struct {
 	Provider    string    `json:"provider"`
-	Name        string    `json:"name"`     // e.g. "smara-default"
-	URL         string    `json:"url"`      // libsql://smara-default-xxx.turso.io
-	AuthToken   string    `json:"-"`        // never serialized (sensitive)
+	Name        string    `json:"name"` // e.g. "smara-default"
+	URL         string    `json:"url"`  // libsql://smara-default-xxx.turso.io
+	AuthToken   string    `json:"-"`    // never serialized (sensitive)
 	Region      string    `json:"region"`
 	SizeBytes   int64     `json:"size_bytes"`
 	RowsRead    int64     `json:"rows_read"`    // current month, free-tier accounting
@@ -239,11 +239,11 @@ type QuotaInfo struct {
 type SyncStatus struct {
 	State               State     `json:"state"`
 	LastSyncAt          time.Time `json:"last_sync_at"`
-	LagSeconds          int       `json:"lag_seconds"`     // est. lag vs primary
-	LocalFrameNo        int64     `json:"local_frame_no"`  // libSQL replica frame
+	LagSeconds          int       `json:"lag_seconds"`    // est. lag vs primary
+	LocalFrameNo        int64     `json:"local_frame_no"` // libSQL replica frame
 	RemoteFrameNo       int64     `json:"remote_frame_no"`
-	PendingPush         int       `json:"pending_push"`    // local rows not yet replicated
-	PendingPull         int       `json:"pending_pull"`    // remote frames not yet applied
+	PendingPush         int       `json:"pending_push"` // local rows not yet replicated
+	PendingPull         int       `json:"pending_pull"` // remote frames not yet applied
 	UnresolvedConflicts int       `json:"unresolved_conflicts"`
 	LastError           string    `json:"last_error,omitempty"`
 	Quota               QuotaInfo `json:"quota"`

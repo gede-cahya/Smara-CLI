@@ -224,19 +224,19 @@ func (s *SQLiteStore) GetVersionHistory(memoryID int64) (string, error) {
 		sb.WriteString(fmt.Sprintf("  Diubah oleh: %s\n", v.ChangedBy))
 		sb.WriteString(fmt.Sprintf("  Alasan: %s\n", v.Reason))
 		sb.WriteString(fmt.Sprintf("  Tanggal: %s\n", v.CreatedAt.Format("2006-01-02 15:04:05")))
-		
+
 		// Show content preview
 		contentPreview := v.Content
 		if len(contentPreview) > 100 {
 			contentPreview = contentPreview[:100] + "..."
 		}
 		sb.WriteString(fmt.Sprintf("  Konten: %s\n", contentPreview))
-		
+
 		// Show metadata if present
 		if v.Metadata != "{}" && v.Metadata != "" {
 			sb.WriteString(fmt.Sprintf("  Metadata: %s\n", v.Metadata))
 		}
-		
+
 		sb.WriteString("\n")
 	}
 
@@ -472,7 +472,7 @@ func (s *SQLiteStore) GenerateVersionReport(memoryID int64) (string, error) {
 			continue
 		}
 
-		sb.WriteString(fmt.Sprintf("Perubahan dari Versi %d ke Versi %d:\n", 
+		sb.WriteString(fmt.Sprintf("Perubahan dari Versi %d ke Versi %d:\n",
 			len(versions)-i, len(versions)-i-1))
 		sb.WriteString(fmt.Sprintf("  Tanggal: %s\n", next.CreatedAt.Format("2006-01-02 15:04")))
 		sb.WriteString(fmt.Sprintf("  Alasan: %s\n", next.Reason))

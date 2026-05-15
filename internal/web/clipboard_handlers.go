@@ -198,13 +198,13 @@ func (s *Server) handleAttachmentUpload(w http.ResponseWriter, r *http.Request) 
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"path":     out,
-		"size":     n,
-		"source":   "web",
-		"kind":     kind,
-		"mime":     mime,
-		"name":     header.Filename,
-		"ref":      ref,
+		"path":   out,
+		"size":   n,
+		"source": "web",
+		"kind":   kind,
+		"mime":   mime,
+		"name":   header.Filename,
+		"ref":    ref,
 	})
 }
 
@@ -307,7 +307,6 @@ func sanitizeFilename(name string) string {
 	}
 	return out
 }
-
 
 // injectAttachmentSteer scans an incoming chat prompt for [image:/path]
 // and [file:/path] tokens. When found, it appends a system-style note

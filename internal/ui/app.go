@@ -17,14 +17,14 @@ import (
 	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/nudge"
-	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
+	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/clipboard"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/components"
-	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -135,16 +135,16 @@ type AppSupervisor interface {
 
 // AppModel is the Bubbletea model for our TUI
 type AppModel struct {
-	viewport    viewport.Model
-	textarea    textarea.Model
-	messages    []ChatMessage
-	err         error
-	width       int
-	height      int
-	supervisor  AppSupervisor
-	ctx         context.Context
-	cancel      context.CancelFunc
-	processing  bool
+	viewport   viewport.Model
+	textarea   textarea.Model
+	messages   []ChatMessage
+	err        error
+	width      int
+	height     int
+	supervisor AppSupervisor
+	ctx        context.Context
+	cancel     context.CancelFunc
+	processing bool
 
 	// View mode
 	currentView viewMode
@@ -217,10 +217,10 @@ type AppModel struct {
 	cancelled bool
 
 	// Copy / paste & selection state
-	selectionMode    bool          // Ctrl+S message selection mode
-	selectedMsgIndex int           // index of selected historical message
-	toastText        string        // transient notification text
-	toastExpiry      time.Time     // when toast disappears
+	selectionMode    bool      // Ctrl+S message selection mode
+	selectedMsgIndex int       // index of selected historical message
+	toastText        string    // transient notification text
+	toastExpiry      time.Time // when toast disappears
 
 	// Memory store for persistence
 	store memory.MemoryStore
@@ -391,7 +391,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case animTickMsg:
 		if m.animatingSidebar {
 			m.sidebarWidthFloat, m.sidebarVelocity = m.sidebarSpring.Update(m.sidebarWidthFloat, m.sidebarVelocity, m.sidebarTargetWidth)
-			
+
 			if math.Abs(m.sidebarWidthFloat-m.sidebarTargetWidth) < 0.5 && math.Abs(m.sidebarVelocity) < 0.5 {
 				m.sidebarWidthFloat = m.sidebarTargetWidth
 				m.animatingSidebar = false
@@ -946,12 +946,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							sb.WriteString(fmt.Sprintf("\n**Project Directory:** %s\n", result.ProjectPath))
 							thinking := fmt.Sprintf("Domain: %s | Agents: %d | QA: %s", result.Domain, len(result.AgentOutputs), result.QAResult.Status)
 							return ProcessMsg{Result: &agent.PromptResult{
-								Response:      sb.String(),
-								Thinking:      thinking,
-								InputTokens:   0,
-								OutputTokens:  0,
-								TotalTokens:   0,
-								Duration:      0,
+								Response:     sb.String(),
+								Thinking:     thinking,
+								InputTokens:  0,
+								OutputTokens: 0,
+								TotalTokens:  0,
+								Duration:     0,
 							}, Err: nil}
 						})
 					} else {
@@ -1688,7 +1688,7 @@ func (m AppModel) View() string {
 			Bold(true).
 			Padding(0, 1).
 			MarginLeft(m.layout.ContentW - len(m.toastText) - 4)
-		toast := toastStyle.Render("📋 "+m.toastText)
+		toast := toastStyle.Render("📋 " + m.toastText)
 		mainColumn = mainColumn + "\n" + toast
 	}
 

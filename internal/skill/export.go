@@ -16,8 +16,8 @@ import (
 // pattern-tracking table to preserve the auto-capture lineage across
 // machines.
 type TreeExport struct {
-	Schema     string          `json:"schema"`      // always "smara.skill-tree/v1"
-	Version    int             `json:"version"`     // bumped on breaking changes
+	Schema     string          `json:"schema"`  // always "smara.skill-tree/v1"
+	Version    int             `json:"version"` // bumped on breaking changes
 	ExportedAt time.Time       `json:"exported_at"`
 	Skills     []Skill         `json:"skills"`
 	Patterns   []PatternExport `json:"patterns,omitempty"`
@@ -28,13 +28,13 @@ type TreeExport struct {
 // and timestamps are preserved so import can restore auto-capture history
 // without re-triggering skill creation.
 type PatternExport struct {
-	Fingerprint    string      `json:"fingerprint"`
-	Count          int         `json:"count"`
-	FirstSeen      time.Time   `json:"first_seen"`
-	LastSeen       time.Time   `json:"last_seen"`
-	TraceSteps     []TraceStep `json:"trace_steps"`
-	SamplePrompt   string      `json:"sample_prompt,omitempty"`
-	CapturedSkill  string      `json:"captured_skill,omitempty"`
+	Fingerprint   string      `json:"fingerprint"`
+	Count         int         `json:"count"`
+	FirstSeen     time.Time   `json:"first_seen"`
+	LastSeen      time.Time   `json:"last_seen"`
+	TraceSteps    []TraceStep `json:"trace_steps"`
+	SamplePrompt  string      `json:"sample_prompt,omitempty"`
+	CapturedSkill string      `json:"captured_skill,omitempty"`
 }
 
 const exportSchema = "smara.skill-tree/v1"
@@ -157,12 +157,12 @@ const (
 
 // ImportResult summarizes what ImportAll did.
 type ImportResult struct {
-	Created        []string        `json:"created"`
-	Overwritten    []string        `json:"overwritten"`
-	Skipped        []string        `json:"skipped"`
+	Created        []string          `json:"created"`
+	Overwritten    []string          `json:"overwritten"`
+	Skipped        []string          `json:"skipped"`
 	Renamed        map[string]string `json:"renamed,omitempty"` // original -> new
-	PatternsLoaded int             `json:"patterns_loaded"`
-	Warnings       []string        `json:"warnings,omitempty"`
+	PatternsLoaded int               `json:"patterns_loaded"`
+	Warnings       []string          `json:"warnings,omitempty"`
 }
 
 // ImportAll restores an export envelope. If dryRun is true, the result

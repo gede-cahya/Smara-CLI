@@ -677,7 +677,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		if err != nil {
 			return nil, err
 		}
-		
+
 		finalResp = resp
 		finalThinking = thinking
 		return &PromptResult{
@@ -734,10 +734,10 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	outputTokens := len(finalResp) / 4
 	totalTokens := inputTokens + outputTokens
 	estimatedCost := float64(totalTokens) * 0.00001
-	
+
 	duration := time.Since(startTime)
 	s.updateStats(totalTokens, estimatedCost, duration)
-	
+
 	s.mu.Lock()
 	s.stats.InputTokens += inputTokens
 	s.stats.OutputTokens += outputTokens
@@ -912,9 +912,9 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			// Update history and save to memory
 			userMsg := llm.Message{Role: llm.RoleUser, Content: userPrompt}
 			assistantMsg := llm.Message{Role: llm.RoleAssistant, Content: resp.Content}
-			
+
 			s.history = append(s.history, userMsg, assistantMsg)
-			
+
 			if sess := s.sessionRegistry.Current(); sess != nil {
 				sess.History = append(sess.History, userMsg, assistantMsg)
 				sess.UpdatedAt = time.Now()
@@ -1112,7 +1112,7 @@ func isSensitivePath(path string) bool {
 		"token",
 		"config.json", // can be sensitive
 	}
-	
+
 	lowerPath := strings.ToLower(path)
 	for _, p := range sensitivePatterns {
 		if strings.Contains(lowerPath, p) {

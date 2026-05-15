@@ -13,9 +13,9 @@ import (
 
 // Registry tracks all workflow projects with friendly names.
 type Registry struct {
-	mu        sync.RWMutex
-	Entries   []RegistryEntry `json:"entries"`
-	filePath  string
+	mu       sync.RWMutex
+	Entries  []RegistryEntry `json:"entries"`
+	filePath string
 }
 
 // RegistryEntry stores metadata for a single workflow project.

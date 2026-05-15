@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRealSSH_SaveHostAndConnect(t *testing.T) {

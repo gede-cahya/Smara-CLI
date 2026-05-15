@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/spf13/cobra"
 
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"

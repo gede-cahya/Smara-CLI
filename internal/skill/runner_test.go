@@ -89,7 +89,7 @@ func TestSummary_EmptySteps(t *testing.T) {
 
 func TestRun_LongOutputTruncated(t *testing.T) {
 	s := Skill{
-		Name: "long",
+		Name:  "long",
 		Steps: []Step{{Tool: "echo"}},
 	}
 	longOut := strings.Repeat("a", 300)

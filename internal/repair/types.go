@@ -7,18 +7,18 @@ import "fmt"
 type HealthStatus string
 
 const (
-	StatusOK    HealthStatus = "OK"
-	StatusWarn  HealthStatus = "WARN"
-	StatusFail  HealthStatus = "FAIL"
+	StatusOK   HealthStatus = "OK"
+	StatusWarn HealthStatus = "WARN"
+	StatusFail HealthStatus = "FAIL"
 )
 
 // CheckResult is the outcome of a single diagnostic check.
 type CheckResult struct {
-	Module      string       `json:"module"`
-	Status      HealthStatus `json:"status"`
-	Message     string       `json:"message"`
-	Fixable     bool         `json:"fixable"`
-	Suggestion  string       `json:"suggestion,omitempty"`
+	Module     string       `json:"module"`
+	Status     HealthStatus `json:"status"`
+	Message    string       `json:"message"`
+	Fixable    bool         `json:"fixable"`
+	Suggestion string       `json:"suggestion,omitempty"`
 }
 
 // RepairAction describes a single repair step.
@@ -31,9 +31,9 @@ type RepairAction struct {
 
 // Summary returns a human-readable summary of check results.
 type Summary struct {
-	OK    int
-	Warn  int
-	Fail  int
+	OK   int
+	Warn int
+	Fail int
 }
 
 // ComputeSummary counts results by status.

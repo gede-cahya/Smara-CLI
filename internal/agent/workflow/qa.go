@@ -6,10 +6,10 @@ import (
 
 // QAResult holds the QA review outcome.
 type QAResult struct {
-	Status      string   `json:"status"` // PASS, FAIL, SKIP
-	Report      string   `json:"report"`
-	Issues      []string `json:"issues,omitempty"`
-	Score       int      `json:"score"` // 0-100
+	Status string   `json:"status"` // PASS, FAIL, SKIP
+	Report string   `json:"report"`
+	Issues []string `json:"issues,omitempty"`
+	Score  int      `json:"score"` // 0-100
 }
 
 // ParseQAResult parses LLM output into a structured QAResult.

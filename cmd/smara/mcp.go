@@ -17,13 +17,13 @@ import (
 )
 
 var (
-	mcpType     string
-	mcpCommand  string
-	mcpArgs     []string
-	mcpURL      string
-	mcpHeaders  []string
-	mcpEnv      []string
-	mcpEnabled  bool
+	mcpType    string
+	mcpCommand string
+	mcpArgs    []string
+	mcpURL     string
+	mcpHeaders []string
+	mcpEnv     []string
+	mcpEnabled bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -33,8 +33,8 @@ var mcpCmd = &cobra.Command{
 }
 
 var mcpServeCmd = &cobra.Command{
-	Use:    "serve",
-	Short:  "Jalankan Smara sebagai MCP server (stdio)",
+	Use:   "serve",
+	Short: "Jalankan Smara sebagai MCP server (stdio)",
 	Long: `Menjalankan Smara CLI sebagai Model Context Protocol (MCP) server
 menggunakan stdio transport, sehingga Windsurf, Cursor, atau editor lain
 dapat menggunakan tools Smara (run_command, view_file, edit_file, dll).`,

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/pkg/llm"
 	"github.com/gede-cahya/Smara-CLI/pkg/session"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDetectWorkflowIntent_Triggers(t *testing.T) {
@@ -83,7 +83,7 @@ func (m *mockSessionStore) GetSession(id string) (*session.Session, error) {
 	return s, nil
 }
 func (m *mockSessionStore) UpdateSession(s *session.Session) error { m.sessions[s.ID] = s; return nil }
-func (m *mockSessionStore) DeleteSession(id string) error { delete(m.sessions, id); return nil }
+func (m *mockSessionStore) DeleteSession(id string) error          { delete(m.sessions, id); return nil }
 func (m *mockSessionStore) ListSessions() ([]session.Session, error) {
 	var out []session.Session
 	for _, s := range m.sessions {
@@ -100,15 +100,15 @@ func (m *mockSessionStore) ListSessionsByWorkspace(workspaceID int64) ([]session
 	}
 	return out, nil
 }
-func (m *mockSessionStore) ListActiveSessions() ([]session.Session, error) { return m.ListSessions() }
+func (m *mockSessionStore) ListActiveSessions() ([]session.Session, error)  { return m.ListSessions() }
 func (m *mockSessionStore) GetLastActiveSession() (*session.Session, error) { return nil, nil }
 func (m *mockSessionStore) GetLastActiveSessionByWorkspace(workspaceID int64) (*session.Session, error) {
 	return nil, nil
 }
-func (m *mockSessionStore) ArchiveSession(id string) error        { return nil }
-func (m *mockSessionStore) UnarchiveSession(id string) error      { return nil }
+func (m *mockSessionStore) ArchiveSession(id string) error                          { return nil }
+func (m *mockSessionStore) UnarchiveSession(id string) error                        { return nil }
 func (m *mockSessionStore) ListArchivedSessions(_ int64) ([]session.Session, error) { return nil, nil }
-func (m *mockSessionStore) DeleteArchivedSession(id string) error { return nil }
+func (m *mockSessionStore) DeleteArchivedSession(id string) error                   { return nil }
 
 func TestSupervisor_SaveSession(t *testing.T) {
 	s := NewSupervisor(nil, nil)

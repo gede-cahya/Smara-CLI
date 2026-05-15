@@ -3,9 +3,9 @@ package ui
 import (
 	"fmt"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 

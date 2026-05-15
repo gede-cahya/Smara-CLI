@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/gede-cahya/Smara-CLI/pkg/session"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSessionStateAliases(t *testing.T) {

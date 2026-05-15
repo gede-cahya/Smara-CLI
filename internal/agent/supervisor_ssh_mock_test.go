@@ -5,19 +5,19 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSSHProvider struct {
-	calls           int
-	lastMessages    []llm.Message
-	toolCalls       []llm.ToolCall
-	returnToolCall  bool
-	dsmlContent     string // simulates LLM writing DSML inside content instead of native tool_calls
-	finalContent    string
+	calls          int
+	lastMessages   []llm.Message
+	toolCalls      []llm.ToolCall
+	returnToolCall bool
+	dsmlContent    string // simulates LLM writing DSML inside content instead of native tool_calls
+	finalContent   string
 }
 
 func (m *mockSSHProvider) Name() string { return "mock-ssh" }
@@ -85,7 +85,7 @@ func TestSupervisor_MockLLM_SSHExecToolCalled(t *testing.T) {
 		OnToolCall: func(server, tool string, args map[string]interface{}) {
 			executedTools = append(executedTools, fmt.Sprintf("%s: %v", tool, args))
 		},
-		OnToolResult: func(output string) {},
+		OnToolResult:  func(output string) {},
 		OnPhaseChange: func(phase, description string) {},
 		OnIteration:   func(current, max int) {},
 		OnStream:      func(chunk string, isThinking bool) {},

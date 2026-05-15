@@ -2,7 +2,6 @@
 
 package repair
 
-
 func checkDiskSpace(dir string) CheckResult {
 	return CheckResult{
 		Module:  "disk",

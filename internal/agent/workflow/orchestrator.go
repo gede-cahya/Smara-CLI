@@ -14,14 +14,14 @@ import (
 
 // Orchestrator runs the full workflow: blueprint → workers → QA → result.
 type Orchestrator struct {
-	Supervisor     *agent.Supervisor
-	Provider       llm.Provider
-	MCPInfo        map[string]agent.MCPServerInfo
-	ProjectDir     string
-	SharedState    *SharedState
-	Blueprint      Blueprint
-	Result         *WorkflowResult
-	OnProgress     func(step, status string) // Callback for TUI
+	Supervisor  *agent.Supervisor
+	Provider    llm.Provider
+	MCPInfo     map[string]agent.MCPServerInfo
+	ProjectDir  string
+	SharedState *SharedState
+	Blueprint   Blueprint
+	Result      *WorkflowResult
+	OnProgress  func(step, status string) // Callback for TUI
 }
 
 // NewOrchestrator creates a workflow orchestrator.
@@ -171,12 +171,12 @@ func (o *Orchestrator) saveBlueprint() error {
 
 // WorkflowResult aggregates all workflow outputs.
 type WorkflowResult struct {
-	ProjectPath   string                            `json:"project_path"`
-	Domain        string                            `json:"domain"`
-	PRD           string                            `json:"prd"`
-	Architecture  string                            `json:"architecture"`
-	AgentOutputs  map[string][]agent.TaskResult       `json:"agent_outputs"`
-	QAResult      QAResult                          `json:"qa_result"`
-	FinalSummary  string                            `json:"final_summary"`
-	CompletedAt   time.Time                         `json:"completed_at"`
+	ProjectPath  string                        `json:"project_path"`
+	Domain       string                        `json:"domain"`
+	PRD          string                        `json:"prd"`
+	Architecture string                        `json:"architecture"`
+	AgentOutputs map[string][]agent.TaskResult `json:"agent_outputs"`
+	QAResult     QAResult                      `json:"qa_result"`
+	FinalSummary string                        `json:"final_summary"`
+	CompletedAt  time.Time                     `json:"completed_at"`
 }
