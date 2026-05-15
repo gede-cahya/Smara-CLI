@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/spf13/viper"
 )
@@ -13,7 +14,7 @@ import (
 // MCPServer represents a configured MCP server endpoint.
 type MCPServer struct {
 	Name    string            `mapstructure:"name" yaml:"name"`
-	Type    string            `mapstructure:"type" yaml:"type"`       // "local" or "remote"
+	Type    string            `mapstructure:"type" yaml:"type"` // "local" or "remote"
 	Command string            `mapstructure:"command" yaml:"command"`
 	Args    []string          `mapstructure:"args" yaml:"args"`
 	URL     string            `mapstructure:"url" yaml:"url,omitempty"` // for remote servers
@@ -28,10 +29,10 @@ type PlatformBotConfig struct {
 	Token        string   `mapstructure:"token" yaml:"token"`
 	AllowedUsers []string `mapstructure:"allowed_users" yaml:"allowed_users"`
 	BlockedUsers []string `mapstructure:"blocked_users" yaml:"blocked_users"`
-	GuildIDs     []string `mapstructure:"guild_ids" yaml:"guild_ids"`       // Discord only
+	GuildIDs     []string `mapstructure:"guild_ids" yaml:"guild_ids"`         // Discord only
 	AllowedRoles []string `mapstructure:"allowed_roles" yaml:"allowed_roles"` // Discord only
-	RateLimit    int      `mapstructure:"rate_limit" yaml:"rate_limit"`     // requests per minute
-	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`     // burst size
+	RateLimit    int      `mapstructure:"rate_limit" yaml:"rate_limit"`       // requests per minute
+	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`       // burst size
 }
 
 // WhatsAppConfig holds config specifically for WhatsApp.
@@ -41,6 +42,26 @@ type WhatsAppConfig struct {
 	AllowedNumbers []string `mapstructure:"allowed_numbers" yaml:"allowed_numbers"`
 	RateLimit      int      `mapstructure:"rate_limit" yaml:"rate_limit"`
 	RateBurst      int      `mapstructure:"rate_burst" yaml:"rate_burst"`
+}
+
+// CloudMemoryConfig holds configuration for the cloud memory sync feature.
+//
+// Tokens and other secrets MUST NOT be stored here; they live exclusively in
+// the OS-level CredentialStore (keyring with file fallback). Persisting tokens
+// in the YAML config would leak them into backups, dotfile syncs, and audit
+// logs — precisely what Requirement 13.4 / 16.4 forbid.
+type CloudMemoryConfig struct {
+	Enabled         bool     `mapstructure:"enabled" yaml:"enabled"`
+	Provider        string   `mapstructure:"provider" yaml:"provider"`
+	DBNamePattern   string   `mapstructure:"db_name_pattern" yaml:"db_name_pattern"`
+	SyncIntervalSec int      `mapstructure:"sync_interval_sec" yaml:"sync_interval_sec"`
+	ConflictPolicy  string   `mapstructure:"conflict_policy" yaml:"conflict_policy"`
+	OfflineMode     string   `mapstructure:"offline_mode" yaml:"offline_mode"`
+	EncryptAtRest   bool     `mapstructure:"encrypt_at_rest" yaml:"encrypt_at_rest"`
+	MaxRowsPerHour  int      `mapstructure:"max_rows_per_hour" yaml:"max_rows_per_hour"`
+	MaxStorageMB    int      `mapstructure:"max_storage_mb" yaml:"max_storage_mb"`
+	EmbeddingsCloud bool     `mapstructure:"embeddings_cloud" yaml:"embeddings_cloud"`
+	SyncTables      []string `mapstructure:"sync_tables" yaml:"sync_tables"`
 }
 
 // PlatformConfig holds configuration for all platform bots.
@@ -55,33 +76,34 @@ type PlatformConfig struct {
 
 // SmaraConfig holds all application configuration.
 type SmaraConfig struct {
-	Provider           string         `mapstructure:"provider" yaml:"provider"`
-	Model              string         `mapstructure:"model" yaml:"model"`
-	OllamaHost         string         `mapstructure:"ollama_host" yaml:"ollama_host"`
-	OpenAIAPIKey       string         `mapstructure:"openai_api_key" yaml:"openai_api_key"`
-	OpenAIModel        string         `mapstructure:"openai_model" yaml:"openai_model"`
-	OpenAIBaseURL      string         `mapstructure:"openai_base_url" yaml:"openai_base_url"`
-	OpenRouterAPIKey   string         `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
-	OpenRouterModel    string         `mapstructure:"openrouter_model" yaml:"openrouter_model"`
-	AnthropicAPIKey    string         `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
-	AnthropicModel     string         `mapstructure:"anthropic_model" yaml:"anthropic_model"`
-	CustomProviderName string         `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
-	CustomAPIKey       string         `mapstructure:"custom_api_key" yaml:"custom_api_key"`
-	CustomBaseURL      string         `mapstructure:"custom_base_url" yaml:"custom_base_url"`
-	CustomModel        string         `mapstructure:"custom_model" yaml:"custom_model"`
-	SyncDir            string         `mapstructure:"sync_dir" yaml:"sync_dir"`
-	SyncInterval       int            `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
-	MCPServers         []MCPServer    `mapstructure:"mcp_servers" yaml:"mcp_servers"`
-	SmaraMCPEnabled    bool           `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
-	SmaraMCPCommand    string         `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
-	SmaraMCPArgs       []string       `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
-	SmaraMCPAPIKey     string         `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
-	Verbose            bool           `mapstructure:"verbose" yaml:"verbose"`
-	DBPath             string         `mapstructure:"db_path" yaml:"db_path"`
-	ActiveWorkspace    string           `mapstructure:"active_workspace" yaml:"active_workspace"`
-	ActiveWorkspaceID  int64              `mapstructure:"-"` // runtime only
-	Platforms          PlatformConfig   `mapstructure:"platforms" yaml:"platforms"`
-	SkillRegistries    []RegistryConfig `mapstructure:"skill_registries" yaml:"skill_registries"`
+	Provider           string            `mapstructure:"provider" yaml:"provider"`
+	Model              string            `mapstructure:"model" yaml:"model"`
+	OllamaHost         string            `mapstructure:"ollama_host" yaml:"ollama_host"`
+	OpenAIAPIKey       string            `mapstructure:"openai_api_key" yaml:"openai_api_key"`
+	OpenAIModel        string            `mapstructure:"openai_model" yaml:"openai_model"`
+	OpenAIBaseURL      string            `mapstructure:"openai_base_url" yaml:"openai_base_url"`
+	OpenRouterAPIKey   string            `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
+	OpenRouterModel    string            `mapstructure:"openrouter_model" yaml:"openrouter_model"`
+	AnthropicAPIKey    string            `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
+	AnthropicModel     string            `mapstructure:"anthropic_model" yaml:"anthropic_model"`
+	CustomProviderName string            `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
+	CustomAPIKey       string            `mapstructure:"custom_api_key" yaml:"custom_api_key"`
+	CustomBaseURL      string            `mapstructure:"custom_base_url" yaml:"custom_base_url"`
+	CustomModel        string            `mapstructure:"custom_model" yaml:"custom_model"`
+	SyncDir            string            `mapstructure:"sync_dir" yaml:"sync_dir"`
+	SyncInterval       int               `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
+	MCPServers         []MCPServer       `mapstructure:"mcp_servers" yaml:"mcp_servers"`
+	SmaraMCPEnabled    bool              `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
+	SmaraMCPCommand    string            `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
+	SmaraMCPArgs       []string          `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
+	SmaraMCPAPIKey     string            `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	Verbose            bool              `mapstructure:"verbose" yaml:"verbose"`
+	DBPath             string            `mapstructure:"db_path" yaml:"db_path"`
+	ActiveWorkspace    string            `mapstructure:"active_workspace" yaml:"active_workspace"`
+	ActiveWorkspaceID  int64             `mapstructure:"-"` // runtime only
+	Platforms          PlatformConfig    `mapstructure:"platforms" yaml:"platforms"`
+	SkillRegistries    []RegistryConfig  `mapstructure:"skill_registries" yaml:"skill_registries"`
+	CloudMemory        CloudMemoryConfig `mapstructure:"cloud_memory" yaml:"cloud_memory"`
 
 	// AutoSkillDetect enables automatic skill capture: when the same tool-call
 	// pattern is observed repeatedly, Smara creates a skill without being asked.
@@ -103,6 +125,13 @@ type SmaraConfig struct {
 	// (e.g. multi-host SSH + service restart + verification). Set 0 to use
 	// the built-in default.
 	AgentMaxIterations int `mapstructure:"agent_max_iterations" yaml:"agent_max_iterations"`
+
+	// AgentRequestTimeoutSec is the wall-clock cap for a single web/TUI
+	// agentic turn (from prompt submit to final answer). Default: 1800
+	// (30 min). Long roadmap-style chains with many `go test/build`
+	// invocations regularly exceed the old 5 min cap. Set 0 for the
+	// built-in default.
+	AgentRequestTimeoutSec int `mapstructure:"agent_request_timeout_sec" yaml:"agent_request_timeout_sec"`
 }
 
 // RegistryConfig defines a configured skill marketplace/registry source.
@@ -159,10 +188,31 @@ func DefaultConfig() *SmaraConfig {
 				URL:  "https://raw.githubusercontent.com/gede-cahya/smara-skills/main/skill-registry.json",
 			},
 		},
-		AutoSkillDetect:    true,
-		AutoSkillThreshold: 3,
-		PlatformPromptTimeout: 600, // 10 minutes; was hardcoded 300s
-		AgentMaxIterations:    30, // was hardcoded 10
+		AutoSkillDetect:        true,
+		AutoSkillThreshold:     3,
+		PlatformPromptTimeout:  600,  // 10 minutes; was hardcoded 300s
+		AgentMaxIterations:     80,   // long roadmap chains routinely exceed 30
+		AgentRequestTimeoutSec: 3600, // 60 min; web/TUI was hardcoded 5 min
+		CloudMemory: CloudMemoryConfig{
+			Enabled:         false,
+			Provider:        "turso",
+			DBNamePattern:   "smara-{workspace}",
+			SyncIntervalSec: 30,
+			ConflictPolicy:  "lww",
+			OfflineMode:     "auto",
+			EncryptAtRest:   false,
+			MaxRowsPerHour:  50000,
+			MaxStorageMB:    8000,
+			EmbeddingsCloud: false,
+			SyncTables: []string{
+				"memories",
+				"memory_links",
+				"memory_versions",
+				"categories",
+				"workspaces",
+				"sync_log",
+			},
+		},
 	}
 }
 
@@ -223,6 +273,18 @@ func Init(configPath string) error {
 	viper.SetDefault("auto_skill_threshold", defaults.AutoSkillThreshold)
 	viper.SetDefault("platform_prompt_timeout", defaults.PlatformPromptTimeout)
 	viper.SetDefault("agent_max_iterations", defaults.AgentMaxIterations)
+	viper.SetDefault("agent_request_timeout_sec", defaults.AgentRequestTimeoutSec)
+	viper.SetDefault("cloud_memory.enabled", defaults.CloudMemory.Enabled)
+	viper.SetDefault("cloud_memory.provider", defaults.CloudMemory.Provider)
+	viper.SetDefault("cloud_memory.db_name_pattern", defaults.CloudMemory.DBNamePattern)
+	viper.SetDefault("cloud_memory.sync_interval_sec", defaults.CloudMemory.SyncIntervalSec)
+	viper.SetDefault("cloud_memory.conflict_policy", defaults.CloudMemory.ConflictPolicy)
+	viper.SetDefault("cloud_memory.offline_mode", defaults.CloudMemory.OfflineMode)
+	viper.SetDefault("cloud_memory.encrypt_at_rest", defaults.CloudMemory.EncryptAtRest)
+	viper.SetDefault("cloud_memory.max_rows_per_hour", defaults.CloudMemory.MaxRowsPerHour)
+	viper.SetDefault("cloud_memory.max_storage_mb", defaults.CloudMemory.MaxStorageMB)
+	viper.SetDefault("cloud_memory.embeddings_cloud", defaults.CloudMemory.EmbeddingsCloud)
+	viper.SetDefault("cloud_memory.sync_tables", defaults.CloudMemory.SyncTables)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")
@@ -271,9 +333,56 @@ func Get() *SmaraConfig {
 }
 
 // Set sets a configuration value and saves to file.
+//
+// Type coercion: viper.Set stores whatever value is passed in. The CLI
+// `smara config set <key> <value>` always passes a string, but our schema
+// has int/bool fields too. If we store everything as a string, the next
+// load with mapstructure may fail to decode (numeric fields end up as 0
+// → default fallback). Coerce here based on the existing default value's
+// type, falling back to string when unknown.
 func Set(key, value string) error {
+	defaults := DefaultConfig()
+	defaultsAll := allSettingsFromStruct(defaults)
+	if existing, ok := defaultsAll[key]; ok {
+		switch existing.(type) {
+		case int, int32, int64:
+			if n, err := strconv.Atoi(value); err == nil {
+				viper.Set(key, n)
+				return Save()
+			}
+		case float32, float64:
+			if f, err := strconv.ParseFloat(value, 64); err == nil {
+				viper.Set(key, f)
+				return Save()
+			}
+		case bool:
+			if b, err := strconv.ParseBool(value); err == nil {
+				viper.Set(key, b)
+				return Save()
+			}
+		}
+	}
 	viper.Set(key, value)
 	return Save()
+}
+
+// allSettingsFromStruct flattens a SmaraConfig into key→value map using the
+// same lowercase keys viper uses. Only top-level scalar fields are needed
+// for coercion in Set; nested structs (CloudMemory, Platforms) keep their
+// existing string handling because they are not exposed via `config set`.
+func allSettingsFromStruct(c *SmaraConfig) map[string]interface{} {
+	if c == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"agent_max_iterations":      c.AgentMaxIterations,
+		"agent_request_timeout_sec": c.AgentRequestTimeoutSec,
+		"auto_skill_detect":         c.AutoSkillDetect,
+		"auto_skill_threshold":      c.AutoSkillThreshold,
+		"platform_prompt_timeout":   c.PlatformPromptTimeout,
+		"sync_interval":             c.SyncInterval,
+		"verbose":                   c.Verbose,
+	}
 }
 
 // GetValue returns a config value by key.

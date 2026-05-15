@@ -1,5 +1,6 @@
-import { useState, useEffect, lazy, Suspense } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, Wrench, GitBranch, TreePine, LineChart, Network, FolderTree } from 'lucide-react'
+import { useState, useEffect, lazy, Suspense, Component } from 'react'
+import type { ReactNode } from 'react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, Wrench, GitBranch, TreePine, LineChart, Network, FolderTree, AlertTriangle } from 'lucide-react'
 import Chat from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
@@ -7,6 +8,59 @@ import Config from './pages/Config'
 import Dashboard from './pages/Dashboard'
 import Skills from './pages/Skills'
 import Workflow from './pages/Workflow'
+
+class PageErrorBoundary extends Component<{ children: ReactNode; label: string }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error) {
+    console.warn('[smara] page error:', error)
+  }
+  resetAll = () => {
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith('smara_')) localStorage.removeItem(k)
+      })
+    } catch { /* ignore */ }
+    this.setState({ error: null })
+    window.location.reload()
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="h-full flex items-center justify-center p-8">
+          <div className="max-w-md bg-gray-900 border border-red-700/40 rounded-lg p-6 space-y-4">
+            <div className="flex items-center gap-2 text-red-400">
+              <AlertTriangle className="w-5 h-5" />
+              <span className="font-semibold">{this.props.label} crashed</span>
+            </div>
+            <p className="text-sm text-gray-400">
+              {this.state.error.name === 'QuotaExceededError'
+                ? 'Penyimpanan browser penuh. Reset riwayat untuk lanjut.'
+                : this.state.error.message}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={this.resetAll}
+                className="px-3 py-1.5 bg-smara-600 hover:bg-smara-500 text-white text-sm rounded transition-colors"
+              >
+                Reset penyimpanan & reload
+              </button>
+              <button
+                onClick={() => this.setState({ error: null })}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded transition-colors"
+              >
+                Coba lagi
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 const SkillTree = lazy(() => import('./pages/SkillTree'))
 const SkillDashboard = lazy(() => import('./pages/SkillDashboard'))
@@ -95,7 +149,7 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 overflow-hidden">
-        <div className={active === 'chat' ? 'h-full' : 'hidden'}><Chat /></div>
+        <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat /></PageErrorBoundary></div>
         <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
         <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
         <div className={active === 'skills' ? 'h-full' : 'hidden'}><Skills /></div>

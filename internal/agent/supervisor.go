@@ -88,6 +88,13 @@ type Supervisor struct {
 	mode            Mode
 	history         []llm.Message // conversation history for context
 	callback        AgenticCallback
+
+	// activeBudget is the live IterationBudget for the prompt currently
+	// running through RunAgenticLoop. Tool handlers (e.g.
+	// request_iteration_budget) read/mutate this through helper methods.
+	// It is nil between prompts.
+	activeBudget   *IterationBudget
+	activeBudgetMu sync.RWMutex
 	autoDiscovered      bool
 	workspaceID         int64 // active workspace ID
 	stats               Stats // usage statistics
@@ -1444,6 +1451,16 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	// while the model is making progress. Stuck-loop detector terminates
 	// early when the same tool call repeats too often.
 	budget := NewIterationBudget(s.mode, s.maxIterations)
+	s.activeBudgetMu.Lock()
+	s.activeBudget = budget
+	s.activeBudgetMu.Unlock()
+	SetActiveBudgetController(s)
+	defer func() {
+		s.activeBudgetMu.Lock()
+		s.activeBudget = nil
+		s.activeBudgetMu.Unlock()
+		SetActiveBudgetController(nil)
+	}()
 	for iteration := 0; budget.ShouldContinue(iteration); iteration++ {
 		if ctx.Err() != nil {
 			return "", "", nil, nil, ctx.Err()
@@ -1459,28 +1476,47 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		var toolCalls []llm.ToolCall
 		var err error
 
-		// Wrap stream callback to emit phase changes (skip if context cancelled)
+		// Wrap stream callback to emit phase changes (skip if context cancelled).
+		// Snapshot user callbacks INTO LOCAL VARS so a concurrent SetCallback
+		// (e.g. handleWSChat clearing callbacks after ProcessPrompt returns)
+		// does not race with in-flight streaming chunks. Without this snapshot,
+		// `s.callback.OnPhaseChange` could be non-nil at the outer `if` check
+		// and become nil by the time the inner stream handler fires — that's
+		// the panic at supervisor.go:1471 we observed in production.
 		var streamCb llm.StreamCallback
-		if s.callback.OnPhaseChange != nil {
+		cbSnap := s.snapshotCallback()
+		onPhase := cbSnap.OnPhaseChange
+		onStream := cbSnap.OnStream
+		if onPhase != nil {
 			streamCb = func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
+				defer func() {
+					if r := recover(); r != nil {
+						// Stream callback panic must not kill the LLM goroutine.
+						// Drop the chunk; the agent will still get the final response.
+					}
+				}()
 				if ctx.Err() != nil {
 					return
 				}
 				phaseName := phaseNameFromHint(phaseHint)
-				if phaseName != "" {
-					s.callback.OnPhaseChange(phaseName, phaseDescFromHint(phaseHint))
+				if phaseName != "" && onPhase != nil {
+					onPhase(phaseName, phaseDescFromHint(phaseHint))
 				}
-				if s.callback.OnStream != nil {
-					s.callback.OnStream(chunk, isThinking)
+				if onStream != nil {
+					onStream(chunk, isThinking)
 				}
 			}
 		} else {
 			streamCb = func(chunk string, isThinking bool, _ llm.PhaseHint) {
+				defer func() {
+					if r := recover(); r != nil {
+					}
+				}()
 				if ctx.Err() != nil {
 					return
 				}
-				if s.callback.OnStream != nil {
-					s.callback.OnStream(chunk, isThinking)
+				if onStream != nil {
+					onStream(chunk, isThinking)
 				}
 			}
 		}
@@ -1767,7 +1803,44 @@ func (s *Supervisor) SetSessionStore(store SessionStore) {
 
 // SetCallback sets the agentic callback functions.
 func (s *Supervisor) SetCallback(cb AgenticCallback) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.callback = cb
+}
+
+// snapshotCallback returns a value-copy of the current callback under the
+// supervisor lock. Use this from goroutines (stream handlers, etc.) instead
+// of dereferencing s.callback fields directly to avoid races with concurrent
+// SetCallback writes.
+func (s *Supervisor) snapshotCallback() AgenticCallback {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.callback
+}
+
+// RequestIterationExtension allows the running prompt to extend its own
+// iteration budget. Returns the structured ExtensionRequest result. If no
+// prompt is currently running the call is denied.
+func (s *Supervisor) RequestIterationExtension(amount int, reason string) ExtensionRequest {
+	s.activeBudgetMu.RLock()
+	b := s.activeBudget
+	s.activeBudgetMu.RUnlock()
+	if b == nil {
+		return ExtensionRequest{Denial: "tidak ada prompt aktif (budget hanya hidup selama ProcessPrompt)"}
+	}
+	return b.RequestExtension(amount, reason)
+}
+
+// IterationBudgetSnapshot returns a snapshot of the active budget, or zero
+// value if no prompt is running.
+func (s *Supervisor) IterationBudgetSnapshot() (BudgetSnapshot, bool) {
+	s.activeBudgetMu.RLock()
+	b := s.activeBudget
+	s.activeBudgetMu.RUnlock()
+	if b == nil {
+		return BudgetSnapshot{}, false
+	}
+	return b.Snapshot(), true
 }
 
 // Close shuts down all MCP client connections.

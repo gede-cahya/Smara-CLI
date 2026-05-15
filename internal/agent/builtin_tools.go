@@ -31,6 +31,34 @@ import (
 // BuiltinDB is set by the Supervisor so built-in tools can access SQLite.
 var BuiltinDB *sql.DB
 
+// activeBudgetController exposes just the budget hooks tools need so they
+// don't take a hard dependency on *Supervisor (avoids import cycles in
+// tests that build slim fakes).
+type activeBudgetController interface {
+	RequestIterationExtension(amount int, reason string) ExtensionRequest
+	IterationBudgetSnapshot() (BudgetSnapshot, bool)
+}
+
+// SetActiveBudgetController is called by Supervisor at the start of
+// RunAgenticLoop to grant tools (request_iteration_budget,
+// iteration_budget_status) access to the running budget. Cleared at end.
+var (
+	activeBudgetCtrlMu sync.RWMutex
+	activeBudgetCtrl   activeBudgetController
+)
+
+func SetActiveBudgetController(c activeBudgetController) {
+	activeBudgetCtrlMu.Lock()
+	activeBudgetCtrl = c
+	activeBudgetCtrlMu.Unlock()
+}
+
+func getActiveBudgetController() activeBudgetController {
+	activeBudgetCtrlMu.RLock()
+	defer activeBudgetCtrlMu.RUnlock()
+	return activeBudgetCtrl
+}
+
 const builtinMCPServerName = "builtin"
 
 // GetBuiltinTools returns the standard OS and file manipulation tools
@@ -293,6 +321,32 @@ func GetBuiltinTools() []llm.ToolFunction {
 					},
 				},
 				"required": []string{"format", "data"},
+			},
+		},
+		{
+			Name:        "request_iteration_budget",
+			Description: "Minta tambahan iterasi tool-call untuk turn yang sedang berjalan ketika kamu yakin task butuh lebih banyak langkah (mis. roadmap panjang, refactor multi-file, deploy bertahap). Sistem punya safety: maksimum 5 grant per turn, hard cap tidak boleh > 3x nilai awal. Berikan alasan eksplisit yang jelas. Tool ini mengembalikan info granted/denied beserta limit baru.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"amount": map[string]interface{}{
+						"type":        "integer",
+						"description": "Jumlah iterasi tambahan yang diminta (>0). Sistem akan clamp ke headroom yang tersisa.",
+					},
+					"reason": map[string]interface{}{
+						"type":        "string",
+						"description": "Alasan singkat kenapa butuh tambahan (wajib). Contoh: 'menyelesaikan Phase B (7 task tersisa)', 'multi-file refactor 12 file Go'.",
+					},
+				},
+				"required": []string{"amount", "reason"},
+			},
+		},
+		{
+			Name:        "iteration_budget_status",
+			Description: "Ambil snapshot status iterasi turn saat ini: nilai limit aktif, hard cap, jumlah iterasi yang sudah terpakai pola-pola, sisa kuota request_iteration_budget. Pakai sebelum minta tambahan untuk menilai apakah benar-benar perlu.",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
 			},
 		},
 		{
@@ -958,6 +1012,27 @@ func GetBuiltinTools() []llm.ToolFunction {
 				"required": []string{"path"},
 			},
 		},
+		{
+			Name: "read_document",
+			Description: "Ekstrak teks dari dokumen biner (PDF, DOCX, ODT, RTF) dan teks polos (TXT, MD, JSON, CSV). " +
+				"Jangan pakai read_file untuk PDF — ia akan mengembalikan byte mentah yang merusak konteks LLM. " +
+				"Otomatis pilih backend: pdftotext (poppler) untuk PDF, pandoc untuk DOCX/ODT/RTF, " +
+				"baca langsung untuk teks polos. Format `[file:/path]` di prompt user juga otomatis dikenali.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path ke file dokumen. Bisa absolut, relatif terhadap cwd, atau raw `[file:/path]` token.",
+					},
+					"max_chars": map[string]interface{}{
+						"type":        "number",
+						"description": "Batasi output (default 20000). Untuk dokumen besar, agen bisa minta nilai lebih kecil dulu untuk preview.",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
 	}
 }
 
@@ -966,8 +1041,64 @@ var activeServers = make(map[string]*exec.Cmd)
 var activeServersMu sync.Mutex
 
 // ExecuteBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
-func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (string, error) {
+func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (result string, err error) {
+	// Recover dari panic di handler tool: jangan sampai bug di satu tool
+	// menjatuhkan TUI / WebSocket / supervisor secara keseluruhan. Kembalikan
+	// sebagai error biasa supaya agent bisa mencoba pendekatan lain.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("tool %q panic: %v", toolName, r)
+			result = ""
+		}
+	}()
+
 	switch toolName {
+	case "request_iteration_budget":
+		ctrl := getActiveBudgetController()
+		if ctrl == nil {
+			return "", fmt.Errorf("budget controller tidak aktif (request_iteration_budget hanya valid saat ProcessPrompt sedang berjalan)")
+		}
+		amountF, _ := args["amount"].(float64)
+		amount := int(amountF)
+		// Some providers may pass amount as int directly via JSON unmarshal.
+		if amount == 0 {
+			if a, ok := args["amount"].(int); ok {
+				amount = a
+			}
+		}
+		reason, _ := args["reason"].(string)
+		req := ctrl.RequestIterationExtension(amount, reason)
+		var sb strings.Builder
+		if req.Granted {
+			fmt.Fprintf(&sb, "✓ Iterasi diperbanyak %d (limit: %d, hard cap: %d). Sisa kuota request: %d/%d.\n",
+				req.GrantedAmount, req.NewLimit, req.NewHardCap, req.RemainingGrant, MaxManualExtRequests)
+			if req.GrantedAmount < amount {
+				fmt.Fprintf(&sb, "Catatan: diminta %d, hanya %d yang bisa dikabulkan (sisanya kena ceiling 3x hard cap awal).\n",
+					amount, req.GrantedAmount)
+			}
+			fmt.Fprintf(&sb, "Alasan tercatat: %s", req.Reason)
+		} else {
+			fmt.Fprintf(&sb, "✗ Permintaan ditolak: %s\nLimit saat ini: %d, hard cap: %d, sisa kuota request: %d/%d.",
+				req.Denial, req.NewLimit, req.NewHardCap, req.RemainingGrant, MaxManualExtRequests)
+		}
+		return sb.String(), nil
+
+	case "iteration_budget_status":
+		ctrl := getActiveBudgetController()
+		if ctrl == nil {
+			return "", fmt.Errorf("budget controller tidak aktif")
+		}
+		snap, ok := ctrl.IterationBudgetSnapshot()
+		if !ok {
+			return "Tidak ada prompt aktif.", nil
+		}
+		return fmt.Sprintf(
+			"Mode: %s\nBase: %d\nLimit aktif: %d\nHard cap: %d\nManual extensions: %d/%d (total +%d iterasi)\nWindow tool calls: %d unik dari %d terakhir\nStuck repeats: %d",
+			snap.Mode, snap.Base, snap.Current, snap.HardCap,
+			snap.ManualExtCount, MaxManualExtRequests, snap.ManualExtTotal,
+			snap.UniqueRecent, snap.WindowSize, snap.StuckRepeats,
+		), nil
+
 	case "run_command":
 		cmdStr, ok := args["command"].(string)
 		if !ok {
@@ -1072,9 +1203,16 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			endLine = int(el)
 		}
 		
-		if startLine < 1 { startLine = 1 }
-		if endLine > len(lines) { endLine = len(lines) }
-		
+		if startLine < 1 {
+			startLine = 1
+		}
+		if endLine > len(lines) {
+			endLine = len(lines)
+		}
+		if endLine < startLine {
+			return "", fmt.Errorf("range tidak valid: end_line (%d) < start_line (%d)", endLine, startLine)
+		}
+
 		var sb strings.Builder
 		for i := startLine; i <= endLine; i++ {
 			sb.WriteString(fmt.Sprintf("%4d | %s\n", i, lines[i-1]))
@@ -1087,9 +1225,22 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'path' tidak valid")
 		}
+		// Strip [file:/path] / [image:/path] wrappers if user/agent passed
+		// the raw attachment token. Same convention as analyze_image.
+		path = stripAttachmentWrapper(path)
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca file: %w", err)
+		}
+		// Guard against binary files. Dumping raw bytes (PDF, images,
+		// archives) into the LLM context corrupts encoding and can crash
+		// upstream providers. Steer the agent to the right tool instead.
+		if kind, isBinary := detectBinaryKind(path, content); isBinary {
+			tool := "read_document"
+			if kind == "image" {
+				tool = "analyze_image"
+			}
+			return "", fmt.Errorf("file %s adalah file biner (%s) — pakai %s untuk mengekstrak isinya, jangan read_file", filepath.Base(path), kind, tool)
 		}
 		return string(content), nil
 
@@ -1231,9 +1382,19 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		// Jika start_line/end_line diberikan, cari hanya di range tersebut
 		content := string(data)
 		if okStart, okEnd := args["start_line"] != nil, args["end_line"] != nil; okStart || okEnd {
-			if startLine < 1 { startLine = 1 }
-			if endLine > len(lines) { endLine = len(lines) }
-			
+			if startLine < 1 {
+				startLine = 1
+			}
+			if endLine > len(lines) {
+				endLine = len(lines)
+			}
+			if startLine > len(lines) {
+				return "", fmt.Errorf("start_line %d melebihi jumlah baris file (%d). Pakai view_file untuk verifikasi.", startLine, len(lines))
+			}
+			if endLine < startLine {
+				return "", fmt.Errorf("range tidak valid: end_line (%d) < start_line (%d)", endLine, startLine)
+			}
+
 			subContent := strings.Join(lines[startLine-1:endLine], "\n")
 			if !strings.Contains(subContent, oldContent) {
 				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d. Gunakan view_file untuk verifikasi.", startLine, endLine)
@@ -1857,6 +2018,36 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("copy image gagal: %w", err)
 		}
 		return fmt.Sprintf("✓ Image %s sudah masuk clipboard sistem", path), nil
+
+	case "read_document":
+		path := getStr(args, "path")
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		path = stripAttachmentWrapper(path)
+		maxChars := 20000
+		if v, ok := args["max_chars"].(float64); ok && v > 0 {
+			maxChars = int(v)
+		}
+		text, source, err := extractDocumentText(path)
+		if err != nil {
+			return "", err
+		}
+		truncated := false
+		if len(text) > maxChars {
+			text = text[:maxChars]
+			truncated = true
+		}
+		st, _ := os.Stat(path)
+		var sizeStr string
+		if st != nil {
+			sizeStr = fmt.Sprintf(" · %d KB", st.Size()/1024)
+		}
+		header := fmt.Sprintf("✓ %s%s · ekstrak: %s · %d karakter", filepath.Base(path), sizeStr, source, len(text))
+		if truncated {
+			header += fmt.Sprintf(" (truncated dari aslinya, panggil ulang dengan max_chars lebih besar bila perlu)")
+		}
+		return header + "\n\n" + text, nil
 
 	default:
 		return "", fmt.Errorf("tool built-in '%s' tidak dikenali", toolName)

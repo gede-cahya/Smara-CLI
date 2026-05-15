@@ -49,6 +49,52 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 - **🖼️ Clipboard Image & Vision Tools**: Ctrl+V di TUI ambil gambar dari clipboard sistem (X11/Wayland/macOS/Windows), simpan ke `~/.smara/clip-images/`, dan inject `[image:/path]` ke prompt. Built-in tool `analyze_image` ekstrak metadata + OCR (tesseract); `clip_paste_image` & `clip_copy_image` untuk agent.
 - **🧠 Adaptive Iteration Budget**: Batas eksekusi tool dinamis per mode (ASK 5, RUSH 15, WORKFLOW 30, dst.) dengan auto-extension saat model produktif dan stuck-loop detector kalau tool yang sama dipanggil berulang. Configurable via `agent_max_iterations`.
 - **Auto-Update**: Sistem pembaruan otomatis bawaan menggunakan perintah `smara update`.
+- **🌥️ Cloud Memory**: Sinkronisasi memori local-first antar device/workspace via Turso/libSQL embedded replica, dengan conflict policy, audit log redacted, dan mode headless CI.
+
+---
+
+## 🌥️ Cloud Memory
+
+Cloud Memory membuat database memori Smara tetap **local-first** (baca/tulis tetap cepat secara lokal) sambil tersinkronisasi ke Turso/libSQL untuk multi-device.
+
+Quick start:
+```bash
+smara memory cloud login
+smara memory cloud enable
+smara memory cloud status
+```
+
+Multi-device: jalankan `smara memory cloud login` lalu `smara memory cloud enable` di device kedua; Smara akan memakai database cloud workspace yang sama bila sudah ada.
+
+Workspace isolation: setiap workspace dipetakan ke database cloud terpisah. Contoh:
+```bash
+smara workspace create client-x
+smara memory cloud workspaces
+```
+Gunakan `smara workspace create client-x --local-only` untuk skip provisioning cloud saat offline/kuota penuh.
+
+Headless/CI mode:
+```bash
+export SMARA_CLOUD_TOKEN=...
+export SMARA_CLOUD_ORG=...
+export SMARA_CLOUD_REGION=sin
+smara memory cloud login --headless
+smara memory cloud enable
+```
+Contoh Docker minimal: set env vars di container, mount `~/.smara` sebagai volume, lalu jalankan command di atas saat bootstrap.
+
+Conflict policy tersedia di config `cloud_memory.conflict_policy`:
+- `lww` — default, last-write-wins deterministik.
+- `manual` — konflik ditahan untuk review via `smara memory cloud conflicts`.
+- `archive-loser` — pemenang dipakai, versi kalah tetap diarsipkan.
+- `merge-content` — gabungkan konten catatan bebas.
+
+Privacy & security: token tidak disimpan di YAML config; kredensial memakai keyring, env, atau fallback file `0600`. Audit log otomatis redact Bearer/JWT/token. Konten memori dan embedding tetap di database Turso milik user; embedding default tetap lewat Ollama lokal.
+
+Troubleshooting cepat:
+- Keyring tidak tersedia → Smara fallback ke `~/.smara/cloud-creds.json` mode `0600`.
+- Replica bermasalah → nonaktifkan cloud, backup `~/.smara/memory.db`, lalu `enable` ulang untuk bootstrap.
+- Kuota penuh → `status` tampilkan quota; kurangi data/cleanup atau naikkan kuota provider.
 
 ---
 

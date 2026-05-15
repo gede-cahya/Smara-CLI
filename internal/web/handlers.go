@@ -84,6 +84,8 @@ type wsMessage struct {
 	Tool        string `json:"tool,omitempty"`
 	Server      string `json:"server,omitempty"`
 	Output      string `json:"output,omitempty"`
+	Args        map[string]interface{} `json:"args,omitempty"`
+	Role        string `json:"role,omitempty"`
 	Stats       *wsStats `json:"stats,omitempty"`
 }
 
@@ -158,19 +160,28 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			_ = session.WriteJSON(wsMessage{Type: "phase", Phase: phase, Description: description})
 		},
 		OnToolCall: func(server, tool string, args map[string]interface{}) {
-			_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: server, Tool: tool})
+			_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: server, Tool: tool, Args: args})
 		},
 		OnToolResult: func(output string) {
 			_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: output})
 		},
 		OnLog: func(role, content string) {
-			_ = session.WriteJSON(wsMessage{Type: "log", Payload: content})
+			_ = session.WriteJSON(wsMessage{Type: "log", Payload: content, Role: role})
 		},
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Wall-clock cap for the whole agentic turn. Configurable via
+	// agent_request_timeout_sec; default in config is 1800s (30 min) so
+	// long roadmap chains aren't killed mid-task. Falls back to 30 min if
+	// the config field is missing or zero.
+	timeoutSec := 1800
+	if s.Cfg != nil && s.Cfg.AgentRequestTimeoutSec > 0 {
+		timeoutSec = s.Cfg.AgentRequestTimeoutSec
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	result, err := s.Supervisor.ProcessPrompt(ctx, msg.Payload)
+	prompt := injectAttachmentSteer(msg.Payload)
+	result, err := s.Supervisor.ProcessPrompt(ctx, prompt)
 
 	// Clear callbacks
 	s.Supervisor.SetCallback(agent.AgenticCallback{})

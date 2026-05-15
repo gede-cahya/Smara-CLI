@@ -143,6 +143,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	supervisor := agent.NewSupervisorWithConfig(provider, providerCfg, memStore)
 	defer supervisor.Close()
 
+	// Honor configurable agent iteration cap so long agentic chains
+	// (multi-step roadmaps, refactors) aren't cut off prematurely.
+	if cfg.AgentMaxIterations > 0 {
+		supervisor.SetMaxIterations(cfg.AgentMaxIterations)
+	}
+
 	// 4.1 Attach Safety Engine
 	safetyEngine := safety.NewEngine()
 	supervisor.SetSafetyEngine(safetyEngine)

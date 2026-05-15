@@ -1,40 +1,121 @@
 package memory
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 )
 
-// SQLiteStore implements MemoryStore using SQLite.
+// StoreOptions configures cloud-aware behaviour for a SQLiteStore.
+//
+// DeviceID is the cross-device identifier (UUID) loaded from
+// `~/.smara/device-id`; it is stamped on every cloud-synced row.
+// CloudEnabled toggles cloud-field generation in `Save` and related
+// write paths. When false, the store behaves identically to the
+// historical local-only implementation.
+type StoreOptions struct {
+	DeviceID     string
+	CloudEnabled bool
+}
+
+// SQLiteStore implements MemoryStore using SQLite or libSQL (Turso embedded
+// replica). The choice of driver is determined by the DSN passed to
+// NewSQLiteStoreWithDSN.
 type SQLiteStore struct {
 	db     *sql.DB
 	dbPath string
+
+	// Cloud Memory: optional cross-device metadata. These fields are zero-valued
+	// (empty / false) in the local-only path so existing behaviour is preserved
+	// byte-for-byte (Requirement 17.5).
+	deviceID     string
+	cloudEnabled bool
 }
 
-// NewSQLiteStore creates a new SQLite-backed memory store.
+// NewSQLiteStore creates a new SQLite-backed memory store at the given file
+// path. This is the historical local-only constructor and is preserved for
+// backward compatibility — every existing CLI command path keeps working
+// without modification.
+//
+// It delegates to NewSQLiteStoreWithDSN using the same DSN format the older
+// implementation produced (`<path>?_journal_mode=WAL&_busy_timeout=5000`),
+// which routes to the `modernc.org/sqlite` driver because the DSN contains
+// no libSQL markers.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	return NewSQLiteStoreWithDSN(dsn, StoreOptions{})
+}
+
+// NewSQLiteStoreWithDSN opens a memory store against a dialect-aware DSN.
+//
+// Dialect detection rules:
+//   - DSN starts with `libsql://` — uses the libSQL driver (registered by the
+//     blank import in store_libsql.go).
+//   - DSN contains `authToken=` or `syncUrl=` query parameters — also routed
+//     to libSQL because these are libSQL embedded-replica markers.
+//   - Otherwise — uses the local `sqlite` driver (modernc.org/sqlite).
+//
+// After opening the connection the constructor runs the standard schema
+// initialization (`Init` → `migrate`), which is intentionally additive and
+// dialect-agnostic so the same DDL works against both SQLite and libSQL
+// (Requirements 6.1, 6.2). Cloud fields from `opts` are stored on the
+// returned `*SQLiteStore` for use by cloud-aware write paths.
+func NewSQLiteStoreWithDSN(dsn string, opts StoreOptions) (*SQLiteStore, error) {
+	driverName := detectDialect(dsn)
+
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("gagal membuka database: %w", err)
+		return nil, fmt.Errorf("gagal membuka database (%s): %w", driverName, err)
 	}
 
-	store := &SQLiteStore{db: db, dbPath: dbPath}
+	store := &SQLiteStore{
+		db:           db,
+		dbPath:       dsn,
+		deviceID:     opts.DeviceID,
+		cloudEnabled: opts.CloudEnabled,
+	}
 	if err := store.Init(); err != nil {
 		db.Close()
 		return nil, err
 	}
 
 	return store, nil
+}
+
+// detectDialect picks the database/sql driver name based on DSN markers.
+// Only the libSQL embedded-replica patterns route to the `libsql` driver;
+// every other input falls back to the local `sqlite` driver, matching the
+// historical behaviour of NewSQLiteStore. The libSQL driver registers itself
+// via the blank import in store_libsql.go.
+//
+// Markers (any one matches):
+//   - prefix `libsql://`
+//   - DSN contains `authToken=` (libSQL auth marker, case-sensitive — matches
+//     both `?authToken=...` and `&authToken=...`)
+//   - DSN contains `syncUrl=` or `syncURL=` (embedded-replica sync URL marker)
+func detectDialect(dsn string) string {
+	switch {
+	case strings.HasPrefix(dsn, "libsql://"):
+		return "libsql"
+	case strings.Contains(dsn, "authToken="):
+		return "libsql"
+	case strings.Contains(dsn, "syncUrl="), strings.Contains(dsn, "syncURL="):
+		return "libsql"
+	default:
+		return "sqlite"
+	}
 }
 
 // Init creates the database schema if it doesn't exist.
@@ -269,7 +350,7 @@ func (s *SQLiteStore) migrate() error {
 	}
 
 	// 1. Migrate memories table - add new columns if they don't exist
-	cols := []string{"updated_at", "expires_at", "category_id", "metadata", "version"}
+	cols := []string{"updated_at", "expires_at", "category_id", "metadata", "version", "cloud_id", "device_id", "content_hash"}
 	for _, col := range cols {
 		exists, err := columnExists("memories", col)
 		if err != nil {
@@ -294,10 +375,27 @@ func (s *SQLiteStore) migrate() error {
 				stmt = "ALTER TABLE memories ADD COLUMN metadata TEXT DEFAULT '{}'"
 			case "version":
 				stmt = "ALTER TABLE memories ADD COLUMN version INTEGER DEFAULT 1"
+			case "cloud_id":
+				// Cloud Memory: UUID v7 lintas-device untuk dedup; di-backfill saat enable cloud.
+				// Dialect-agnostic DDL — jalan di SQLite (modernc) maupun libSQL (Turso).
+				stmt = "ALTER TABLE memories ADD COLUMN cloud_id TEXT"
+			case "device_id":
+				// Cloud Memory: device asal write (UUID per-install dari ~/.smara/device-id).
+				stmt = "ALTER TABLE memories ADD COLUMN device_id TEXT"
+			case "content_hash":
+				// Cloud Memory: sha256(content) untuk delta detection saat sync.
+				stmt = "ALTER TABLE memories ADD COLUMN content_hash TEXT"
 			}
 			if stmt != "" {
 				if _, err := s.db.Exec(stmt); err != nil {
-					return fmt.Errorf("gagal menambahkan kolom %s ke tabel memories: %w", col, err)
+					// Idempotency safety net: tolerate "duplicate column" errors that can
+					// occur on libSQL/embedded-replica when the column was already added
+					// remotely and synced to the local replica between our existence check
+					// and the ALTER. The column-exists check above handles the common case;
+					// this catch handles the race.
+					if !isDuplicateColumnErr(err) {
+						return fmt.Errorf("gagal menambahkan kolom %s ke tabel memories: %w", col, err)
+					}
 				}
 			}
 			// Verify the column was actually added
@@ -406,6 +504,93 @@ func (s *SQLiteStore) migrate() error {
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_categories_workspace ON categories(workspace_id)")
 	_, _ = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_memory_versions_memory ON memory_versions(memory_id)")
 
+	// Cloud Memory: partial unique index pada cloud_id. Partial WHERE clause memastikan
+	// banyak row pre-cloud (cloud_id IS NULL) tidak melanggar UNIQUE; sekaligus enforce
+	// dedup lintas-device untuk row yang sudah punya cloud_id (Requirements 6.1, 8.1).
+	if _, err := s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_cloud_id ON memories(cloud_id) WHERE cloud_id IS NOT NULL"); err != nil {
+		return fmt.Errorf("gagal membuat unique index idx_memories_cloud_id: %w", err)
+	}
+
+	// 6. Cloud Memory: create cloud_databases table for 1:1 mapping workspace ↔ remote DB.
+	// UNIQUE constraint on workspace_id enforces one Remote_Database per Workspace
+	// (Requirements 5.1, 5.4, 6.3). Strictly additive — CREATE TABLE IF NOT EXISTS is
+	// idempotent so re-running migrate() leaves an existing table untouched.
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS cloud_databases (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			workspace_id INTEGER NOT NULL UNIQUE,
+			provider TEXT NOT NULL,
+			db_name TEXT NOT NULL,
+			db_url TEXT NOT NULL,
+			region TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_sync_at DATETIME,
+			last_frame_no INTEGER DEFAULT 0,
+			FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+		)`); err != nil {
+		return fmt.Errorf("gagal membuat tabel cloud_databases: %w", err)
+	}
+
+	// 7. Cloud Memory: create cloud_conflicts table to record divergent versions
+	// detected during pull. resolved_at IS NULL means the conflict still needs human
+	// or policy-driven resolution; the partial index keeps that hot path cheap
+	// (Requirements 4.4, 6.3, 12.4). DDL is strictly additive — CREATE TABLE/INDEX
+	// IF NOT EXISTS is idempotent so re-running migrate() leaves existing data intact.
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS cloud_conflicts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			memory_id INTEGER NOT NULL,
+			local_version INTEGER NOT NULL,
+			remote_version INTEGER NOT NULL,
+			local_content TEXT NOT NULL,
+			remote_content TEXT NOT NULL,
+			local_updated_at DATETIME NOT NULL,
+			remote_updated_at DATETIME NOT NULL,
+			detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			resolved_at DATETIME,
+			resolution TEXT,
+			FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+		)`); err != nil {
+		return fmt.Errorf("gagal membuat tabel cloud_conflicts: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_cloud_conflicts_unresolved ON cloud_conflicts(resolved_at) WHERE resolved_at IS NULL`); err != nil {
+		return fmt.Errorf("gagal membuat index idx_cloud_conflicts_unresolved: %w", err)
+	}
+
+	// 8. Cloud Memory: extend sync_log with attempted_at and error columns for delta
+	// tracking (Requirements 2.5, 6.3). The base CREATE TABLE in Init() already
+	// declares status/synced_at; here we additively add columns the cloud worker
+	// needs (attempted_at = first push attempt timestamp, error = last failure
+	// message). Strictly additive ALTERs keep the migration idempotent and safe
+	// for both fresh installs and pre-existing local-only databases.
+	syncLogCols := []struct {
+		name string
+		ddl  string
+	}{
+		{"attempted_at", "ALTER TABLE sync_log ADD COLUMN attempted_at DATETIME"},
+		{"error", "ALTER TABLE sync_log ADD COLUMN error TEXT"},
+	}
+	for _, c := range syncLogCols {
+		exists, err := columnExists("sync_log", c.name)
+		if err != nil {
+			return fmt.Errorf("gagal cek kolom sync_log.%s: %w", c.name, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.Exec(c.ddl); err != nil {
+			if !isDuplicateColumnErr(err) {
+				return fmt.Errorf("gagal menambahkan kolom sync_log.%s: %w", c.name, err)
+			}
+		}
+	}
+	// Index status + attempted_at supports the worker poll
+	// `WHERE status='pending' ORDER BY attempted_at ASC`. CREATE INDEX IF NOT EXISTS
+	// makes the migration idempotent.
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_status_attempted ON sync_log(status, attempted_at)`); err != nil {
+		return fmt.Errorf("gagal membuat index idx_sync_log_status_attempted: %w", err)
+	}
+
 	return nil
 }
 
@@ -457,6 +642,23 @@ func (s *SQLiteStore) Save(content, tags, source string, workspaceID int64, embe
 }
 
 // SaveWithOptions stores a new memory with full options including category, metadata, and TTL.
+//
+// When the store was opened with cloud enabled (StoreOptions.CloudEnabled == true),
+// SaveWithOptions also stamps the cross-device cloud fields on the new row:
+//
+//   - cloud_id     — fresh UUID v7 (monotonic) so the row can be deduped across devices
+//   - device_id    — s.deviceID, identifying which install authored the row
+//   - content_hash — lowercase hex sha256(content), used as the delta marker
+//
+// In the cloud-enabled path it additionally inserts a `sync_log` row with
+// status='pending' and attempted_at=now, so the background sync worker can find
+// the new write and replicate it (Requirement 2.5). The local memories INSERT
+// commits to the WAL before this function returns, independent of any remote
+// acknowledgement (Requirements 2.1, 2.2).
+//
+// When cloud is disabled the behaviour is identical to the historical local-only
+// implementation: cloud columns stay NULL and no sync_log row is written
+// (Requirement 17.1, 17.2).
 func (s *SQLiteStore) SaveWithOptions(content, tags, source string, workspaceID int64, embedding []float32, categoryID *int64, metadata map[string]interface{}, expiresAt *time.Time) (*Memory, error) {
 	var embBlob []byte
 	if len(embedding) > 0 {
@@ -514,11 +716,28 @@ func (s *SQLiteStore) SaveWithOptions(content, tags, source string, workspaceID 
 
 	now := time.Now()
 
+	// Cloud Memory: generate per-write metadata only when the store was opened
+	// with cloud enabled. Local-only mode leaves these as NULL strings so the
+	// existing INSERT shape and behaviour remain identical (Requirement 17.1).
+	var cloudID, deviceID, contentHash sql.NullString
+	if s.cloudEnabled {
+		// UUID v7 carries an embedded timestamp so cloud_ids are monotonic per
+		// device, which keeps replication ordering stable across nodes.
+		uid, err := uuid.NewV7()
+		if err != nil {
+			return nil, fmt.Errorf("gagal generate cloud_id (UUID v7): %w", err)
+		}
+		sum := sha256.Sum256([]byte(content))
+		cloudID = sql.NullString{String: uid.String(), Valid: true}
+		deviceID = sql.NullString{String: s.deviceID, Valid: s.deviceID != ""}
+		contentHash = sql.NullString{String: hex.EncodeToString(sum[:]), Valid: true}
+	}
+
 	result, err := s.db.Exec(
-		`INSERT INTO memories 
-		(content, embedding, tags, source, metadata, created_at, updated_at, expires_at, category_id, version, workspace_id) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		content, embBlob, tagsJSON, source, metadataJSON, now, now, expAt, catID, 1, wID,
+		`INSERT INTO memories
+		(content, embedding, tags, source, metadata, created_at, updated_at, expires_at, category_id, version, workspace_id, cloud_id, device_id, content_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		content, embBlob, tagsJSON, source, metadataJSON, now, now, expAt, catID, 1, wID, cloudID, deviceID, contentHash,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gagal menyimpan memory: %w", err)
@@ -532,6 +751,22 @@ func (s *SQLiteStore) SaveWithOptions(content, tags, source string, workspaceID 
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		id, content, metadataJSON, "system", "initial creation", now,
 	)
+
+	// Cloud Memory: queue the new row for background replication. We INSERT into
+	// sync_log with status='pending' so the sync worker can pick it up on its
+	// next tick (Requirement 2.5). delta_hash is set to the row's content_hash
+	// so the worker has the marker it needs without recomputing sha256.
+	// Failure here is non-fatal: the local commit already succeeded, and the
+	// next reconcile pass will re-detect the unsynced row via cloud_id absence
+	// from sync_log. Logging keeps surprises visible without breaking writes.
+	if s.cloudEnabled {
+		if _, syncErr := s.db.Exec(
+			`INSERT INTO sync_log (memory_id, delta_hash, status, attempted_at) VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)`,
+			id, contentHash.String,
+		); syncErr != nil {
+			fmt.Printf("Warning: gagal menulis sync_log untuk memory id=%d: %v\n", id, syncErr)
+		}
+	}
 
 	return &Memory{
 		ID:          id,
@@ -1393,4 +1628,17 @@ func formatTagsToJSON(tags []string) string {
 		return "[]"
 	}
 	return string(data)
+}
+
+// isDuplicateColumnErr reports whether err originates from an ALTER TABLE ADD COLUMN
+// that targets a column name already present in the table. SQLite (modernc.org/sqlite)
+// surfaces this as "duplicate column name: <name>"; libSQL/Turso replicas surface a
+// similar message. We match on the canonical substring so the migration stays idempotent
+// even when an ALTER is racing against schema replication on an embedded replica.
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column")
 }

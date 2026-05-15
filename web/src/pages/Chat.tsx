@@ -2,9 +2,196 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Send, Bot, User, RefreshCw, Plus, Trash2, MessageSquare, Clock,
   Zap, ClipboardList, FlaskConical, ArrowRightLeft, MessageCircle,
-  CheckCircle2, BrainCircuit,
+  CheckCircle2, BrainCircuit, Copy, Check, X,
+  Paperclip, FileText, FileCode, FileJson, File as FileIcon, Upload,
+  Terminal, ChevronDown, ChevronRight, Loader2, AlertCircle, Wrench,
 } from 'lucide-react'
 import type { ChatMessage } from '../api'
+import { uploadClipboardImage, uploadAttachment } from '../api'
+
+type Attachment = {
+  path: string
+  size: number
+  kind: 'image' | 'file'
+  name: string
+  preview?: string // dataURL only for images
+  mime?: string
+}
+
+function attachmentIcon(name: string, mime?: string) {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  if (mime?.startsWith('text/') || ['txt', 'md', 'log', 'rst'].includes(ext)) return FileText
+  if (['json', 'yaml', 'yml', 'toml', 'xml'].includes(ext)) return FileJson
+  if (['go', 'ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'java', 'c', 'cpp', 'h', 'sh'].includes(ext)) return FileCode
+  if (mime === 'application/pdf' || ext === 'pdf') return FileText
+  return FileIcon
+}
+
+// Tools whose primary purpose is to mutate the filesystem or remote state.
+// We use this to pick a color and icon for the card chrome.
+const WRITE_TOOLS = new Set(['edit_file', 'write_file', 'create_file', 'rm', 'remove_file'])
+const SHELL_TOOLS = new Set(['run_command', 'ssh_exec'])
+
+function toolKind(tool?: string): 'shell' | 'write' | 'read' | 'tool' {
+  if (!tool) return 'tool'
+  if (SHELL_TOOLS.has(tool)) return 'shell'
+  if (WRITE_TOOLS.has(tool)) return 'write'
+  if (tool.startsWith('read_') || tool === 'list_directory' || tool === 'search_path') return 'read'
+  return 'tool'
+}
+
+function describeToolCall(msg: ChatMessage): { title: string; subtitle?: string } {
+  const tool = msg.tool || 'tool'
+  const args = msg.args || {}
+  switch (tool) {
+    case 'run_command': {
+      const cmd = String(args.command ?? '')
+      return { title: 'run_command', subtitle: cmd }
+    }
+    case 'ssh_exec': {
+      const host = String(args.host ?? '')
+      const cmd = String(args.command ?? '')
+      return { title: `ssh ${host}`, subtitle: cmd }
+    }
+    case 'read_file':
+    case 'edit_file':
+    case 'write_file': {
+      const path = String(args.path ?? '')
+      return { title: tool, subtitle: path }
+    }
+    case 'search_path': {
+      const q = String(args.query ?? '')
+      return { title: 'search_path', subtitle: q }
+    }
+    default: {
+      // Fall back to first short string arg
+      const first = Object.values(args).find(v => typeof v === 'string' && v.length < 200)
+      return { title: tool, subtitle: typeof first === 'string' ? first : undefined }
+    }
+  }
+}
+
+function ToolCallCard({
+  msg,
+  onToggle,
+  onCopy,
+  copied,
+}: {
+  msg: ChatMessage
+  onToggle: () => void
+  onCopy: (text: string) => void
+  copied: boolean
+}) {
+  const kind = toolKind(msg.tool)
+  const { title, subtitle } = describeToolCall(msg)
+  const status = msg.status || 'running'
+  const logs = msg.logs || []
+  const hasOutput = !!msg.output && msg.output.trim().length > 0
+  const collapsed = msg.collapsed ?? false
+  const hasBody = logs.length > 0 || hasOutput
+
+  const accent =
+    kind === 'shell' ? 'border-cyan-700/50 bg-cyan-950/20'
+    : kind === 'write' ? 'border-amber-700/50 bg-amber-950/20'
+    : kind === 'read' ? 'border-emerald-700/50 bg-emerald-950/20'
+    : 'border-gray-700/50 bg-gray-900/40'
+
+  const titleColor =
+    kind === 'shell' ? 'text-cyan-300'
+    : kind === 'write' ? 'text-amber-300'
+    : kind === 'read' ? 'text-emerald-300'
+    : 'text-gray-300'
+
+  const Icon = kind === 'shell' ? Terminal : kind === 'write' || kind === 'read' ? FileText : Wrench
+
+  return (
+    <div className={`ml-11 rounded-lg border ${accent} overflow-hidden`}>
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          onClick={onToggle}
+          disabled={!hasBody}
+          className="text-gray-400 hover:text-white transition-colors disabled:opacity-40"
+          aria-label={collapsed ? 'Expand' : 'Collapse'}
+        >
+          {!hasBody ? (
+            <span className="w-3.5 inline-block" />
+          ) : collapsed ? (
+            <ChevronRight className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5" />
+          )}
+        </button>
+        <Icon className={`w-3.5 h-3.5 ${titleColor} shrink-0`} />
+        <span className={`text-xs font-medium ${titleColor}`}>{title}</span>
+        {msg.server && (
+          <span className="text-[10px] text-gray-500 font-mono">[{msg.server}]</span>
+        )}
+        {subtitle && (
+          <span className="text-xs text-gray-300 font-mono truncate flex-1 min-w-0" title={subtitle}>
+            {subtitle}
+          </span>
+        )}
+        <div className="flex items-center gap-1 ml-auto shrink-0">
+          {status === 'running' && (
+            <span className="flex items-center gap-1 text-[10px] text-cyan-400">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>running</span>
+            </span>
+          )}
+          {status === 'done' && (
+            <span className="flex items-center gap-1 text-[10px] text-green-400">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>done</span>
+            </span>
+          )}
+          {status === 'error' && (
+            <span className="flex items-center gap-1 text-[10px] text-red-400">
+              <AlertCircle className="w-3 h-3" />
+              <span>error</span>
+            </span>
+          )}
+          {subtitle && (
+            <button
+              onClick={() => onCopy(subtitle)}
+              className="ml-1 text-gray-500 hover:text-white transition-colors"
+              title="Salin command"
+            >
+              {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Body — terminal-style stream + final result */}
+      {!collapsed && hasBody && (
+        <div className="border-t border-gray-800 bg-black/40 px-3 py-2 max-h-72 overflow-y-auto font-mono text-[11px] leading-snug">
+          {logs.length > 0 && (
+            <pre className="whitespace-pre-wrap text-gray-200">
+              {logs.join('\n')}
+            </pre>
+          )}
+          {hasOutput && logs.length === 0 && (
+            <pre className="whitespace-pre-wrap text-gray-300">
+              {(msg.output || '').slice(0, 4000)}
+              {(msg.output || '').length > 4000 && (
+                <span className="text-gray-500">{`\n[... ${(msg.output || '').length - 4000} chars truncated ...]`}</span>
+              )}
+            </pre>
+          )}
+          {hasOutput && logs.length > 0 && msg.output && msg.output.trim() !== logs.join('\n').trim() && (
+            <details className="mt-2 text-gray-400">
+              <summary className="cursor-pointer text-[10px] text-gray-500 hover:text-gray-300">
+                full result ({msg.output.length} chars)
+              </summary>
+              <pre className="mt-1 whitespace-pre-wrap">{msg.output}</pre>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const spinnerFrames = ['\u280B','\u2819','\u2839','\u2838','\u283C','\u2834','\u2826','\u2827','\u2807','\u280F']
 
@@ -34,8 +221,110 @@ function getAllSessions(): ChatSession[] {
   } catch { return [] }
 }
 
+// Per-message size caps. Persisting raw data (image base64 previews, full
+// command output, multi-thousand-line logs) blows up the localStorage quota
+// and crashes the SPA on the next page load. We slim heavy fields here.
+const MAX_MESSAGES_PER_SESSION = 200
+const MAX_SESSIONS = 20
+const MAX_OUTPUT_CHARS = 4000
+const MAX_LOG_LINES = 50
+// Hard ceiling on a single serialized session. If a session would exceed
+// this, we keep only the most recent messages until it fits.
+const MAX_SESSION_BYTES = 800 * 1024
+
+// slimMessage strips fields that don't need to survive a refresh.
+// The runtime versions in React state still hold the full data.
+function slimMessage(m: ChatMessage): ChatMessage {
+  const out: ChatMessage = {
+    ...m,
+    timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+  }
+  if (out.attachments && out.attachments.length > 0) {
+    out.attachments = out.attachments.map(a => ({
+      path: a.path,
+      size: a.size,
+      kind: a.kind,
+      name: a.name,
+      // Drop the base64 preview — it can be hundreds of KB per image.
+    }))
+  }
+  if (out.output && out.output.length > MAX_OUTPUT_CHARS) {
+    out.output = out.output.slice(0, MAX_OUTPUT_CHARS) + `\n[... ${out.output.length - MAX_OUTPUT_CHARS} chars truncated for storage ...]`
+  }
+  if (out.logs && out.logs.length > MAX_LOG_LINES) {
+    const dropped = out.logs.length - MAX_LOG_LINES
+    out.logs = [`[... ${dropped} earlier lines truncated for storage ...]`, ...out.logs.slice(-MAX_LOG_LINES)]
+  }
+  return out
+}
+
+function rawSetItem(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// setItemSafe writes to localStorage with progressive fallback when the
+// browser quota fills up. Strategy:
+//   1. Try the write. If it succeeds, done.
+//   2. If quota is exceeded, drop the oldest session and retry.
+//   3. Repeat until either it fits or we have only the current session left.
+//   4. As a last resort, clear our keys and warn — never crash the SPA.
+function setItemSafe(key: string, value: string): boolean {
+  if (rawSetItem(key, value)) return true
+
+  // Drop oldest sessions one at a time and retry.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    let sessions: ChatSession[] = []
+    try {
+      const raw = localStorage.getItem(SESSION_META_KEY)
+      if (raw) sessions = JSON.parse(raw)
+    } catch {
+      sessions = []
+    }
+    if (sessions.length <= 1) break
+    sessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    sessions.pop() // drop the oldest
+    if (!rawSetItem(SESSION_META_KEY, JSON.stringify(sessions))) {
+      // The metadata write itself failed — delete it outright.
+      try { localStorage.removeItem(SESSION_META_KEY) } catch { /* ignore */ }
+    }
+    if (rawSetItem(key, value)) return true
+  }
+
+  // Last resort: nuke our keys and accept losing chat history rather
+  // than crash the React tree.
+  try { localStorage.removeItem(SESSION_META_KEY) } catch { /* ignore */ }
+  try { localStorage.removeItem(CURRENT_SESSION_KEY) } catch { /* ignore */ }
+  if (rawSetItem(key, value)) return true
+
+  console.warn('[smara] localStorage penuh — tidak bisa menyimpan riwayat. Buka /?reset untuk membersihkan.')
+  return false
+}
+
+// trimSessionToFit aggressively drops oldest messages from a session until
+// the serialized form is below MAX_SESSION_BYTES. Guarantees we don't try
+// to persist a single session that's larger than the entire quota.
+function trimSessionToFit(s: ChatSession): ChatSession {
+  let messages = s.messages
+  let serialized = JSON.stringify({ ...s, messages })
+  while (serialized.length > MAX_SESSION_BYTES && messages.length > 5) {
+    // Drop in chunks of 10 to make this fast for very large sessions.
+    const drop = Math.min(10, Math.max(1, messages.length - 5))
+    messages = messages.slice(drop)
+    serialized = JSON.stringify({ ...s, messages })
+  }
+  return { ...s, messages }
+}
+
 function saveAllSessions(sessions: ChatSession[]) {
-  localStorage.setItem(SESSION_META_KEY, JSON.stringify(sessions))
+  // Cap session count and trim each session before serializing so we don't
+  // try to persist a 5 MB blob into a 5 MB quota.
+  const capped = sessions.slice(0, MAX_SESSIONS).map(trimSessionToFit)
+  setItemSafe(SESSION_META_KEY, JSON.stringify(capped))
 }
 
 function createSession(): ChatSession {
@@ -48,7 +337,7 @@ function createSession(): ChatSession {
   }
   const sessions = [session, ...getAllSessions()]
   saveAllSessions(sessions)
-  localStorage.setItem(CURRENT_SESSION_KEY, id)
+  setItemSafe(CURRENT_SESSION_KEY, id)
   return session
 }
 
@@ -63,7 +352,7 @@ function loadCurrentSession(): ChatSession {
     }
   }
   if (sessions.length > 0) {
-    localStorage.setItem(CURRENT_SESSION_KEY, sessions[0].id)
+    setItemSafe(CURRENT_SESSION_KEY, sessions[0].id)
     return {
       ...sessions[0],
       messages: sessions[0].messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))
@@ -75,10 +364,15 @@ function loadCurrentSession(): ChatSession {
 function saveSession(id: string, messages: ChatMessage[]) {
   const sessions = getAllSessions()
   const idx = sessions.findIndex(s => s.id === id)
+  // Cap to the most recent N messages and slim each before persisting.
+  const slim = messages.slice(-MAX_MESSAGES_PER_SESSION).map(slimMessage)
   const updated: ChatSession = {
     id,
     name: idx >= 0 ? sessions[idx].name : ('Chat ' + new Date().toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })),
-    messages: messages.map(m => ({ ...m, timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp })),
+    messages: slim.map(m => ({
+      ...m,
+      timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+    })),
     updatedAt: new Date().toISOString(),
   }
   if (idx >= 0) sessions[idx] = updated
@@ -99,6 +393,13 @@ export default function Chat() {
   const [spinnerIdx, setSpinnerIdx] = useState(0)
   const [statusStats, setStatusStats] = useState<{ prompts: number; tokens: number; duration: string; cost: number } | null>(null)
   const [activePhases, setActivePhases] = useState<Array<{ phase: string; description: string; status: 'running' | 'done' }>>([])
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const dragCounterRef = useRef(0)
   const wsRef = useRef<WebSocket | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -111,7 +412,7 @@ export default function Chat() {
     saveSession(sessionId, messages)
     setCurrentRaw(s)
     setSessionId(s.id)
-    localStorage.setItem(CURRENT_SESSION_KEY, s.id)
+    setItemSafe(CURRENT_SESSION_KEY, s.id)
     setMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })))
   }
 
@@ -119,10 +420,15 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, thinking])
 
-  // Persist messages to localStorage whenever they change
+  // Persist messages to localStorage whenever they change.
+  // Wrap in try/catch so a stray quota error doesn't unmount the tree.
   useEffect(() => {
-    saveSession(sessionId, messages)
-    setSessions(getAllSessions())
+    try {
+      saveSession(sessionId, messages)
+      setSessions(getAllSessions())
+    } catch (err) {
+      console.warn('[smara] persist session gagal:', err)
+    }
   }, [messages, sessionId])
 
   const newSession = () => {
@@ -146,7 +452,7 @@ export default function Chat() {
         const next = all[0]
         setCurrentRaw(next)
         setSessionId(next.id)
-        localStorage.setItem(CURRENT_SESSION_KEY, next.id)
+        setItemSafe(CURRENT_SESSION_KEY, next.id)
         setMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })))
       }
       else newSession()
@@ -213,13 +519,57 @@ export default function Chat() {
           })
           break
         case 'tool_call':
-          setMessages(prev => [...prev, { role: 'tool_call', content: `\u25B6 ${msg.server ? `[${msg.server}] ` : ''}${msg.tool}`, tool: msg.tool, server: msg.server, timestamp: new Date() }])
+          setMessages(prev => [...prev, {
+            role: 'tool_call',
+            content: msg.tool || 'tool',
+            tool: msg.tool,
+            server: msg.server,
+            args: msg.args,
+            logs: [],
+            status: 'running',
+            collapsed: false,
+            timestamp: new Date(),
+          }])
           break
         case 'tool_result':
-          setMessages(prev => [...prev, { role: 'tool_result', content: msg.output ? msg.output.slice(0, 300) : '', output: msg.output, timestamp: new Date() }])
+          setMessages(prev => {
+            // Attach result to the most recent running tool_call card.
+            const next = [...prev]
+            for (let i = next.length - 1; i >= 0; i--) {
+              if (next[i].role === 'tool_call' && next[i].status === 'running') {
+                next[i] = {
+                  ...next[i],
+                  output: msg.output,
+                  status: 'done',
+                  // Auto-collapse cards with bulky output to reduce noise.
+                  collapsed: (next[i].logs?.length || 0) > 6,
+                }
+                return next
+              }
+            }
+            // No open card — surface as a standalone block (rare).
+            next.push({ role: 'tool_result', content: '', output: msg.output, timestamp: new Date() })
+            return next
+          })
           break
         case 'log':
-          setMessages(prev => [...prev, { role: 'log', content: msg.payload, timestamp: new Date() }])
+          setMessages(prev => {
+            const next = [...prev]
+            // Terminal logs from run_command stream into the most recent
+            // running tool_call card. Other logs (system / explore) stay
+            // as standalone rows.
+            if ((msg.role === 'Terminal' || msg.role === 'terminal') && msg.payload !== undefined) {
+              for (let i = next.length - 1; i >= 0; i--) {
+                if (next[i].role === 'tool_call' && next[i].status === 'running') {
+                  const logs = [...(next[i].logs || []), msg.payload]
+                  next[i] = { ...next[i], logs }
+                  return next
+                }
+              }
+            }
+            next.push({ role: 'log', content: msg.payload, timestamp: new Date() })
+            return next
+          })
           break
         case 'mode':
           setMode(msg.mode || 'ask')
@@ -248,19 +598,40 @@ export default function Chat() {
 
   const send = useCallback(() => {
     const text = input.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
+
+    // Inject [image:/path] or [file:/path] tokens — same convention used by
+    // the TUI Ctrl+V flow and the Telegram/Discord adapters. The web backend
+    // tacks on a steer hint for the agent to call analyze_image / read_file.
+    const refs = attachments
+      .map(a => `[${a.kind}:${a.path}]`)
+      .join(' ')
+    const messageText = [refs, text].filter(Boolean).join(' ')
+
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setMessages(prev => [...prev, { role: 'user', content: text, timestamp: new Date() }])
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: messageText,
+        timestamp: new Date(),
+        attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
+      }])
       setInput('')
+      setAttachments([])
       connectWs()
       return
     }
 
-    setMessages(prev => [...prev, { role: 'user', content: text, timestamp: new Date() }])
+    setMessages(prev => [...prev, {
+      role: 'user',
+      content: messageText,
+      timestamp: new Date(),
+      attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
+    }])
     setInput('')
-    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode }))
+    setAttachments([])
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: messageText, mode }))
     setThinking(true)
-  }, [input, connectWs, mode])
+  }, [input, attachments, connectWs, mode])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -269,8 +640,136 @@ export default function Chat() {
     }
   }
 
+  const showToast = (msg: string) => {
+    setToast(msg)
+    window.setTimeout(() => setToast(null), 2500)
+  }
+
+  const uploadFile = useCallback(async (file: File) => {
+    setUploading(true)
+    try {
+      if (file.type.startsWith('image/')) {
+        // Read as dataURL for inline preview AND for the lightweight
+        // /api/clipboard/upload endpoint (handles base64 directly).
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result))
+          reader.onerror = () => reject(reader.error)
+          reader.readAsDataURL(file)
+        })
+        const res = await uploadClipboardImage(dataUrl)
+        setAttachments(prev => [...prev, {
+          path: res.path,
+          size: res.size,
+          kind: 'image',
+          name: file.name || 'pasted-image.png',
+          preview: dataUrl,
+          mime: file.type,
+        }])
+        showToast(`📎 ${(res.size / 1024).toFixed(0)} KB → ${res.path.split('/').pop()}`)
+        return
+      }
+      // Documents and everything else go through multipart.
+      const res = await uploadAttachment(file)
+      setAttachments(prev => [...prev, {
+        path: res.path,
+        size: res.size,
+        kind: res.kind,
+        name: res.name || file.name,
+        mime: res.mime || file.type,
+      }])
+      showToast(`📎 ${(res.size / 1024).toFixed(0)} KB → ${res.path.split('/').pop()}`)
+    } catch (err) {
+      showToast(`Upload gagal: ${err instanceof Error ? err.message : 'unknown'}`)
+    } finally {
+      setUploading(false)
+    }
+  }, [])
+
+  const uploadFiles = useCallback(async (files: FileList | File[]) => {
+    for (const f of Array.from(files)) {
+      await uploadFile(f)
+    }
+  }, [uploadFile])
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items || [])
+    const fileItems = items.filter(it => it.kind === 'file')
+    if (fileItems.length === 0) return // fall through to default text paste
+    e.preventDefault()
+    const files: File[] = []
+    for (const it of fileItems) {
+      const f = it.getAsFile()
+      if (f) files.push(f)
+    }
+    if (files.length > 0) await uploadFiles(files)
+  }, [uploadFiles])
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) uploadFiles(files)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  // Drag-drop handlers — counter pattern avoids flicker on child enter/leave.
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return
+    e.preventDefault()
+    dragCounterRef.current += 1
+    setDragOver(true)
+  }
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragCounterRef.current -= 1
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0
+      setDragOver(false)
+    }
+  }
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return
+    e.preventDefault()
+  }
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    dragCounterRef.current = 0
+    setDragOver(false)
+    const files = e.dataTransfer.files
+    if (files && files.length > 0) await uploadFiles(files)
+  }
+
+  const removeAttachment = (idx: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const copyMessage = async (idx: number, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedIdx(idx)
+      window.setTimeout(() => setCopiedIdx(c => (c === idx ? null : c)), 1500)
+    } catch {
+      showToast('Browser menolak akses clipboard')
+    }
+  }
+
+  const toggleCard = (idx: number) => {
+    setMessages(prev => {
+      const next = [...prev]
+      if (next[idx]) {
+        next[idx] = { ...next[idx], collapsed: !next[idx].collapsed }
+      }
+      return next
+    })
+  }
+
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full relative"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* Header */}
       <div className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-900/50">
         <div className="flex items-center gap-2">
@@ -346,44 +845,93 @@ export default function Chat() {
         {messages.map((msg, i) => {
           if (msg.role === 'tool_call') {
             return (
-              <div key={i} className="flex items-center gap-2 text-xs text-gray-500 px-2 pl-4 border-l-2 border-gray-700">
-                <span className="text-cyan-400">{msg.content}</span>
-              </div>
+              <ToolCallCard
+                key={i}
+                msg={msg}
+                onToggle={() => toggleCard(i)}
+                onCopy={(text) => copyMessage(i, text)}
+                copied={copiedIdx === i}
+              />
             )
           }
           if (msg.role === 'tool_result') {
+            // Standalone tool_result (no preceding open card) — render as a
+            // compact muted block. The common case is rendered inside the
+            // ToolCallCard above.
             return (
-              <div key={i} className="text-xs text-gray-600 px-2 pl-4 border-l-2 border-gray-700 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                {msg.content}
+              <div key={i} className="ml-11 px-3 py-2 bg-gray-900/40 border border-gray-800 rounded text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
+                {msg.output || msg.content}
               </div>
             )
           }
           if (msg.role === 'log') {
             return (
-              <div key={i} className="flex items-center gap-2 text-xs text-gray-500 px-2">
+              <div key={i} className="flex items-center gap-2 text-xs text-gray-500 px-2 ml-11">
                 <span className="text-gray-600">&#9654;</span>
                 <span>{msg.content}</span>
               </div>
             )
           }
           return (
-            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+            <div key={i} className={`flex gap-3 group ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                 msg.role === 'user' ? 'bg-smara-700' : 'bg-gray-700'
               }`}>
                 {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-300" />}
               </div>
-              <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm leading-relaxed ${
+              <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm leading-relaxed relative ${
                 msg.role === 'user'
                   ? 'bg-smara-700/30 border border-smara-700/50'
                   : msg.role === 'error'
                   ? 'bg-red-900/30 border border-red-700/50 text-red-200'
                   : 'bg-gray-800/50 border border-gray-700/50'
               }`}>
+                {msg.attachments && msg.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {msg.attachments.map((att, ai) => {
+                      const Icon = attachmentIcon(att.name || att.path, undefined)
+                      return (
+                        <div key={ai} className="relative group/att">
+                          {att.kind === 'image' && att.preview ? (
+                            <img
+                              src={att.preview}
+                              alt={att.path}
+                              className="max-h-32 rounded border border-gray-700"
+                            />
+                          ) : (
+                            <div className="flex items-center gap-2 px-2 py-2 bg-gray-900/60 border border-gray-700 rounded">
+                              <Icon className="w-5 h-5 text-smara-300 shrink-0" />
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-xs text-gray-200 truncate max-w-[200px]">
+                                  {att.name || att.path.split('/').pop()}
+                                </span>
+                                <span className="text-[10px] text-gray-500 font-mono">
+                                  {(att.size / 1024).toFixed(0)} KB
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          {att.kind === 'image' && (
+                            <div className="text-[10px] text-gray-500 mt-0.5 font-mono truncate max-w-[200px]">
+                              {(att.size / 1024).toFixed(0)} KB
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
                 <div className="whitespace-pre-wrap">{msg.content}</div>
                 <div className="text-[10px] text-gray-500 mt-1 text-right">
                   {new Date(msg.timestamp).toLocaleTimeString()}
                 </div>
+                <button
+                  onClick={() => copyMessage(i, msg.content)}
+                  title="Salin pesan"
+                  className={`absolute -top-2 ${msg.role === 'user' ? '-left-2' : '-right-2'} w-6 h-6 rounded-md bg-gray-800 border border-gray-700 hover:bg-gray-700 hover:border-smara-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity`}
+                >
+                  {copiedIdx === i ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-gray-400" />}
+                </button>
               </div>
             </div>
           )
@@ -469,24 +1017,85 @@ export default function Chat() {
             )
           })}
         </div>
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {attachments.map((att, i) => {
+              const Icon = attachmentIcon(att.name, att.mime)
+              return (
+                <div key={i} className="relative group inline-flex items-center gap-2 pl-1 pr-2 py-1 bg-gray-800/80 border border-gray-700 rounded">
+                  {att.kind === 'image' && att.preview ? (
+                    <img src={att.preview} alt="" className="h-8 w-8 object-cover rounded" />
+                  ) : (
+                    <div className="h-8 w-8 flex items-center justify-center bg-gray-900/60 rounded">
+                      <Icon className="w-4 h-4 text-smara-300" />
+                    </div>
+                  )}
+                  <span className="text-xs text-gray-300 font-mono truncate max-w-[160px]" title={att.path}>
+                    {att.name}
+                  </span>
+                  <span className="text-[10px] text-gray-500">{(att.size / 1024).toFixed(0)} KB</span>
+                  <button
+                    onClick={() => removeAttachment(i)}
+                    className="ml-1 text-gray-500 hover:text-red-400 transition-colors"
+                    title="Hapus lampiran"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
         <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFilePick}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Lampirkan file (gambar, PDF, dokumen, kode)"
+            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-smara-500 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <Paperclip className="w-4 h-4 text-gray-400" />
+          </button>
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ketik pesan... (Enter untuk kirim)"
+            onPaste={handlePaste}
+            placeholder={uploading ? 'Mengunggah...' : 'Ketik pesan... (Enter kirim · Ctrl+V paste · drop file untuk lampirkan)'}
             className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-smara-500 min-h-[40px] max-h-[120px]"
             rows={1}
           />
           <button
             onClick={send}
-            disabled={!input.trim() || thinking}
+            disabled={(!input.trim() && attachments.length === 0) || thinking || uploading}
             className="px-3 py-2 bg-smara-600 hover:bg-smara-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
           >
             <Send className="w-4 h-4" />
           </button>
         </div>
       </div>
+
+      {dragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-smara-900/40 backdrop-blur-sm border-4 border-dashed border-smara-500 rounded-lg pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-smara-200">
+            <Upload className="w-12 h-12" />
+            <span className="text-lg font-semibold">Drop file untuk lampirkan</span>
+            <span className="text-xs text-smara-300/80">Gambar, PDF, dokumen, kode — max 25 MB</span>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg shadow-lg text-sm text-gray-200">
+          {toast}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,21 +1,22 @@
 package clipboard
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestWrite(t *testing.T) {
-	// Write writes to stdout — can't easily intercept, but we can ensure no panic
+	// Write emits OSC 52 to stdout and tries native clipboard. We can't
+	// intercept either reliably in tests, but it must not panic and must
+	// not return an error when at least one path succeeds.
 	assert.NoError(t, Write("hello"))
 }
 
 func TestRead(t *testing.T) {
-	// Read will timeout in most test environments without terminal OSC52 support
-	_, err := Read()
-	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "not supported"))
+	// Read shells out to xclip / wl-paste / pbpaste / clip.exe. In CI
+	// environments these may or may not be available — both outcomes are
+	// acceptable. The contract we care about is that Read does not panic
+	// and does not block the calling goroutine on stdin.
+	_, _ = Read()
 }

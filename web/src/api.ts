@@ -79,6 +79,49 @@ export interface ChatMessage {
   tool?: string
   server?: string
   output?: string
+  args?: Record<string, unknown>
+  // Tool-call cards collect streamed terminal output here so the UI can
+  // render a single collapsible block instead of one row per stdout line.
+  logs?: string[]
+  status?: 'running' | 'done' | 'error'
+  collapsed?: boolean
+  attachments?: Array<{ path: string; size: number; kind: 'image' | 'file'; name?: string; preview?: string }>
+}
+
+export interface UploadResponse {
+  path: string
+  size: number
+  source: string
+  kind: 'image' | 'file'
+  ref: string
+  name?: string
+  mime?: string
+}
+
+export async function uploadClipboardImage(dataUrl: string): Promise<UploadResponse> {
+  return fetchJSON<UploadResponse>('/api/clipboard/upload', {
+    method: 'POST',
+    body: JSON.stringify({ data_url: dataUrl }),
+  })
+}
+
+export async function uploadAttachment(file: File): Promise<UploadResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/attachments/upload', {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const raw = await res.text()
+    let message = raw || res.statusText
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed.error) message = parsed.error
+    } catch { /* ignore */ }
+    throw new APIError(message, res.status, raw)
+  }
+  return res.json() as Promise<UploadResponse>
 }
 
 export interface AgentSpec {

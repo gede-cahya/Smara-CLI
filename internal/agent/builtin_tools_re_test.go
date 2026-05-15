@@ -10,8 +10,12 @@ import (
 func TestAnalyzeBinary_ELF(t *testing.T) {
 	// Test against the built smara binary (likely ELF on Linux)
 	binPath := filepath.Join("..", "..", "bin", "smara")
-	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+	if info, err := os.Stat(binPath); os.IsNotExist(err) {
 		t.Skip("no binary found at ../../bin/smara")
+	} else if err != nil {
+		t.Fatalf("stat binary: %v", err)
+	} else if info.Size() > 50*1024*1024 {
+		t.Skipf("binary too large for analyzeBinaryFile safety cap: %d bytes", info.Size())
 	}
 
 	res, err := analyzeBinaryFile(binPath)

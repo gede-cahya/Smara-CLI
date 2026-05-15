@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	cloud "github.com/gede-cahya/Smara-CLI/internal/memory/cloud"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
 )
 
@@ -21,21 +23,43 @@ var memoryCmd = &cobra.Command{
 	Long:  "Lihat, cari, dan bersihkan memori yang tersimpan di database.",
 }
 
+// openMemoryStore returns a cloud-aware store when Cloud Memory is enabled,
+// otherwise the existing local-only SQLite store. Callers must defer closeFn.
+func openMemoryStore(ctx context.Context, cfg *config.SmaraConfig) (*memory.SQLiteStore, func() error, error) {
+	if cfg.CloudMemory.Enabled {
+		store, sm, err := memory.OpenStoreWithCloud(ctx, cfg, cloud.FromConfig(cfg.CloudMemory))
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, func() error {
+			if sm != nil {
+				_ = sm.Stop()
+			}
+			return store.Close()
+		}, nil
+	}
+	store, err := memory.NewSQLiteStore(cfg.DBPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, store.Close, nil
+}
+
 var memoryListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Tampilkan memori terbaru",
+	Use:     "list",
+	Short:   "Tampilkan memori terbaru",
 	Aliases: []string{"ls"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		wsID := cfg.ActiveWorkspaceID
-		
+
 		// Get filter flags
 		tagsStr, _ := cmd.Flags().GetString("tags")
 		source, _ := cmd.Flags().GetString("source")
@@ -92,24 +116,24 @@ var memoryListCmd = &cobra.Command{
 				content = content[:100] + "..."
 			}
 			fmt.Printf("  [%d] %s\n", m.ID, content)
-			
+
 			tagsStr := "-"
 			if len(m.Tags) > 0 {
 				tagsStr = strings.Join(m.Tags, ", ")
 			}
-			
+
 			info := fmt.Sprintf("tags=%s source=%s  %s",
 				tagsStr, m.Source,
 				m.CreatedAt.Format("2006-01-02 15:04"),
 			)
-			
+
 			if m.CategoryID != nil {
 				info = fmt.Sprintf("cat=%d %s", *m.CategoryID, info)
 			}
 			if m.ExpiresAt != nil {
 				info = fmt.Sprintf("expires=%s %s", m.ExpiresAt.Format("2006-01-02"), info)
 			}
-			
+
 			fmt.Printf("       %s\n", info)
 		}
 		fmt.Println()
@@ -122,11 +146,11 @@ var memoryClearCmd = &cobra.Command{
 	Short: "Hapus semua memori",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		if err := store.Clear(); err != nil {
 			return fmt.Errorf("gagal menghapus memori: %w", err)
@@ -144,11 +168,11 @@ var memorySearchCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := args[0]
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		// Use ollama with qwen3.6 model for embeddings
 		fmt.Printf("  Membuat embedding untuk query: '%s'...\n", query)
@@ -160,10 +184,10 @@ var memorySearchCmd = &cobra.Command{
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		wsID := cfg.ActiveWorkspaceID
-		
+
 		// Check if hybrid search is requested
 		hybrid, _ := cmd.Flags().GetBool("hybrid")
-		
+
 		var results []memory.SearchResult
 		if hybrid {
 			results, err = store.SearchHybrid(query, embedding, wsID, limit)
@@ -189,12 +213,12 @@ var memorySearchCmd = &cobra.Command{
 				content = content[:100] + "..."
 			}
 			fmt.Printf("  [%d] %s\n", r.Memory.ID, content)
-			
+
 			tagsStr := "-"
 			if len(r.Memory.Tags) > 0 {
 				tagsStr = strings.Join(r.Memory.Tags, ", ")
 			}
-			
+
 			if hybrid {
 				fmt.Printf("       relevansi: %.2f (vektor: %.2f) | tags=%s | source=%s | %s\n",
 					r.Score, r.Similarity, tagsStr, r.Memory.Source,
@@ -223,11 +247,11 @@ var memoryUpdateCmd = &cobra.Command{
 		}
 
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		// Get current memory
 		current, err := store.GetMemoryByID(id)
@@ -293,11 +317,11 @@ var memoryGetCmd = &cobra.Command{
 		}
 
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		mem, err := store.GetMemoryByID(id)
 		if err != nil {
@@ -335,11 +359,11 @@ var memoryCleanupCmd = &cobra.Command{
 	Short: "Hapus memori kadaluarsa dan bersihkan database",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
@@ -379,11 +403,11 @@ var memoryExportCmd = &cobra.Command{
 		includeMetadata, _ := cmd.Flags().GetBool("include-metadata")
 
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		options := memory.ExportOptions{
 			Format:            memory.ExportFormat(format),
@@ -425,11 +449,11 @@ var memoryImportCmd = &cobra.Command{
 		}
 
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		options := memory.ImportOptions{
 			SkipDuplicates: skipDuplicates,
@@ -456,11 +480,11 @@ var memoryHistoryCmd = &cobra.Command{
 		}
 
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		report, err := store.GetVersionHistory(id)
 		if err != nil {
@@ -489,11 +513,11 @@ var memoryRollbackCmd = &cobra.Command{
 		}
 
 		cfg := config.Get()
-		store, err := memory.NewSQLiteStore(cfg.DBPath)
+		store, closeStore, err := openMemoryStore(cmd.Context(), cfg)
 		if err != nil {
 			return fmt.Errorf("gagal membuka database: %w", err)
 		}
-		defer store.Close()
+		defer closeStore()
 
 		if err := store.RollbackMemory(id, versionID); err != nil {
 			return fmt.Errorf("gagal rollback memori: %w", err)
@@ -550,4 +574,3 @@ func init() {
 		memoryGraphCmd,
 	)
 }
-

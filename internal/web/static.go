@@ -128,7 +128,17 @@ func serveData(w http.ResponseWriter, r *http.Request, filename string, data []b
 			w.Header().Del("Content-Encoding")
 		}
 	}
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	// HTML must NEVER be cached — it carries the script tags pointing at
+	// hashed asset filenames. If the browser caches HTML, it keeps loading
+	// the old asset hashes after a rebuild and never picks up new code.
+	// Hashed assets themselves are immutable, so cache them aggressively.
+	if strings.HasSuffix(filename, ".html") || filename == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
 }

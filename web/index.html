@@ -4,6 +4,37 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Smara Web</title>
+  <script>
+    // Inline guard: runs before the React bundle so a localStorage quota
+    // error from a stale cached bundle can't keep the page blank.
+    (function () {
+      try {
+        if (location.search.indexOf('reset') !== -1) {
+          Object.keys(localStorage).forEach(function (k) {
+            if (k.indexOf('smara_') === 0) localStorage.removeItem(k);
+          });
+          history.replaceState(null, '', location.pathname);
+        }
+      } catch (e) { /* ignore */ }
+
+      window.addEventListener('error', function (ev) {
+        var msg = String((ev && ev.error && ev.error.message) || ev.message || '');
+        if (msg.indexOf('quota') !== -1 || msg.indexOf('QuotaExceeded') !== -1) {
+          try {
+            Object.keys(localStorage).forEach(function (k) {
+              if (k.indexOf('smara_') === 0) localStorage.removeItem(k);
+            });
+            // After clearing, force one reload so the slim guards can run
+            // against an empty store. We only do this once per session.
+            if (!sessionStorage.getItem('smara_quota_reload')) {
+              sessionStorage.setItem('smara_quota_reload', '1');
+              location.reload();
+            }
+          } catch (e) { /* ignore */ }
+        }
+      });
+    })();
+  </script>
 </head>
 <body class="bg-gray-950 text-gray-100">
   <div id="root"></div>

@@ -262,6 +262,16 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		collector.RegisterMCP(name, info.Connected, len(info.Tools))
 	}
 
+	// Apply configurable agent iteration cap (matches `smara serve` behavior
+	// so long roadmap-style chains don't get cut off in web mode).
+	if cfg.AgentMaxIterations > 0 {
+		supervisor.SetMaxIterations(cfg.AgentMaxIterations)
+		ui.PrintInfo("Agent max iterations: %d (dari config)", cfg.AgentMaxIterations)
+	}
+	if cfg.AgentRequestTimeoutSec > 0 {
+		ui.PrintInfo("Agent per-turn timeout: %ds (dari config)", cfg.AgentRequestTimeoutSec)
+	}
+
 	// 6. Start web server
 	addr := fmt.Sprintf("%s:%s", webHost, webPort)
 	server := web.NewServer(addr, supervisor, memStore, collector, cfg)

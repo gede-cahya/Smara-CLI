@@ -1,78 +1,60 @@
-// Package clipboard provides terminal clipboard integration via OSC52.
-// This works in most modern terminals (iTerm2, Kitty, tmux, foot, alacritty,
-// Windows Terminal, VS Code integrated terminal, etc.) without X11/Wayland.
+// Package clipboard provides terminal clipboard integration.
+//
+// Write uses OSC 52 escape sequences (works in iTerm2, Kitty, tmux, foot,
+// alacritty, Windows Terminal, VS Code integrated terminal, even over SSH)
+// with a fallback to native clipboard utilities (xclip / wl-copy / pbcopy /
+// clip.exe) via the github.com/atotto/clipboard package.
+//
+// Read uses ONLY the native clipboard utilities. The previous OSC 52 read
+// implementation spawned a goroutine that consumed bytes from os.Stdin,
+// which conflicts with Bubble Tea's raw-mode input loop and froze the TUI.
+// We never read stdin from this package now.
 package clipboard
 
 import (
 	"encoding/base64"
 	"fmt"
-	"io"
 	"os"
-	"strings"
-	"time"
+
+	atotto "github.com/atotto/clipboard"
 )
 
-const (
-	osc52Write = "\x1b]52;c;%s\x07"       // OSC 52 write to system clipboard
-	osc52Read  = "\x1b]52;c;?\x07"       // OSC 52 read request
-	osc52Reply = "\x1b]52;c;"           // OSC 52 reply prefix
-)
+// osc52WriteFmt writes the base64-encoded payload to the system clipboard.
+const osc52WriteFmt = "\x1b]52;c;%s\x07"
 
-// Write copies the given string to the system clipboard via OSC52.
+// Write copies the given string to the system clipboard.
+//
+// Strategy:
+//  1. Emit OSC 52 to stdout (best-effort; works over SSH and inside tmux).
+//  2. Also try the native clipboard utility so apps that don't honor OSC 52
+//     still get the value. Either succeeding is treated as success.
 func Write(s string) error {
 	enc := base64.StdEncoding.EncodeToString([]byte(s))
-	_, err := fmt.Fprintf(os.Stdout, osc52Write, enc)
-	return err
+	_, oscErr := fmt.Fprintf(os.Stdout, osc52WriteFmt, enc)
+
+	nativeErr := atotto.WriteAll(s)
+
+	if oscErr == nil || nativeErr == nil {
+		return nil
+	}
+	return fmt.Errorf("clipboard write gagal: osc52=%v, native=%v", oscErr, nativeErr)
 }
 
-// Read attempts to read the system clipboard via OSC52.
-// This requires the terminal to support OSC52 read (many do not).
-// A short timeout is used to avoid hanging indefinitely.
+// Read returns the current text contents of the system clipboard.
+//
+// Uses xclip / wl-paste / pbpaste / clip.exe under the hood. Returns an
+// error if no clipboard helper is available on the host (e.g. headless
+// Linux without xclip or wl-clipboard installed).
+//
+// Important: this function never reads from os.Stdin, so it is safe to
+// call from inside a Bubble Tea program where stdin is already in raw mode.
 func Read() (string, error) {
-	// Send read request
-	_, err := os.Stdout.WriteString(osc52Read)
-	if err != nil {
-		return "", err
-	}
-
-	// Try to read the reply from stdin with a timeout
-	// This is a best-effort approach; many terminals do not support reading.
-	ch := make(chan string, 1)
-	go func() {
-		var b strings.Builder
-		buf := make([]byte, 4096)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
-				b.Write(buf[:n])
-				data := b.String()
-				if idx := strings.Index(data, osc52Reply); idx >= 0 {
-					rest := data[idx+len(osc52Reply):]
-					if end := strings.IndexByte(rest, '\x07'); end >= 0 {
-						enc := rest[:end]
-						dec, _ := base64.StdEncoding.DecodeString(enc)
-						ch <- string(dec)
-						return
-					}
-				}
-			}
-			if err != nil {
-				if err != io.EOF {
-					b.WriteString(err.Error())
-				}
-				ch <- ""
-				return
-			}
+	if !atotto.Unsupported {
+		s, err := atotto.ReadAll()
+		if err != nil {
+			return "", fmt.Errorf("clipboard read gagal: %w", err)
 		}
-	}()
-
-	select {
-	case result := <-ch:
-		if result == "" {
-			return "", fmt.Errorf("clipboard read not supported by terminal")
-		}
-		return result, nil
-	case <-time.After(500 * time.Millisecond):
-		return "", fmt.Errorf("clipboard read timeout")
+		return s, nil
 	}
+	return "", fmt.Errorf("clipboard tidak didukung di platform ini (install xclip / wl-clipboard)")
 }
