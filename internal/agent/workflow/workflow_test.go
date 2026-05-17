@@ -151,9 +151,9 @@ func TestSharedState_MarkWaveCompleted(t *testing.T) {
 	assert.False(t, completed["frontend"])
 }
 
-func TestCustomWorkflowFromJSON_ImportsExternalAgentStages(t *testing.T) {
-	data := []byte(`{
-		"agent": {"id": "github-release-agent", "name": "GitHub Release Agent", "description": "Manage GitHub releases", "type": "workflow-orchestrator"},
+func externalAgentWorkflowJSON(id string) []byte {
+	return []byte(`{
+		"agent": {"id": "` + id + `", "name": "GitHub Release Agent", "description": "Manage GitHub releases", "type": "workflow-orchestrator"},
 		"purpose": {"primary_goal": "Automate releases", "outcomes": ["Tag validated", "Release published"]},
 		"skills": {"required": [{"name": "generate-release-notes-from-reference"}], "optional": [{"name": "github-release-verification"}]},
 		"workflow": {"stages": [
@@ -161,8 +161,10 @@ func TestCustomWorkflowFromJSON_ImportsExternalAgentStages(t *testing.T) {
 			{"id": "publish_release", "name": "Publish GitHub Release", "description": "Upload release assets", "skill": "github-release-upload-crosscompiled-assets", "success_condition": "Release published"}
 		]}
 	}`)
+}
 
-	cw, err := CustomWorkflowFromJSON(data)
+func TestCustomWorkflowFromJSON_ImportsExternalAgentStages(t *testing.T) {
+	cw, err := CustomWorkflowFromJSON(externalAgentWorkflowJSON("github-release-agent"))
 
 	assert.NoError(t, err)
 	assert.NoError(t, cw.Validate())
@@ -184,4 +186,64 @@ func TestCustomWorkflowFromJSON_ImportsExternalAgentStages(t *testing.T) {
 	assert.Contains(t, cw.Agents[1].Skills, "generate-release-notes-from-reference")
 	assert.Contains(t, cw.Agents[1].Skills, "github-release-verification")
 	assert.Contains(t, cw.Agents[1].Skills, "github-release-upload-crosscompiled-assets")
+}
+
+func TestMergeCustomWorkflow_RenamesAndConnectsImportedNodes(t *testing.T) {
+	base := &CustomWorkflow{
+		Name:        "git2",
+		Description: "base workflow",
+		Agents: []CustomAgent{
+			{Role: "master", Description: "base master", Tasks: []Task{{ID: "main", Description: "coordinate"}}},
+			{Role: "release-checker", Description: "existing agent", Tasks: []Task{{ID: "main", Description: "check"}}, DependsOn: []string{"master"}},
+		},
+	}
+	imported, err := CustomWorkflowFromJSON(externalAgentWorkflowJSON("github-release-agent"))
+	assert.NoError(t, err)
+
+	merged := MergeCustomWorkflow(base, imported)
+
+	assert.Equal(t, "git2", merged.Name)
+	assert.Len(t, merged.Agents, 6)
+	assert.NoError(t, merged.Validate())
+
+	roles := map[string]CustomAgent{}
+	for _, agent := range merged.Agents {
+		roles[agent.Role] = agent
+	}
+	assert.Contains(t, roles, "master")
+	assert.Contains(t, roles, "master-2")
+	assert.Contains(t, roles, "github-release-agent")
+	assert.Contains(t, roles, "memory-context")
+	assert.Contains(t, roles, "tool-runner")
+
+	assert.Equal(t, []string{"master"}, roles["master-2"].DependsOn)
+	assert.Equal(t, []string{"master", "master-2", "memory-context", "tool-runner"}, roles["github-release-agent"].DependsOn)
+	assert.Equal(t, []string{"master", "master-2"}, roles["memory-context"].DependsOn)
+	assert.Equal(t, []string{"master", "master-2"}, roles["tool-runner"].DependsOn)
+	assert.Equal(t, []string{"workflow_context", "guardrails"}, roles["github-release-agent"].InputsFrom["memory-context"])
+	assert.NotNil(t, roles["memory-context"].Memory)
+}
+
+func TestMergeCustomWorkflow_RenamesDuplicateImportedAgentRoles(t *testing.T) {
+	base, err := CustomWorkflowFromJSON(externalAgentWorkflowJSON("github-release-agent"))
+	assert.NoError(t, err)
+	base.Name = "git2"
+	imported, err := CustomWorkflowFromJSON(externalAgentWorkflowJSON("github-release-agent"))
+	assert.NoError(t, err)
+
+	merged := MergeCustomWorkflow(base, imported)
+
+	assert.Len(t, merged.Agents, 8)
+	assert.NoError(t, merged.Validate())
+	roles := map[string]CustomAgent{}
+	for _, agent := range merged.Agents {
+		roles[agent.Role] = agent
+	}
+	assert.Contains(t, roles, "master-2")
+	assert.Contains(t, roles, "github-release-agent-2")
+	assert.Contains(t, roles, "memory-context-2")
+	assert.Contains(t, roles, "tool-runner-2")
+	assert.Equal(t, []string{"master", "master-2", "memory-context-2", "tool-runner-2"}, roles["github-release-agent-2"].DependsOn)
+	assert.Equal(t, []string{"workflow_context", "guardrails"}, roles["github-release-agent-2"].InputsFrom["memory-context-2"])
+	assert.Equal(t, []string{"tool_actions", "execution_plan"}, roles["github-release-agent-2"].InputsFrom["tool-runner-2"])
 }

@@ -92,6 +92,102 @@ func (cw *CustomWorkflow) hasRole(role string) bool {
 	return false
 }
 
+// MergeCustomWorkflow appends imported agents into an existing workflow safely.
+func MergeCustomWorkflow(base, imported *CustomWorkflow) *CustomWorkflow {
+	if base == nil {
+		return imported
+	}
+	if imported == nil || len(imported.Agents) == 0 {
+		return base
+	}
+	merged := *base
+	merged.Agents = append([]CustomAgent{}, base.Agents...)
+	if strings.TrimSpace(merged.Description) == "" {
+		merged.Description = imported.Description
+	} else if strings.TrimSpace(imported.Description) != "" && !strings.Contains(merged.Description, imported.Description) {
+		merged.Description += "\n\nMerged import: " + imported.Description
+	}
+	roleMap := map[string]string{}
+	used := map[string]bool{}
+	for _, agent := range merged.Agents {
+		used[agent.Role] = true
+	}
+	for _, agent := range imported.Agents {
+		oldRole := agent.Role
+		newRole := nextAvailableRole(oldRole, used)
+		used[newRole] = true
+		roleMap[oldRole] = newRole
+	}
+	for _, agent := range imported.Agents {
+		agent.Role = roleMap[agent.Role]
+		agent.DependsOn = remapWorkflowRoles(agent.DependsOn, roleMap)
+		agent.InputsFrom = remapWorkflowInputs(agent.InputsFrom, roleMap)
+		if agent.Role != "master" && !containsString(agent.DependsOn, "master") && used["master"] {
+			agent.DependsOn = append([]string{"master"}, agent.DependsOn...)
+		}
+		if agent.InputsFrom == nil {
+			agent.InputsFrom = map[string][]string{}
+		}
+		merged.Agents = append(merged.Agents, agent)
+	}
+	return &merged
+}
+
+func nextAvailableRole(role string, used map[string]bool) string {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = "agent"
+	}
+	if !used[role] {
+		return role
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", role, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+func remapWorkflowRoles(values []string, roleMap map[string]string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		if mapped, ok := roleMap[value]; ok {
+			value = mapped
+		}
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func remapWorkflowInputs(inputs map[string][]string, roleMap map[string]string) map[string][]string {
+	if len(inputs) == 0 {
+		return map[string][]string{}
+	}
+	out := map[string][]string{}
+	for role, keys := range inputs {
+		if mapped, ok := roleMap[role]; ok {
+			role = mapped
+		}
+		out[role] = append(out[role], keys...)
+	}
+	return out
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 // ToBlueprint converts a CustomWorkflow to a Blueprint for execution.
 func (cw *CustomWorkflow) ToBlueprint() Blueprint {
 	agents := make([]AgentSpec, len(cw.Agents))

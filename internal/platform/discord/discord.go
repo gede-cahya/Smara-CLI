@@ -103,7 +103,7 @@ func (a *Adapter) SendMessage(ctx context.Context, channelID string, msg platfor
 	}
 
 	// Short formatted responses look better as rich embeds.
-	if msg.Format == platform.FormatMarkdown && len(content) <= maxEmbedLength {
+	if msg.Format == platform.FormatMarkdown && len(content) <= maxEmbedLength && !strings.Contains(content, "```") {
 		embed := &discordgo.MessageEmbed{
 			Description: content,
 			Color:       0xBEF264,

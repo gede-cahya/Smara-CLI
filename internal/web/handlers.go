@@ -1304,9 +1304,14 @@ func (s *Server) handleCustomWorkflowImport(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Name string `json:"name"`
 		JSON string `json:"json"`
+		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		errorResponse(w, http.StatusBadRequest, "nama target workflow wajib diisi")
 		return
 	}
 	cw, err := workflow.CustomWorkflowFromJSON([]byte(req.JSON))
@@ -1314,12 +1319,32 @@ func (s *Server) handleCustomWorkflowImport(w http.ResponseWriter, r *http.Reque
 		errorResponse(w, http.StatusBadRequest, "invalid workflow JSON: "+err.Error())
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
 	cw.Name = req.Name
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "replace"
+	}
+	merged := false
+	if mode == "merge" {
+		existing, err := workflow.LoadCustomWorkflow(req.Name)
+		if err != nil || existing == nil {
+			errorResponse(w, http.StatusBadRequest, "workflow target untuk merge tidak ditemukan: "+req.Name)
+			return
+		}
+		cw = workflow.MergeCustomWorkflow(existing, cw)
+		cw.Name = req.Name
+		merged = true
+	}
 	if err := workflow.SaveCustomWorkflow(cw); err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "imported", "name": req.Name})
+	status := "imported"
+	if merged {
+		status = "merged"
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": status, "name": req.Name, "agents": len(cw.Agents), "merged": merged})
 }
 
 // --- Filesystem Browser ---

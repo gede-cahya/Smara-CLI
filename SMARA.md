@@ -28,15 +28,35 @@ Sebelum membuat perubahan, agent harus:
 5. Identifikasi dampak perubahan ke backend, CLI, web UI, memory, skill, atau config.
 6. Buat rencana singkat jika task menyentuh lebih dari satu file.
 
-## 3. Aturan Editing Kode
+## 2.1. Aturan Wajib MCP Context7 untuk Fitur Baru
 
-- Gunakan patch/edit terarah, jangan rewrite file besar kalau tidak perlu.
-- Pertahankan style kode yang sudah ada.
-- Jangan mengganti nama public API, command, config key, atau struktur data persisted tanpa migrasi/kompatibilitas.
-- Jangan menambahkan dependency baru kecuali benar-benar perlu.
-- Jangan menyimpan secret, token, private key, password, atau credential ke repository.
-- Jangan mengubah file binary/build output kecuali memang diminta.
-- Jangan menjalankan command destruktif seperti `rm -rf`, reset git, drop database, atau overwrite config tanpa konfirmasi.
+Saat user meminta membuat fitur baru, menambah integrasi, mengubah API/library/framework, atau memakai dependency yang dokumentasinya mungkin berubah, agent **wajib memakai MCP Context7** sebelum coding.
+
+Gunakan Context7 untuk:
+
+- Mengambil dokumentasi terbaru library/framework yang dipakai.
+- Memastikan API, konfigurasi, best practice, dan breaking changes masih valid.
+- Menghindari implementasi berdasarkan asumsi atau pengetahuan lama.
+- Membandingkan rencana implementasi dengan dokumentasi resmi terbaru.
+
+Alur wajib Context7:
+
+1. Identifikasi library/framework/tool yang relevan dengan fitur.
+2. Resolve library ke Context7-compatible ID jika diperlukan.
+3. Ambil dokumentasi terbaru melalui MCP Context7.
+4. Ringkas poin dokumentasi yang memengaruhi implementasi.
+5. Baru lakukan perubahan kode berdasarkan dokumentasi tersebut.
+
+Jika MCP Context7 tidak tersedia, error, atau library tidak ditemukan:
+
+- Jangan mengarang dokumentasi.
+- Jelaskan kendalanya ke user.
+- Lanjutkan hanya jika perubahan tetap aman berdasarkan kode existing atau dokumentasi lokal.
+
+Catatan keamanan:
+
+- Jangan pernah menulis token Context7/API key/secret ke repository, log, dokumentasi, atau output jawaban.
+- Token hanya boleh berada di konfigurasi lokal/secret manager/environment yang aman.
 
 ## 4. Project Smara: Area Penting
 

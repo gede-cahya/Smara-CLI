@@ -102,6 +102,7 @@ export default function CustomWorkflow() {
   const timer = useRef<ReturnType<typeof setInterval>|null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [importName, setImportName] = useState('')
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
 
   const load = async () => {
     setLoading(true)
@@ -309,10 +310,18 @@ export default function CustomWorkflow() {
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return
-    const text = await file.text(); const name = importName.trim() || file.name.replace(/\.json$/i, '')
-    if (!name) { setError('Nama workflow wajib diisi untuk import'); return }
-    try { await fetchJSON('/api/custom-workflow/import', { method: 'POST', body: JSON.stringify({ name, json: text }) }); setSuccess(`Workflow '${name}' berhasil di-import!`); setImportName(''); load() }
-    catch (err: any) { setError('Gagal import: ' + (err.message || err)) }
+    const text = await file.text()
+    const selectedName = selected?.name?.trim() || ''
+    const fileName = file.name.replace(/\.json$/i, '')
+    const name = importName.trim() || (importMode === 'merge' ? selectedName : fileName)
+    if (!name) { setError('Pilih workflow target dulu, atau isi Target workflow untuk merge'); return }
+    try {
+      const result = await fetchJSON<{ status: string; name: string; agents?: number; merged?: boolean }>('/api/custom-workflow/import', { method: 'POST', body: JSON.stringify({ name, json: text, mode: importMode }) })
+      setSuccess(result.merged ? `Workflow '${name}' berhasil ditambahkan (${result.agents || 0} agent).` : `Workflow '${name}' berhasil di-import!`)
+      setImportName('')
+      await load()
+      await selectWorkflow(name)
+    } catch (err: any) { setError('Gagal import: ' + (err.message || err)) }
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -327,7 +336,7 @@ export default function CustomWorkflow() {
         <button onClick={() => { setSelected(null); setEditing(defaultWorkflow()); setError(null); setSuccess(null); setActiveNode('master') }} className="px-3 py-2 bg-smara-700 hover:bg-smara-600 rounded-lg transition-colors flex items-center gap-1 text-sm"><Plus className="w-4 h-4" /> Baru</button>
         <button onClick={load} disabled={loading} className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors text-sm">{loading ? 'Loading...' : 'Refresh'}</button>
         {editing && <><button onClick={() => addAgent('agent')} className="px-3 py-2 bg-fuchsia-700 hover:bg-fuchsia-600 rounded-lg transition-colors flex items-center gap-1 text-sm"><Bot className="w-4 h-4" /> Agent</button><button onClick={() => addAgent('tool')} className="px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors flex items-center gap-1 text-sm"><Wrench className="w-4 h-4" /> Tool</button><button onClick={() => addAgent('memory')} className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors flex items-center gap-1 text-sm"><Database className="w-4 h-4" /> Memory</button></>}
-        <div className="flex items-center gap-2 ml-auto"><input value={importName} onChange={e => setImportName(e.target.value)} placeholder="Nama import..." className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-smara-500 w-36" /><input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} /><button onClick={() => fileRef.current?.click()} className="px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors text-xs">Import JSON</button></div>
+        <div className="flex items-center gap-2 ml-auto"><input value={importName} onChange={e => setImportName(e.target.value)} placeholder={importMode === 'merge' ? (selected?.name ? `Target: ${selected.name}` : 'Pilih target...') : 'Nama workflow...'} className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-smara-500 w-36" /><select value={importMode} onChange={e => setImportMode(e.target.value as 'merge' | 'replace')} className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-smara-500"><option value="merge">Merge</option><option value="replace">Replace</option></select><input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} /><button onClick={() => fileRef.current?.click()} className="px-3 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors text-xs">Import JSON</button></div>
       </div>
 
       {error && <div className="mb-3 p-3 bg-red-900/20 border border-red-800 rounded-lg text-sm text-red-200 flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span></div>}

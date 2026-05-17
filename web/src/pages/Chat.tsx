@@ -36,33 +36,72 @@ function generatedImageUrls(text?: string): string[] {
   return [...urls]
 }
 
+function formatCodeBlock(raw: string, language: string) {
+  const text = raw.replace(/\n$/, '')
+  if (language.toLowerCase() !== 'json') return text
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
+
+function MarkdownCodeBlock({ children, className, inline, ...props }: any) {
+  const [copied, setCopied] = useState(false)
+  const match = /language-([\w-]+)/.exec(className || '')
+  const language = match?.[1] || ''
+  const raw = String(children ?? '')
+
+  if (inline || !language) {
+    return <code className="rounded border border-smara-500/20 bg-smara-950/40 px-1 py-0.5 text-[0.85em] text-cyan-200 font-mono" {...props}>{children}</code>
+  }
+
+  const code = formatCodeBlock(raw, language)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {}
+  }
+
+  return (
+    <div className="my-2 overflow-hidden rounded-xl border border-gray-700/70 bg-gray-950/85 shadow-inner shadow-black/25">
+      <div className="flex items-center gap-2 border-b border-gray-800/80 bg-gray-900/80 px-3 py-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-smara-300">{language}</span>
+        <button onClick={copy} className="ml-auto flex items-center gap-1 rounded-md border border-gray-700 bg-gray-950/80 px-2 py-1 text-[10px] text-gray-300 hover:border-smara-400 hover:text-white transition-colors" title={language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy code'}>
+          {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+          {copied ? 'Copied' : language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy'}
+        </button>
+      </div>
+      <code className="block overflow-x-auto p-3 text-xs leading-5 text-gray-100 font-mono" {...props}>{code}</code>
+    </div>
+  )
+}
+
 function SmaraMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       components={{
-        p: ({ children }) => <p className="mb-3 last:mb-0 text-gray-200 leading-7">{children}</p>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-200 leading-6">{children}</p>,
         strong: ({ children }) => <strong className="font-semibold text-white bg-smara-500/10 px-0.5 rounded">{children}</strong>,
         em: ({ children }) => <em className="text-smara-200 not-italic">{children}</em>,
-        ul: ({ children }) => <ul className="my-3 space-y-2 pl-1">{children}</ul>,
-        ol: ({ children }) => <ol className="my-3 space-y-2 pl-5 list-decimal marker:text-smara-400">{children}</ol>,
+        ul: ({ children }) => <ul className="my-2 space-y-1.5 pl-1">{children}</ul>,
+        ol: ({ children }) => <ol className="my-2 space-y-1.5 pl-5 list-decimal marker:text-smara-400">{children}</ol>,
         li: ({ children }) => (
-          <li className="relative pl-5 text-gray-200 leading-7 before:content-[''] before:absolute before:left-0 before:top-3 before:w-1.5 before:h-1.5 before:rounded-full before:bg-gradient-to-r before:from-smara-400 before:to-cyan-300">
+          <li className="relative pl-5 text-gray-200 leading-6 before:content-[''] before:absolute before:left-0 before:top-2.5 before:w-1.5 before:h-1.5 before:rounded-full before:bg-gradient-to-r before:from-smara-400 before:to-cyan-300">
             {children}
           </li>
         ),
-        code: ({ inline, children, ...props }: any) => inline ? (
-          <code className="rounded-md border border-smara-500/20 bg-smara-950/40 px-1.5 py-0.5 text-[0.85em] text-cyan-200 font-mono" {...props}>{children}</code>
-        ) : (
-          <code className="block overflow-x-auto rounded-xl border border-gray-700/70 bg-gray-950/80 p-4 text-xs leading-6 text-gray-100 shadow-inner shadow-black/30 font-mono" {...props}>{children}</code>
-        ),
-        pre: ({ children }) => <pre className="my-4 overflow-x-auto">{children}</pre>,
-        blockquote: ({ children }) => <blockquote className="my-4 border-l-2 border-smara-400/70 bg-smara-950/20 px-4 py-3 text-gray-300 rounded-r-xl">{children}</blockquote>,
+        code: MarkdownCodeBlock,
+        pre: ({ children }) => <>{children}</>,
+        blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-smara-400/70 bg-smara-950/20 px-3 py-2 text-gray-300 rounded-r-xl">{children}</blockquote>,
         a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-4 hover:text-cyan-200">{children}</a>,
-        img: ({ src, alt }) => <img src={src || ''} alt={alt || 'generated image'} className="my-3 max-h-96 rounded-xl border border-gray-700/70 shadow-lg shadow-black/30" />,
-        h1: ({ children }) => <h1 className="mb-3 mt-1 text-xl font-bold text-white tracking-tight">{children}</h1>,
-        h2: ({ children }) => <h2 className="mb-3 mt-4 text-lg font-semibold text-white tracking-tight">{children}</h2>,
-        h3: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold text-smara-100">{children}</h3>,
-        hr: () => <hr className="my-5 border-gray-700/60" />,
+        img: ({ src, alt }) => <img src={src || ''} alt={alt || 'generated image'} className="my-2 max-h-96 rounded-xl border border-gray-700/70 shadow-lg shadow-black/30" />,
+        h1: ({ children }) => <h1 className="mb-2 mt-1 text-xl font-bold text-white tracking-tight">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-2 mt-3 text-lg font-semibold text-white tracking-tight">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-base font-semibold text-smara-100">{children}</h3>,
+        hr: () => <hr className="my-3 border-gray-700/60" />,
       }}
     >
       {content}
@@ -921,7 +960,7 @@ export default function Chat() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, i) => {
           if (msg.role === 'tool_call') {
             return (
@@ -963,7 +1002,7 @@ export default function Chat() {
               }`}>
                 {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-200" />}
               </div>
-              <div className={`max-w-[84%] rounded-2xl px-4 py-3 text-sm leading-relaxed relative shadow-xl backdrop-blur-sm overflow-hidden ${
+              <div className={`max-w-[84%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed relative shadow-xl backdrop-blur-sm overflow-hidden ${
                 msg.role === 'user'
                   ? 'bg-gradient-to-br from-smara-800/50 to-smara-950/30 border border-smara-500/40 shadow-smara-950/20'
                   : msg.role === 'error'
@@ -971,7 +1010,7 @@ export default function Chat() {
                   : 'bg-gradient-to-br from-gray-900/95 via-gray-900/80 to-smara-950/35 border border-gray-700/70 shadow-black/25 before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-smara-300/50 before:to-transparent'
               }`}>
                 {msg.role !== 'user' && msg.role !== 'error' && (
-                  <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-smara-300/90">
+                  <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-smara-300/90">
                     <span className="h-1.5 w-1.5 rounded-full bg-smara-300 shadow-[0_0_12px_rgba(45,212,191,0.8)]" />
                     Smara Response
                   </div>
@@ -1002,13 +1041,13 @@ export default function Chat() {
                   </div>
                 )}
                 {msg.role === 'user' ? (
-                  <div className="whitespace-pre-wrap text-gray-100 leading-7">{msg.content}</div>
+                  <div className="whitespace-pre-wrap text-gray-100 leading-6">{msg.content}</div>
                 ) : msg.role === 'error' ? (
-                  <div className="whitespace-pre-wrap leading-7">{msg.content}</div>
+                  <div className="whitespace-pre-wrap leading-6">{msg.content}</div>
                 ) : (
                   <SmaraMarkdown content={msg.content} />
                 )}
-                <div className="mt-3 flex justify-end border-t border-white/5 pt-2 text-[10px] text-gray-500">
+                <div className="mt-2 flex justify-end border-t border-white/5 pt-1.5 text-[10px] text-gray-500">
                   {new Date(msg.timestamp).toLocaleTimeString()}
                 </div>
                 <button

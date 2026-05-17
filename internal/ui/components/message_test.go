@@ -40,3 +40,20 @@ func TestRenderMessage_NoThinking(t *testing.T) {
 		t.Errorf("Should not contain thinking block when thinking is empty, got:\n%s", rendered)
 	}
 }
+
+func TestNormalizeJSONFencedBlocks(t *testing.T) {
+	input := "hasil:\n```json\n{\"b\":2,\"a\":1}\n```"
+	got := normalizeJSONFencedBlocks(input)
+
+	if !strings.Contains(got, "  \"b\": 2") || !strings.Contains(got, "  \"a\": 1") {
+		t.Fatalf("expected pretty JSON, got:\n%s", got)
+	}
+}
+
+func TestCollapseCodeBlocksCompactIndicator(t *testing.T) {
+	got := collapseCodeBlocks("```json\n{\"a\":1}\n```")
+
+	if !strings.Contains(got, "json") || !strings.Contains(got, "/expand") {
+		t.Fatalf("expected compact code indicator, got %q", got)
+	}
+}

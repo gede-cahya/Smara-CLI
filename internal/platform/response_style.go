@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -67,8 +69,7 @@ func RenderPlatformResponse(platform, content, modelName string, duration time.D
 
 func renderTelegramResponse(content string, meta []string) string {
 	var sb strings.Builder
-	sb.WriteString("🌀 *Smara Response*\n")
-	sb.WriteString("━━━━━━━━━━━━━━━━\n")
+	sb.WriteString("🌀 *Smara Response*\n\n")
 	sb.WriteString(polishMarkdown(content))
 	if len(meta) > 0 {
 		sb.WriteString("\n\n")
@@ -79,8 +80,7 @@ func renderTelegramResponse(content string, meta []string) string {
 
 func renderWhatsAppResponse(content string, meta []string) string {
 	var sb strings.Builder
-	sb.WriteString("🌀 *Smara Response*\n")
-	sb.WriteString("━━━━━━━━━━━━━━━━\n")
+	sb.WriteString("🌀 *Smara Response*\n\n")
 	sb.WriteString(polishMarkdown(content))
 	if len(meta) > 0 {
 		sb.WriteString("\n\n")
@@ -109,11 +109,52 @@ func renderGenericResponse(content string, meta []string) string {
 
 func polishMarkdown(content string) string {
 	content = strings.TrimSpace(content)
-	// Convert plain hyphen bullets into nicer bullets for chat apps, without
-	// touching horizontal rules or markdown tables.
+	content = normalizeJSONCodeFences(content)
+	content = compactBlankLinesOutsideCode(content)
 	bulletRe := regexp.MustCompile(`(?m)^\s*-\s+`)
 	content = bulletRe.ReplaceAllString(content, "• ")
 	return content
+}
+
+func normalizeJSONCodeFences(content string) string {
+	re := regexp.MustCompile("(?s)```([A-Za-z0-9_-]*)\\n(.*?)```")
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		groups := re.FindStringSubmatch(match)
+		if len(groups) < 3 || !strings.EqualFold(groups[1], "json") {
+			return match
+		}
+		var out bytes.Buffer
+		if err := json.Indent(&out, []byte(strings.TrimSpace(groups[2])), "", "  "); err != nil {
+			return match
+		}
+		return "```" + groups[1] + "\n" + out.String() + "\n```"
+	})
+}
+
+func compactBlankLinesOutsideCode(content string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	inCode := false
+	blank := false
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inCode = !inCode
+			blank = false
+			out = append(out, line)
+			continue
+		}
+		if !inCode && strings.TrimSpace(line) == "" {
+			if blank {
+				continue
+			}
+			blank = true
+			out = append(out, "")
+			continue
+		}
+		blank = false
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 func elapsedSuffix(elapsed time.Duration) string {

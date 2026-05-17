@@ -1,6 +1,8 @@
 package components
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -70,7 +72,7 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 			modelTag
 		bubbleStyle = r.theme.MessageAgent.Width(contentWidth).BorderForeground(prefixColor)
 		if content != "" {
-			title := lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render("╭─ ✨ Smara Response")
+			title := lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render("Smara Response")
 			content = title + "\n" + content
 		}
 	case "System":
@@ -311,6 +313,7 @@ func thinkingPhase(elapsed time.Duration) string {
 
 // processContent handles markdown rendering via glamour, with optional code block collapsing.
 func (r *MessageRenderer) processContent(content string, width int, expandedCode bool) string {
+	content = normalizeJSONFencedBlocks(content)
 	if !expandedCode {
 		content = collapseCodeBlocks(content)
 	}
@@ -332,6 +335,21 @@ func (r *MessageRenderer) processContent(content string, width int, expandedCode
 	return HyperlinkURLs(strings.TrimRight(out, "\n"))
 }
 
+func normalizeJSONFencedBlocks(content string) string {
+	re := regexp.MustCompile("(?s)```([A-Za-z0-9_-]*)\\n(.*?)```")
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		groups := re.FindStringSubmatch(match)
+		if len(groups) < 3 || !strings.EqualFold(groups[1], "json") {
+			return match
+		}
+		var out bytes.Buffer
+		if err := json.Indent(&out, []byte(strings.TrimSpace(groups[2])), "", "  "); err != nil {
+			return match
+		}
+		return "```" + groups[1] + "\n" + out.String() + "\n```"
+	})
+}
+
 // collapseCodeBlocks replaces fenced code blocks with a compact indicator line.
 func collapseCodeBlocks(content string) string {
 	re := regexp.MustCompile("(?s)```(\\w*)\\n(.*?)```")
@@ -349,7 +367,7 @@ func collapseCodeBlocks(content string) string {
 		if lang == "" {
 			lang = "text"
 		}
-		return fmt.Sprintf("▶ *Code: `%s` (%d lines) — press `/expand` to view*", lang, lines)
+		return fmt.Sprintf("▸ `%s` code collapsed (%d lines) — `/expand`", lang, lines)
 	})
 }
 

@@ -276,13 +276,11 @@ func NewStyles() Styles {
 		ChatAgent: lipgloss.NewStyle().
 			Foreground(ClrText).
 			Background(ClrSurface).
-			Padding(1, 2).
+			Padding(0, 1).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ClrAccent).
 			BorderBackground(ClrBase).
-			MarginLeft(1).
-			MarginTop(1).
-			MarginBottom(1),
+			MarginLeft(1),
 		ChatSystem: lipgloss.NewStyle().
 			Foreground(ClrSubtext).
 			Background(ClrSurface).

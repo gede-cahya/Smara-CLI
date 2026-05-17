@@ -5,122 +5,295 @@
     {
       "name": "nextjs",
       "description": "Next.js documentation and patterns via Context7",
-      "tags": ["react", "frontend", "vercel", "ssr"],
-      "keywords": ["next.js", "nextjs", "app router", "pages router", "next/link", "next/image"],
+      "tags": [
+        "react",
+        "frontend",
+        "vercel",
+        "ssr"
+      ],
+      "keywords": [
+        "next.js",
+        "nextjs",
+        "app router",
+        "pages router",
+        "next/link",
+        "next/image"
+      ],
       "context7_library": "next.js",
       "skill_file": "nextjs.json"
     },
     {
       "name": "react",
       "description": "React documentation and hooks via Context7",
-      "tags": ["frontend", "ui", "hooks"],
-      "keywords": ["react", "usestate", "useeffect", "jsx", "component", "hook"],
+      "tags": [
+        "frontend",
+        "ui",
+        "hooks"
+      ],
+      "keywords": [
+        "react",
+        "usestate",
+        "useeffect",
+        "jsx",
+        "component",
+        "hook"
+      ],
       "context7_library": "react",
       "skill_file": "react.json"
     },
     {
       "name": "tailwindcss",
       "description": "Tailwind CSS utility classes and configuration via Context7",
-      "tags": ["css", "frontend", "styling"],
-      "keywords": ["tailwind", "tailwindcss", "utility class", "flex", "grid", "responsive"],
+      "tags": [
+        "css",
+        "frontend",
+        "styling"
+      ],
+      "keywords": [
+        "tailwind",
+        "tailwindcss",
+        "utility class",
+        "flex",
+        "grid",
+        "responsive"
+      ],
       "context7_library": "tailwindcss",
       "skill_file": "tailwindcss.json"
     },
     {
       "name": "typescript",
       "description": "TypeScript types and patterns via Context7",
-      "tags": ["types", "language"],
-      "keywords": ["typescript", "ts", "interface", "type", "generic", "enum"],
+      "tags": [
+        "types",
+        "language"
+      ],
+      "keywords": [
+        "typescript",
+        "ts",
+        "interface",
+        "type",
+        "generic",
+        "enum"
+      ],
       "context7_library": "typescript",
       "skill_file": "typescript.json"
     },
     {
       "name": "go",
       "description": "Go standard library and idioms via Context7",
-      "tags": ["backend", "language", "stdlib"],
-      "keywords": ["golang", "go", "goroutine", "channel", "struct", "interface"],
+      "tags": [
+        "backend",
+        "language",
+        "stdlib"
+      ],
+      "keywords": [
+        "golang",
+        "go",
+        "goroutine",
+        "channel",
+        "struct",
+        "interface"
+      ],
       "context7_library": "go",
       "skill_file": "go.json"
     },
     {
       "name": "docker",
       "description": "Docker containers, images, and compose via Context7",
-      "tags": ["devops", "containers", "deployment"],
-      "keywords": ["docker", "dockerfile", "docker image", "docker container", "docker compose", "docker-compose"],
+      "tags": [
+        "devops",
+        "containers",
+        "deployment"
+      ],
+      "keywords": [
+        "docker",
+        "dockerfile",
+        "docker image",
+        "docker container",
+        "docker compose",
+        "docker-compose"
+      ],
       "context7_library": "docker",
       "skill_file": "docker.json"
     },
     {
       "name": "kubernetes",
       "description": "Kubernetes manifests and kubectl via Context7",
-      "tags": ["devops", "containers", "orchestration"],
-      "keywords": ["kubernetes", "k8s", "pod", "deployment", "service", "helm"],
+      "tags": [
+        "devops",
+        "containers",
+        "orchestration"
+      ],
+      "keywords": [
+        "kubernetes",
+        "k8s",
+        "pod",
+        "deployment",
+        "service",
+        "helm"
+      ],
       "context7_library": "kubernetes",
       "skill_file": "kubernetes.json"
     },
     {
       "name": "python",
       "description": "Python standard library and patterns via Context7",
-      "tags": ["backend", "language", "stdlib"],
-      "keywords": ["python", "py", "dict", "list", "asyncio"],
+      "tags": [
+        "backend",
+        "language",
+        "stdlib"
+      ],
+      "keywords": [
+        "python",
+        "py",
+        "dict",
+        "list",
+        "asyncio"
+      ],
       "context7_library": "python",
       "skill_file": "python.json"
     },
     {
       "name": "fastapi",
       "description": "FastAPI routing, dependencies, and async via Context7",
-      "tags": ["backend", "api", "python"],
-      "keywords": ["fastapi", "fast api", "endpoint", "dependency injection", "pydantic"],
+      "tags": [
+        "backend",
+        "api",
+        "python"
+      ],
+      "keywords": [
+        "fastapi",
+        "fast api",
+        "endpoint",
+        "dependency injection",
+        "pydantic"
+      ],
       "context7_library": "fastapi",
       "skill_file": "fastapi.json"
     },
     {
       "name": "prisma",
       "description": "Prisma ORM schema and queries via Context7",
-      "tags": ["database", "orm", "typescript"],
-      "keywords": ["prisma", "schema", "migrate", "prisma client"],
+      "tags": [
+        "database",
+        "orm",
+        "typescript"
+      ],
+      "keywords": [
+        "prisma",
+        "schema",
+        "migrate",
+        "prisma client"
+      ],
       "context7_library": "prisma",
       "skill_file": "prisma.json"
     },
     {
       "name": "postgres",
       "description": "PostgreSQL queries and configuration via Context7",
-      "tags": ["database", "sql"],
-      "keywords": ["postgres", "postgresql", "sql", "query", "index", "migration"],
+      "tags": [
+        "database",
+        "sql"
+      ],
+      "keywords": [
+        "postgres",
+        "postgresql",
+        "sql",
+        "query",
+        "index",
+        "migration"
+      ],
       "context7_library": "postgres",
       "skill_file": "postgres.json"
     },
     {
       "name": "mongodb",
       "description": "MongoDB queries and aggregation via Context7",
-      "tags": ["database", "nosql"],
-      "keywords": ["mongodb", "mongo", "aggregate", "collection", "document"],
+      "tags": [
+        "database",
+        "nosql"
+      ],
+      "keywords": [
+        "mongodb",
+        "mongo",
+        "aggregate",
+        "collection",
+        "document"
+      ],
       "context7_library": "mongodb",
       "skill_file": "mongodb.json"
     },
     {
       "name": "git",
       "description": "Git commands and workflows via Context7",
-      "tags": ["vcs", "devops"],
-      "keywords": ["git", "commit", "branch", "merge", "rebase", "stash"],
+      "tags": [
+        "vcs",
+        "devops"
+      ],
+      "keywords": [
+        "git",
+        "commit",
+        "branch",
+        "merge",
+        "rebase",
+        "stash"
+      ],
       "context7_library": "git",
       "skill_file": "git.json"
     },
     {
       "name": "vercel",
       "description": "Vercel deployment and configuration via Context7",
-      "tags": ["deployment", "frontend", "hosting"],
-      "keywords": ["vercel", "serverless", "edge function", "vercel deploy"],
+      "tags": [
+        "deployment",
+        "frontend",
+        "hosting"
+      ],
+      "keywords": [
+        "vercel",
+        "serverless",
+        "edge function",
+        "vercel deploy"
+      ],
       "context7_library": "vercel",
       "skill_file": "vercel.json"
     },
     {
       "name": "laravel",
       "description": "Laravel Eloquent, routing, and Blade via Context7",
-      "tags": ["backend", "php", "framework"],
-      "keywords": ["laravel", "eloquent", "blade", "artisan", "middleware"],
+      "tags": [
+        "backend",
+        "php",
+        "framework"
+      ],
+      "keywords": [
+        "laravel",
+        "eloquent",
+        "blade",
+        "artisan",
+        "middleware"
+      ],
       "context7_library": "laravel",
       "skill_file": "laravel.json"
+    },
+    {
+      "name": "github-release-upload-crosscompiled-assets",
+      "description": "Update atau buat GitHub Release untuk tag tertentu, cross-compile binary Linux/Windows/macOS, buat checksum, lalu upload semua asset ke release.",
+      "tags": [
+        "github",
+        "release",
+        "crosscompile"
+      ],
+      "keywords": [
+        "github release",
+        "gh release",
+        "cross compile",
+        "upload assets",
+        "release assets",
+        "checksum",
+        "golang release"
+      ],
+      "skill_file": "github-release-upload-crosscompiled-assets.json"
     }
   ]
 }

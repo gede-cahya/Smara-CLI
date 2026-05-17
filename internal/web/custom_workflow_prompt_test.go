@@ -1,6 +1,9 @@
 package web
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
@@ -47,5 +50,29 @@ func TestFindCustomWorkflowByAgentRole(t *testing.T) {
 	}
 	if got == nil || got.Name != "git2" || matched != "git2" {
 		t.Fatalf("findCustomWorkflowByNameOrAgent() = %#v, %q; want git2", got, matched)
+	}
+}
+
+func TestCustomWorkflowImportMergeRequiresExistingTarget(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	body := []byte(`{
+		"name":"missing-target",
+		"mode":"merge",
+		"json":"{\"name\":\"imported\",\"description\":\"x\",\"agents\":[{\"role\":\"agent\",\"description\":\"x\",\"tasks\":[{\"id\":\"main\",\"description\":\"x\"}]}]}"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/custom-workflow/import", bytes.NewReader(body))
+	res := httptest.NewRecorder()
+
+	(&Server{}).handleCustomWorkflowImport(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("handleCustomWorkflowImport status = %d; want %d", res.Code, http.StatusBadRequest)
+	}
+	if _, err := workflow.LoadCustomWorkflow("missing-target"); err == nil {
+		t.Fatalf("merge import created missing target workflow")
 	}
 }
