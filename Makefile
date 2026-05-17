@@ -1,4 +1,4 @@
-VERSION := 1.19.2
+VERSION := 1.20.4
 BINARY := smara
 GOFLAGS := -trimpath
 LDFLAGS := -s -w -X main.version=$(VERSION)

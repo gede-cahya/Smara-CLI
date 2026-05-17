@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +67,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	if response, handled, err := s.tryRunCustomWorkflowPrompt(req.Message); handled {
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
+		return
+	}
 	if isImageGenerationPrompt(req.Message) {
 		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": req.Message}, nil)
 		if err != nil {
@@ -286,6 +294,15 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 	prompt := injectAttachmentSteer(msg.Payload)
+	if response, handled, err := s.tryRunCustomWorkflowPrompt(msg.Payload); handled {
+		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
+		if err != nil {
+			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
+			return
+		}
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response})
+		return
+	}
 	if isImageGenerationPrompt(msg.Payload) {
 		_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: "builtin", Tool: "generate_image", Args: map[string]interface{}{"prompt": msg.Payload}})
 		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Payload}, nil)
@@ -350,6 +367,126 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			Workspace:    s.Cfg.ActiveWorkspace,
 		})
 	}
+}
+
+func (s *Server) tryRunCustomWorkflowPrompt(prompt string) (string, bool, error) {
+	candidate, ok := extractCustomWorkflowRunName(prompt)
+	if !ok {
+		return "", false, nil
+	}
+	cw, matched, err := findCustomWorkflowByNameOrAgent(candidate)
+	if err != nil || cw == nil {
+		return "", false, nil
+	}
+	result, err := workflow.RunCustomWorkflow(s.Supervisor, s.Supervisor.GetProvider(), cw)
+	if err != nil {
+		return "", true, fmt.Errorf("gagal menjalankan custom workflow '%s': %w", matched, err)
+	}
+	return formatCustomWorkflowRunResponse(matched, result), true, nil
+}
+
+func extractCustomWorkflowRunName(prompt string) (string, bool) {
+	text := strings.TrimSpace(prompt)
+	if text == "" {
+		return "", false
+	}
+	text = strings.Trim(text, " \t\n\r`'\"")
+	lower := strings.ToLower(text)
+	prefixes := []string{
+		"jalankan custom workflow ",
+		"jalankan workflow ",
+		"run custom workflow ",
+		"run workflow ",
+		"execute custom workflow ",
+		"execute workflow ",
+		"mulai custom workflow ",
+		"mulai workflow ",
+		"start custom workflow ",
+		"start workflow ",
+		"jalankan ",
+		"run ",
+		"execute ",
+		"mulai ",
+		"start ",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			name := strings.TrimSpace(text[len(prefix):])
+			name = strings.Trim(name, " \t\n\r`'\".,!")
+			if name != "" {
+				return name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func findCustomWorkflowByNameOrAgent(candidate string) (*workflow.CustomWorkflow, string, error) {
+	names, err := workflow.ListCustomWorkflows()
+	if err != nil {
+		return nil, "", err
+	}
+	wanted := strings.ToLower(strings.TrimSpace(candidate))
+	var fallback *workflow.CustomWorkflow
+	fallbackName := ""
+	for _, name := range names {
+		cw, err := workflow.LoadCustomWorkflow(name)
+		if err != nil {
+			continue
+		}
+		if strings.EqualFold(cw.Name, candidate) || strings.EqualFold(name, candidate) {
+			return cw, cw.Name, nil
+		}
+		for _, a := range cw.Agents {
+			if strings.EqualFold(a.Role, candidate) {
+				return cw, cw.Name, nil
+			}
+			if fallback == nil && strings.Contains(strings.ToLower(a.Role), wanted) {
+				fallback = cw
+				fallbackName = cw.Name
+			}
+		}
+		if fallback == nil && strings.Contains(strings.ToLower(cw.Name), wanted) {
+			fallback = cw
+			fallbackName = cw.Name
+		}
+	}
+	return fallback, fallbackName, nil
+}
+
+func formatCustomWorkflowRunResponse(name string, result *workflow.CustomWorkflowResult) string {
+	if result == nil {
+		return fmt.Sprintf("Custom workflow '%s' selesai dijalankan.", name)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan.\n", name))
+	if result.FinalSummary != "" {
+		sb.WriteString("\n")
+		sb.WriteString(result.FinalSummary)
+		sb.WriteString("\n")
+	}
+	if result.ProjectPath != "" {
+		sb.WriteString(fmt.Sprintf("\nProject: %s\n", result.ProjectPath))
+	}
+	if len(result.AgentOutputs) > 0 {
+		sb.WriteString("\nAgent outputs:\n")
+		roles := make([]string, 0, len(result.AgentOutputs))
+		for role := range result.AgentOutputs {
+			roles = append(roles, role)
+		}
+		sort.Strings(roles)
+		for _, role := range roles {
+			sb.WriteString(fmt.Sprintf("- %s: %d task result(s)\n", role, len(result.AgentOutputs[role])))
+		}
+	}
+	if result.QAResult.Status != "" {
+		sb.WriteString(fmt.Sprintf("\nQA: %s", result.QAResult.Status))
+		if len(result.QAResult.Issues) > 0 {
+			sb.WriteString(fmt.Sprintf(" (%d issue(s))", len(result.QAResult.Issues)))
+		}
+		sb.WriteString("\n")
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // --- Memories ---
@@ -1012,61 +1149,15 @@ func (s *Server) handleSkillDependencies(w http.ResponseWriter, r *http.Request)
 
 // --- Bundled Skills ---
 
-func findBundledSkillsDir() string {
-	candidates := []string{"skills"}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "skills"))
-	}
-	if _, file, _, ok := runtime.Caller(0); ok {
-		repoRoot := filepath.Join(filepath.Dir(file), "..", "..")
-		candidates = append(candidates, filepath.Join(repoRoot, "skills"))
-	}
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			return c
-		}
-	}
-	return ""
-}
-
 func (s *Server) handleSkillsBundled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
 		return
 	}
-	dir := findBundledSkillsDir()
-	if dir == "" {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"skills": []interface{}{}})
-		return
-	}
-	entries, err := os.ReadDir(dir)
+	items, err := skill.ListBundledSkills()
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	var items []map[string]interface{}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			continue
-		}
-		var sk skill.Skill
-		if err := json.Unmarshal(data, &sk); err != nil {
-			continue
-		}
-		items = append(items, map[string]interface{}{
-			"name":        sk.Name,
-			"description": sk.Description,
-			"version":     sk.Version,
-			"tags":        sk.Tags,
-		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"skills": items})
 }
@@ -1083,24 +1174,9 @@ func (s *Server) handleSkillsInstallBundled(w http.ResponseWriter, r *http.Reque
 		errorResponse(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	dir := findBundledSkillsDir()
-	if dir == "" {
-		errorResponse(w, http.StatusNotFound, "bundled skills directory not found")
-		return
-	}
-	path := filepath.Join(dir, req.Name+".json")
-	data, err := os.ReadFile(path)
+	sk, err := skill.InstallBundledSkill(req.Name, "", true)
 	if err != nil {
-		errorResponse(w, http.StatusNotFound, fmt.Sprintf("bundled skill '%s' not found", req.Name))
-		return
-	}
-	sk, err := skill.FromJSON(data)
-	if err != nil {
-		errorResponse(w, http.StatusBadRequest, "invalid bundled skill JSON: "+err.Error())
-		return
-	}
-	if err := skill.Save(sk, nil); err != nil {
-		errorResponse(w, http.StatusInternalServerError, err.Error())
+		errorResponse(w, http.StatusNotFound, err.Error())
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "installed", "name": sk.Name})

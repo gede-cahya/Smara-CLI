@@ -9,13 +9,18 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-var updateVersion string
+var (
+	updateVersion   string
+	updateNoRestart bool
+)
 
 var updateCmd = &cobra.Command{
 	Use:   "update [version]",
@@ -72,11 +77,18 @@ var updateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("✅ Pembaruan berhasil! Smara diperbarui dari v%s ke v%s\n", version, remoteVersion)
+		if !updateNoRestart {
+			if err := activateUpdatedBinary(); err != nil {
+				fmt.Printf("⚠️  Binary sudah diperbarui, tapi aktivasi service otomatis gagal: %v\n", err)
+				fmt.Println("💡 Jalankan manual: sudo systemctl restart smara")
+			}
+		}
 	},
 }
 
 func init() {
 	updateCmd.Flags().StringVarP(&updateVersion, "version", "V", "", "Versi spesifik yang ingin diinstal (contoh: 1.4.0)")
+	updateCmd.Flags().BoolVar(&updateNoRestart, "no-restart", false, "Jangan restart otomatis service systemd yang memakai binary Smara")
 }
 
 type Release struct {
@@ -173,6 +185,90 @@ func downloadAsset(url string) (string, error) {
 	}
 
 	return tmpFile.Name(), nil
+}
+
+func activateUpdatedBinary() error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	services, err := findSystemdServicesUsing(exePath)
+	if err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		return nil
+	}
+	fmt.Printf("🔄 Menjadwalkan restart service: %s\n", strings.Join(services, ", "))
+	if err := scheduleSystemdRestart(services); err != nil {
+		return err
+	}
+	fmt.Println("✅ Service akan restart otomatis dalam beberapa detik agar binary baru aktif")
+	return nil
+}
+
+func findSystemdServicesUsing(exePath string) ([]string, error) {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return nil, nil
+	}
+	resolvedExe := exePath
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		resolvedExe = resolved
+	}
+	out, err := exec.Command("systemctl", "list-units", "--type=service", "--state=running", "--no-legend", "--no-pager").Output()
+	if err != nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	var services []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.HasSuffix(fields[0], ".service") {
+			continue
+		}
+		unit := fields[0]
+		execStart, err := exec.Command("systemctl", "show", unit, "--property=ExecStart", "--value").Output()
+		if err != nil {
+			continue
+		}
+		if !systemdExecUsesSmaraBinary(string(execStart), exePath, resolvedExe) || seen[unit] {
+			continue
+		}
+		seen[unit] = true
+		services = append(services, unit)
+	}
+	return services, nil
+}
+
+func systemdExecUsesSmaraBinary(execStart, exePath, resolvedExe string) bool {
+	if execStart == "" {
+		return false
+	}
+	if strings.Contains(execStart, exePath) || strings.Contains(execStart, resolvedExe) {
+		return true
+	}
+	base := filepath.Base(exePath)
+	return base == "smara" && strings.Contains(execStart, "/smara") && strings.Contains(execStart, " serve")
+}
+
+func scheduleSystemdRestart(services []string) error {
+	if len(services) == 0 {
+		return nil
+	}
+	unitName := fmt.Sprintf("smara-post-update-restart-%d", os.Getpid())
+	args := []string{"--unit", unitName, "--on-active=2s", "/bin/systemctl", "restart"}
+	args = append(args, services...)
+	out, err := exec.Command("systemd-run", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gagal menjadwalkan restart service: %w — %s", err, strings.TrimSpace(string(out)))
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		fmt.Print(string(out))
+	}
+	return nil
 }
 
 func extractAndApply(archivePath, filename string) error {

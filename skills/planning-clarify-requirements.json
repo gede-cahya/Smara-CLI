@@ -1,0 +1,32 @@
+{
+  "name": "planning-clarify-requirements",
+  "description": "Buat daftar pertanyaan klarifikasi, keputusan yang dibutuhkan, dan acceptance criteria awal sebelum eksekusi.",
+  "version": 1,
+  "tags": ["planning", "requirements", "clarification"],
+  "category_path": ["planning", "requirements"],
+  "params": [
+    {
+      "name": "goal",
+      "type": "string",
+      "description": "Fitur, bug, atau keputusan yang perlu diklarifikasi",
+      "required": true
+    },
+    {
+      "name": "context",
+      "type": "string",
+      "description": "Konteks tambahan seperti repo, stakeholder, atau batasan",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "tool": "planning_template",
+      "args": {
+        "kind": "clarify-requirements",
+        "goal": "__PARAM__goal",
+        "context": "__PARAM__context"
+      }
+    }
+  ]
+}

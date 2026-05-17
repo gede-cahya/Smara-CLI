@@ -1,0 +1,33 @@
+{
+  "name": "planning-agile-minsky",
+  "description": "Buat planning Agile/Minsky: user story, acceptance criteria, sprint slices, frames, unknowns, failure modes, dan backlog eksekusi.",
+  "version": 1,
+  "tags": ["planning", "agile", "minsky"],
+  "category_path": ["planning", "agile-minsky"],
+  "dependencies": ["planning-clarify-requirements", "planning-risk-review", "planning-test-plan"],
+  "params": [
+    {
+      "name": "goal",
+      "type": "string",
+      "description": "Produk, fitur, atau perubahan yang ingin direncanakan dengan gaya Agile/Minsky",
+      "required": true
+    },
+    {
+      "name": "context",
+      "type": "string",
+      "description": "Konteks project, constraint, user, deadline, atau arsitektur",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "tool": "planning_template",
+      "args": {
+        "kind": "agile-minsky",
+        "goal": "__PARAM__goal",
+        "context": "__PARAM__context"
+      }
+    }
+  ]
+}

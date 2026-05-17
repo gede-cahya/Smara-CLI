@@ -217,6 +217,13 @@ func (s *Supervisor) GetWorkspaceID() int64 {
 	return s.workspaceID
 }
 
+// GetMemoryStore returns the active long-term memory store.
+func (s *Supervisor) GetMemoryStore() memory.MemoryStore {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.memStore
+}
+
 // SetModel switches the LLM model/provider at runtime.
 func (s *Supervisor) SetModel(provider, model string) error {
 	// Build new config from stored config, updating provider and model

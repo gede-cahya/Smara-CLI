@@ -1,0 +1,32 @@
+{
+  "name": "planning-test-plan",
+  "description": "Buat test plan berisi golden path, edge cases, regression checks, automated tests, dan manual verification.",
+  "version": 1,
+  "tags": ["planning", "testing", "qa"],
+  "category_path": ["planning", "testing"],
+  "params": [
+    {
+      "name": "goal",
+      "type": "string",
+      "description": "Fitur, bug fix, atau workflow yang perlu diverifikasi",
+      "required": true
+    },
+    {
+      "name": "context",
+      "type": "string",
+      "description": "Konteks tambahan seperti test suite atau skenario manual",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "tool": "planning_template",
+      "args": {
+        "kind": "test-plan",
+        "goal": "__PARAM__goal",
+        "context": "__PARAM__context"
+      }
+    }
+  ]
+}

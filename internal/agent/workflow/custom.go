@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,13 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 )
 
+type MemoryNodeConfig struct {
+	Action  string `json:"action,omitempty"` // shared, read, search, write, read_write
+	Query   string `json:"query,omitempty"`
+	Content string `json:"content,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
 // CustomAgent defines a manually-configured agent in a custom workflow.
 type CustomAgent struct {
 	Role        string              `json:"role"`
@@ -19,6 +27,7 @@ type CustomAgent struct {
 	Tasks       []Task              `json:"tasks"`
 	DependsOn   []string            `json:"depends_on,omitempty"`
 	InputsFrom  map[string][]string `json:"inputs_from,omitempty"`
+	Memory      *MemoryNodeConfig   `json:"memory,omitempty"`
 }
 
 // CustomWorkflow is a user-defined workflow with manually-specified agents and connections.
@@ -116,7 +125,371 @@ func CustomWorkflowFromJSON(data []byte) (*CustomWorkflow, error) {
 	if err := json.Unmarshal(data, &cw); err != nil {
 		return nil, fmt.Errorf("invalid custom workflow JSON: %w", err)
 	}
+	if len(cw.Agents) > 0 {
+		return &cw, nil
+	}
+	if imported, ok := customWorkflowFromAgentSpec(data); ok {
+		return imported, nil
+	}
 	return &cw, nil
+}
+
+type externalAgentSkill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type externalAgentStage struct {
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Description      string            `json:"description"`
+	Skill            string            `json:"skill"`
+	Actions          []json.RawMessage `json:"actions"`
+	Conditions       []json.RawMessage `json:"conditions"`
+	SuccessCondition string            `json:"success_condition"`
+	FailureAction    string            `json:"failure_action"`
+}
+
+type externalAgentSpec struct {
+	Agent struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+	} `json:"agent"`
+	Purpose struct {
+		PrimaryGoal string   `json:"primary_goal"`
+		Outcomes    []string `json:"outcomes"`
+	} `json:"purpose"`
+	Skills struct {
+		Required []externalAgentSkill `json:"required"`
+		Optional []externalAgentSkill `json:"optional"`
+	} `json:"skills"`
+	Workflow struct {
+		Stages []externalAgentStage `json:"stages"`
+	} `json:"workflow"`
+}
+
+func customWorkflowFromAgentSpec(data []byte) (*CustomWorkflow, bool) {
+	var spec externalAgentSpec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return nil, false
+	}
+	if spec.Agent.ID == "" && spec.Agent.Name == "" && len(spec.Workflow.Stages) == 0 {
+		return nil, false
+	}
+
+	workflowName := firstNonEmpty(spec.Agent.ID, spec.Agent.Name, "imported-workflow")
+	mainRole := safeWorkflowID(firstNonEmpty(spec.Agent.ID, spec.Agent.Name, "imported-agent"))
+	if mainRole == "master" {
+		mainRole = "imported-agent"
+	}
+	memoryRole := uniqueWorkflowRole("memory-context", mainRole)
+	toolRole := uniqueWorkflowRole("tool-runner", mainRole, memoryRole)
+	description := firstNonEmpty(spec.Agent.Description, spec.Purpose.PrimaryGoal, spec.Agent.Name, "Imported custom agent workflow")
+
+	master := CustomAgent{
+		Role:        "master",
+		Description: "Node master dari import workflow. Baca tujuan workflow, koordinasikan agent utama, memory, dan tool runner.",
+		Skills:      []string{"orchestrator"},
+		Tasks: []Task{{
+			ID:          "coordinate",
+			Description: externalWorkflowDescription(spec),
+		}},
+		DependsOn:  []string{},
+		InputsFrom: map[string][]string{},
+	}
+	memory := CustomAgent{
+		Role:        memoryRole,
+		Description: "Memory node untuk menyimpan konteks import, tujuan, output, guardrail, dan kontrak antar node workflow.",
+		Skills:      []string{"memory"},
+		Tasks: []Task{{
+			ID:          "workflow-context",
+			Description: externalMemoryTaskDescription(spec),
+		}},
+		DependsOn: []string{"master"},
+		InputsFrom: map[string][]string{
+			"master": {"workflow_goal", "outcomes"},
+		},
+		Memory: &MemoryNodeConfig{Action: "shared", Limit: 5},
+	}
+	tools := CustomAgent{
+		Role:        toolRole,
+		Description: "Tool node hasil import. Jalankan atau terjemahkan action eksternal seperti shell, GitHub Actions, validasi, build, publish, dan verifikasi.",
+		Skills:      []string{"tool"},
+		Tasks:       externalToolTasks(spec),
+		DependsOn:   []string{"master"},
+		InputsFrom: map[string][]string{
+			"master": {"workflow_goal"},
+		},
+	}
+	main := CustomAgent{
+		Role:        mainRole,
+		Description: description,
+		Skills:      externalWorkflowSkills(spec),
+		Tasks:       externalAgentTasks(spec, description),
+		DependsOn:   []string{"master", memoryRole, toolRole},
+		InputsFrom: map[string][]string{
+			"master":   {"workflow_goal", "outcomes"},
+			memoryRole: {"workflow_context", "guardrails"},
+			toolRole:   {"tool_actions", "execution_plan"},
+		},
+	}
+
+	return &CustomWorkflow{
+		Name:        workflowName,
+		Description: externalWorkflowDescription(spec),
+		Agents:      []CustomAgent{master, main, memory, tools},
+	}, true
+}
+
+func externalAgentTasks(spec externalAgentSpec, fallback string) []Task {
+	tasks := make([]Task, 0, len(spec.Workflow.Stages))
+	for i, stage := range spec.Workflow.Stages {
+		taskID := safeWorkflowID(firstNonEmpty(stage.ID, stage.Name, fmt.Sprintf("stage-%d", i+1)))
+		tasks = append(tasks, Task{ID: taskID, Description: externalStageTaskDescription(stage)})
+	}
+	if len(tasks) == 0 {
+		tasks = append(tasks, Task{ID: "main", Description: fallback})
+	}
+	return tasks
+}
+
+func externalToolTasks(spec externalAgentSpec) []Task {
+	tasks := []Task{}
+	for i, stage := range spec.Workflow.Stages {
+		if len(stage.Actions) == 0 && len(stage.Conditions) == 0 {
+			continue
+		}
+		id := safeWorkflowID(firstNonEmpty(stage.ID, stage.Name, fmt.Sprintf("stage-%d", i+1)))
+		tasks = append(tasks, Task{
+			ID:          id + "-tools",
+			Description: externalToolTaskDescription(stage),
+			Type:        "tool",
+			ToolName:    externalStageToolName(stage),
+		})
+	}
+	if len(tasks) == 0 {
+		tasks = append(tasks, Task{ID: "tool-plan", Description: "Tidak ada action eksplisit di JSON import. Terjemahkan instruksi workflow menjadi rencana tool yang aman.", Type: "tool"})
+	}
+	return tasks
+}
+
+func externalMemoryTaskDescription(spec externalAgentSpec) string {
+	parts := []string{}
+	if spec.Agent.Name != "" {
+		parts = append(parts, "Agent: "+spec.Agent.Name)
+	}
+	if spec.Agent.Description != "" {
+		parts = append(parts, "Description: "+spec.Agent.Description)
+	}
+	if spec.Purpose.PrimaryGoal != "" {
+		parts = append(parts, "Goal: "+spec.Purpose.PrimaryGoal)
+	}
+	if len(spec.Purpose.Outcomes) > 0 {
+		parts = append(parts, "Outcomes: "+strings.Join(spec.Purpose.Outcomes, "; "))
+	}
+	if len(spec.Workflow.Stages) > 0 {
+		stageNames := make([]string, 0, len(spec.Workflow.Stages))
+		for _, stage := range spec.Workflow.Stages {
+			stageNames = append(stageNames, firstNonEmpty(stage.Name, stage.ID, "stage"))
+		}
+		parts = append(parts, "Stages: "+strings.Join(stageNames, " -> "))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func externalToolTaskDescription(stage externalAgentStage) string {
+	parts := []string{firstNonEmpty(stage.Name, stage.ID, "Imported tool stage")}
+	if stage.Description != "" {
+		parts = append(parts, stage.Description)
+	}
+	if len(stage.Actions) > 0 {
+		parts = append(parts, "Tool actions: "+summarizeExternalActions(stage.Actions))
+		if raw := compactExternalActions(stage.Actions); raw != "" {
+			parts = append(parts, "Action JSON: "+raw)
+		}
+	}
+	if len(stage.Conditions) > 0 {
+		parts = append(parts, fmt.Sprintf("Condition blocks: %d", len(stage.Conditions)))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func externalStageToolName(stage externalAgentStage) string {
+	for _, raw := range stage.Actions {
+		var action map[string]interface{}
+		if err := json.Unmarshal(raw, &action); err != nil {
+			continue
+		}
+		if tool := firstString(action, "tool_name", "tool", "type", "uses"); tool != "" {
+			return safeWorkflowID(tool)
+		}
+	}
+	if len(stage.Conditions) > 0 {
+		return "conditional"
+	}
+	return "tool"
+}
+
+func compactExternalActions(actions []json.RawMessage) string {
+	items := make([]string, 0, len(actions))
+	for _, raw := range actions {
+		var out bytes.Buffer
+		if err := json.Compact(&out, raw); err != nil {
+			continue
+		}
+		items = append(items, out.String())
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	joined := strings.Join(items, "; ")
+	if len(joined) > 1200 {
+		return joined[:1200] + "..."
+	}
+	return joined
+}
+
+func uniqueWorkflowRole(base string, existing ...string) string {
+	used := map[string]bool{}
+	for _, role := range existing {
+		used[role] = true
+	}
+	if !used[base] {
+		return base
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+func externalWorkflowDescription(spec externalAgentSpec) string {
+	parts := []string{}
+	if spec.Purpose.PrimaryGoal != "" {
+		parts = append(parts, spec.Purpose.PrimaryGoal)
+	} else if spec.Agent.Description != "" {
+		parts = append(parts, spec.Agent.Description)
+	}
+	if len(spec.Purpose.Outcomes) > 0 {
+		parts = append(parts, "Outcomes: "+strings.Join(spec.Purpose.Outcomes, "; "))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func externalWorkflowSkills(spec externalAgentSpec) []string {
+	seen := map[string]bool{}
+	skills := []string{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		skills = append(skills, name)
+	}
+	for _, item := range spec.Skills.Required {
+		add(item.Name)
+	}
+	for _, item := range spec.Skills.Optional {
+		add(item.Name)
+	}
+	for _, stage := range spec.Workflow.Stages {
+		add(stage.Skill)
+	}
+	if len(skills) == 0 {
+		add(spec.Agent.Type)
+	}
+	return skills
+}
+
+func externalStageTaskDescription(stage externalAgentStage) string {
+	parts := []string{}
+	if stage.Name != "" {
+		parts = append(parts, stage.Name)
+	}
+	if stage.Description != "" {
+		parts = append(parts, stage.Description)
+	}
+	if stage.Skill != "" {
+		parts = append(parts, "Skill: "+stage.Skill)
+	}
+	if len(stage.Actions) > 0 {
+		parts = append(parts, "Actions: "+summarizeExternalActions(stage.Actions))
+	}
+	if len(stage.Conditions) > 0 {
+		parts = append(parts, fmt.Sprintf("Conditions: %d condition block(s)", len(stage.Conditions)))
+	}
+	if stage.SuccessCondition != "" {
+		parts = append(parts, "Success: "+stage.SuccessCondition)
+	}
+	if stage.FailureAction != "" {
+		parts = append(parts, "Failure action: "+stage.FailureAction)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func summarizeExternalActions(actions []json.RawMessage) string {
+	summary := make([]string, 0, len(actions))
+	for _, raw := range actions {
+		var action map[string]interface{}
+		if err := json.Unmarshal(raw, &action); err != nil {
+			continue
+		}
+		label := firstString(action, "name", "type", "uses", "run")
+		if label == "" {
+			label = "action"
+		}
+		summary = append(summary, label)
+	}
+	if len(summary) == 0 {
+		return fmt.Sprintf("%d action(s)", len(actions))
+	}
+	return strings.Join(summary, "; ")
+}
+
+func firstString(values map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func safeWorkflowID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
+		if valid {
+			b.WriteRune(r)
+			lastDash = r == '-'
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	result := strings.Trim(b.String(), "-_")
+	if result == "" {
+		return "imported"
+	}
+	return result
 }
 
 // customWorkflowDir returns the directory for storing custom workflows.

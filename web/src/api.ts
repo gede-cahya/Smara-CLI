@@ -254,6 +254,13 @@ export interface CustomWorkflowTask {
   tool_name?: string
 }
 
+export interface MemoryNodeConfig {
+  action?: 'shared' | 'read' | 'search' | 'write' | 'read_write'
+  query?: string
+  content?: string
+  limit?: number
+}
+
 export interface CustomWorkflowAgent {
   role: string
   description: string
@@ -261,6 +268,7 @@ export interface CustomWorkflowAgent {
   tasks: CustomWorkflowTask[]
   depends_on?: string[]
   inputs_from?: Record<string, string[]>
+  memory?: MemoryNodeConfig
 }
 
 export interface CustomWorkflowItem {
@@ -287,6 +295,9 @@ export interface BundledSkillItem {
   description: string
   version: number
   tags: string[]
+  params?: SkillParam[]
+  category_path?: string[]
+  dependencies?: string[]
 }
 
 export interface BundledSkillsResponse {

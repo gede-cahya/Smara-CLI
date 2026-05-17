@@ -30,6 +30,15 @@ func TestGetModeInfo_Workflow(t *testing.T) {
 	assert.Contains(t, info.SystemPrompt, "WORKFLOW")
 }
 
+func TestModePlan_SystemPromptStructure(t *testing.T) {
+	info := GetModeInfo(ModePlan)
+	assert.Contains(t, info.SystemPrompt, "Recommended approach")
+	assert.Contains(t, info.SystemPrompt, "Verification")
+	assert.Contains(t, info.SystemPrompt, "Risks / rollback")
+	assert.Contains(t, info.SystemPrompt, "planning-agile-minsky")
+	assert.Contains(t, info.SystemPrompt, "Lanjutkan eksekusi? (ya/tidak)")
+}
+
 func TestValidMode_Workflow(t *testing.T) {
 	assert.True(t, ValidMode("workflow"))
 	assert.False(t, ValidMode("WORKFLOW")) // case sensitive

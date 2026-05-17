@@ -150,3 +150,38 @@ func TestSharedState_MarkWaveCompleted(t *testing.T) {
 	assert.True(t, completed["backend"])
 	assert.False(t, completed["frontend"])
 }
+
+func TestCustomWorkflowFromJSON_ImportsExternalAgentStages(t *testing.T) {
+	data := []byte(`{
+		"agent": {"id": "github-release-agent", "name": "GitHub Release Agent", "description": "Manage GitHub releases", "type": "workflow-orchestrator"},
+		"purpose": {"primary_goal": "Automate releases", "outcomes": ["Tag validated", "Release published"]},
+		"skills": {"required": [{"name": "generate-release-notes-from-reference"}], "optional": [{"name": "github-release-verification"}]},
+		"workflow": {"stages": [
+			{"id": "validate_input", "name": "Validate Release Input", "description": "Validate tag and repository", "actions": [{"type": "validate_required", "fields": ["repository", "tag"]}], "success_condition": "Input valid"},
+			{"id": "publish_release", "name": "Publish GitHub Release", "description": "Upload release assets", "skill": "github-release-upload-crosscompiled-assets", "success_condition": "Release published"}
+		]}
+	}`)
+
+	cw, err := CustomWorkflowFromJSON(data)
+
+	assert.NoError(t, err)
+	assert.NoError(t, cw.Validate())
+	assert.Equal(t, "github-release-agent", cw.Name)
+	assert.Len(t, cw.Agents, 4)
+	assert.Equal(t, "master", cw.Agents[0].Role)
+	assert.Equal(t, "github-release-agent", cw.Agents[1].Role)
+	assert.Equal(t, "memory-context", cw.Agents[2].Role)
+	assert.Equal(t, "tool-runner", cw.Agents[3].Role)
+	assert.Equal(t, []string{"master", "memory-context", "tool-runner"}, cw.Agents[1].DependsOn)
+	assert.NotNil(t, cw.Agents[2].Memory)
+	assert.Contains(t, cw.Agents[2].Skills, "memory")
+	assert.Contains(t, cw.Agents[3].Skills, "tool")
+	assert.Len(t, cw.Agents[1].Tasks, 2)
+	assert.Equal(t, "validate_input", cw.Agents[1].Tasks[0].ID)
+	assert.Contains(t, cw.Agents[1].Tasks[1].Description, "github-release-upload-crosscompiled-assets")
+	assert.Len(t, cw.Agents[3].Tasks, 1)
+	assert.Equal(t, "validate_input-tools", cw.Agents[3].Tasks[0].ID)
+	assert.Contains(t, cw.Agents[1].Skills, "generate-release-notes-from-reference")
+	assert.Contains(t, cw.Agents[1].Skills, "github-release-verification")
+	assert.Contains(t, cw.Agents[1].Skills, "github-release-upload-crosscompiled-assets")
+}

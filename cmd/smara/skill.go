@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -36,6 +37,13 @@ var skillRunCmd = &cobra.Command{
 		sk, err := skill.Load(name)
 		if err != nil {
 			return fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+		}
+		if strings.TrimSpace(skillRunArgs) != "" {
+			var runtimeArgs map[string]interface{}
+			if err := json.Unmarshal([]byte(skillRunArgs), &runtimeArgs); err != nil {
+				return fmt.Errorf("--args harus JSON object valid: %w", err)
+			}
+			sk = sk.WithArgs(runtimeArgs)
 		}
 		fmt.Printf("Menjalankan skill: %s\n", sk.Summary())
 
@@ -346,8 +354,27 @@ var skillInstallCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		input := args[0]
 
-		// If input does not look like a URL, try resolving from Context7 registry first
+		// If input does not look like a URL, try bundled skills before remote registries.
 		if !strings.Contains(input, "/") && !strings.Contains(input, ".") {
+			if bundled, err := skill.ListBundledSkills(); err == nil {
+				for _, item := range bundled {
+					if !strings.EqualFold(item.Name, input) {
+						continue
+					}
+					sk, err := skill.InstallBundledSkill(item.Name, skillInstallAlias, skillInstallOverwrite)
+					if err != nil {
+						return fmt.Errorf("gagal install bundled skill '%s': %w", item.Name, err)
+					}
+					fmt.Printf("Skill '%s' berhasil di-install dari bundled skills.\n", sk.Name)
+					fmt.Printf("  Deskripsi: %s\n", sk.Description)
+					fmt.Printf("  Steps: %d\n", len(sk.Steps))
+					if len(sk.Tags) > 0 {
+						fmt.Printf("  Tags: %s\n", strings.Join(sk.Tags, ", "))
+					}
+					return nil
+				}
+			}
+
 			entries, err := agent.SearchContext7Registry(input)
 			if err == nil && len(entries) > 0 {
 				// Use exact name match if available
@@ -492,7 +519,7 @@ var skillSearchRegistry string
 
 var skillSearchCmd = &cobra.Command{
 	Use:   "search [query/tag]",
-	Short: "Cari skill di Context7 registry dan marketplace",
+	Short: "Cari skill di bundled skills, Context7 registry, dan marketplace",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := ""
 		if len(args) > 0 {
@@ -500,6 +527,26 @@ var skillSearchCmd = &cobra.Command{
 		}
 
 		var allResults []string
+
+		bundled, err := skill.ListBundledSkills()
+		if err == nil && len(bundled) > 0 {
+			var matches []string
+			q := strings.ToLower(query)
+			for _, b := range bundled {
+				if q != "" && !strings.Contains(strings.ToLower(b.Name), q) && !strings.Contains(strings.ToLower(b.Description), q) && !tagsContain(b.Tags, q) {
+					continue
+				}
+				tags := ""
+				if len(b.Tags) > 0 {
+					tags = fmt.Sprintf("  Tags: %s", strings.Join(b.Tags, ", "))
+				}
+				matches = append(matches, fmt.Sprintf("  %s — %s (v%d)%s", b.Name, b.Description, b.Version, tags))
+			}
+			if len(matches) > 0 {
+				allResults = append(allResults, "Bundled Skills:")
+				allResults = append(allResults, matches...)
+			}
+		}
 
 		// 1. Search Context7 registry
 		c7Entries, err := agent.SearchContext7Registry(query)
@@ -718,6 +765,15 @@ var skillAnalyticsCmd = &cobra.Command{
 	},
 }
 
+func tagsContain(tags []string, query string) bool {
+	for _, tag := range tags {
+		if strings.Contains(strings.ToLower(tag), query) {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	skillCmd.AddCommand(skillRunCmd, skillListCmd, skillDeleteCmd, skillCreateCmd)
 	skillCmd.AddCommand(skillInstallCmd, skillUpdateCmd, skillInfoCmd)
@@ -726,6 +782,7 @@ func init() {
 	skillRegistryCmd.AddCommand(skillRegistryListCmd, skillRegistrySyncCmd)
 	rootCmd.AddCommand(skillCmd)
 
+	skillRunCmd.Flags().StringVar(&skillRunArgs, "args", "", "Argumen runtime skill sebagai JSON object")
 	skillInstallCmd.Flags().StringVar(&skillInstallAlias, "as", "", "Alias nama skill (override nama dari JSON)")
 	skillInstallCmd.Flags().BoolVar(&skillInstallOverwrite, "overwrite", false, "Timpa skill yang sudah ada")
 	skillSearchCmd.Flags().StringVar(&skillSearchQuery, "query", "", "Filter kata kunci (positional juga bisa)")

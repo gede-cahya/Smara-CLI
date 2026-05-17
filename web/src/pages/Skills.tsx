@@ -246,10 +246,15 @@ export default function Skills() {
                       {installed && <span className="text-[10px] px-1.5 py-0.5 bg-green-900/20 text-green-400 rounded">installed</span>}
                     </div>
                     <div className="text-xs text-gray-500 truncate">{b.description || 'No description'}</div>
-                    <div className="flex gap-1 mt-1">
+                    <div className="flex gap-1 mt-1 flex-wrap">
                       {b.tags?.map(t => (
                         <span key={t} className="text-[10px] px-1.5 py-0.5 bg-gray-800/60 rounded text-gray-400">{t}</span>
                       ))}
+                      {b.params && b.params.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-smara-900/30 rounded text-smara-400 flex items-center gap-1">
+                          <Settings className="w-3 h-3" />{b.params.length} param
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button

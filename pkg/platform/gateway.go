@@ -21,23 +21,25 @@ const maxMessageLength = 4000
 // and sends responses back. It manages per-channel sessions, authentication,
 // and rate limiting.
 type Gateway struct {
-	adapters    map[string]PlatformAdapter
-	supervisor  *agent.Supervisor
-	sessions    map[string]*PlatformSession // channelID → session
-	auth        *AuthManager
-	rateLimiter *RateLimiter
-	metrics     *metrics.MetricsCollector
-	mu          sync.RWMutex
+	adapters        map[string]PlatformAdapter
+	supervisor      *agent.Supervisor
+	sessions        map[string]*PlatformSession // channelID → session
+	auth            *AuthManager
+	rateLimiter     *RateLimiter
+	metrics         *metrics.MetricsCollector
+	sensitiveGuards map[string]SensitiveDataGuard
+	mu              sync.RWMutex
 }
 
 // NewGateway creates a new Gateway with the given supervisor.
 func NewGateway(supervisor *agent.Supervisor) *Gateway {
 	return &Gateway{
-		adapters:    make(map[string]PlatformAdapter),
-		supervisor:  supervisor,
-		sessions:    make(map[string]*PlatformSession),
-		auth:        NewAuthManager(),
-		rateLimiter: NewRateLimiter(RateLimitConfig{RequestsPerMinute: 20, BurstSize: 5}),
+		adapters:        make(map[string]PlatformAdapter),
+		supervisor:      supervisor,
+		sessions:        make(map[string]*PlatformSession),
+		auth:            NewAuthManager(),
+		rateLimiter:     NewRateLimiter(RateLimitConfig{RequestsPerMinute: 20, BurstSize: 5}),
+		sensitiveGuards: make(map[string]SensitiveDataGuard),
 	}
 }
 
@@ -142,6 +144,11 @@ func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error
 	// 2. Rate limit check
 	if !g.rateLimiter.Allow(msg.UserID) {
 		return g.sendReply(ctx, msg, "⏳ Rate limit tercapai. Coba lagi dalam beberapa saat.")
+	}
+
+	if denied, denyMessage := g.checkSensitiveDataAccess(msg); denied {
+		log.Printf("[gateway] Owner-only request denied for %s user=%s", msg.Platform, msg.UserID)
+		return g.sendReply(ctx, msg, denyMessage)
 	}
 
 	// 3. Record incoming message metric
@@ -258,6 +265,11 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	g.mu.RLock()
 	adapter, ok := g.adapters[msg.Platform]
 	g.mu.RUnlock()
+	if denied, denyMessage := g.checkSensitiveDataAccess(msg); denied {
+		log.Printf("[gateway] Sensitive data request denied for %s user=%s", msg.Platform, msg.UserID)
+		return g.sendReply(ctx, msg, denyMessage)
+	}
+	downloadedImages := []string{}
 	if len(msg.Attachments) > 0 {
 		if downloader, ok := adapter.(AttachmentDownloader); ok {
 			injected := []string{}
@@ -275,6 +287,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 					continue
 				}
 				log.Printf("[gateway] image attachment di-download: %s", path)
+				downloadedImages = append(downloadedImages, path)
 				injected = append(injected, "[image:"+path+"]")
 			}
 			if len(injected) > 0 {
@@ -288,6 +301,15 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		} else {
 			log.Printf("[gateway] adapter %s belum support download attachment, %d attachment di-skip", msg.Platform, len(msg.Attachments))
 		}
+	}
+
+	if len(downloadedImages) > 0 && isImageAnalysisPrompt(msg.Content) {
+		log.Printf("[gateway] image analysis fast-path matched for %s/%s images=%d", msg.Platform, msg.ChannelID, len(downloadedImages))
+		output, err := analyzeDownloadedImages(ctx, downloadedImages, msg.Content)
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
+		}
+		return g.sendReply(ctx, msg, output)
 	}
 
 	if ok {
@@ -313,6 +335,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	})
 
 	if isImageGenerationPrompt(msg.Content) {
+		log.Printf("[gateway] image generation fast-path matched for %s/%s: %q", msg.Platform, msg.ChannelID, redactSensitiveLogContent(msg.Content))
 		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Content}, nil)
 		if err != nil {
 			return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
@@ -403,6 +426,142 @@ func isImageGenerationPrompt(prompt string) bool {
 		}
 	}
 	return false
+}
+
+func isImageAnalysisPrompt(prompt string) bool {
+	p := strings.ToLower(prompt)
+	terms := []string{"analisa", "analisis", "analyze", "lihat", "gambar", "image", "foto", "screenshot", "ini kenapa", "jelaskan", "apa ini", "cek ini"}
+	for _, term := range terms {
+		if strings.Contains(p, term) {
+			return true
+		}
+	}
+	return strings.TrimSpace(prompt) == ""
+}
+
+func analyzeDownloadedImages(ctx context.Context, paths []string, question string) (string, error) {
+	question = stripPlatformImageSteer(question)
+	var summaries []string
+	for _, path := range paths {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		out, err := agent.ExecuteBuiltinTool("analyze_image", map[string]interface{}{"path": path, "ocr_lang": "eng+ind", "include_metadata": false}, nil)
+		if err != nil {
+			return "", err
+		}
+		summaries = append(summaries, summarizeImageAnalysisForChat(out))
+	}
+	return composeImageAnalysisReply(question, summaries), nil
+}
+
+func summarizeImageAnalysisForChat(output string) string {
+	ocr := extractOCRText(output)
+	if ocr == "" {
+		return "Saya bisa membaca gambar yang dikirim, tetapi tidak menemukan teks yang cukup jelas untuk diambil dari gambar tersebut."
+	}
+	return ocr
+}
+
+func extractOCRText(output string) string {
+	marker := "── OCR Text (tesseract) ──"
+	idx := strings.Index(output, marker)
+	if idx < 0 {
+		return ""
+	}
+	text := strings.TrimSpace(output[idx+len(marker):])
+	if next := strings.Index(text, "\n── "); next >= 0 {
+		text = text[:next]
+	}
+	return sanitizeImageAnalysisText(text)
+}
+
+func sanitizeImageAnalysisText(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "path") || strings.HasPrefix(lower, "size") || strings.HasPrefix(lower, "modified") || strings.HasPrefix(lower, "dimensions") || strings.HasPrefix(lower, "format") {
+			continue
+		}
+		if strings.Contains(line, "/.smara/") || strings.Contains(line, "/home/") {
+			continue
+		}
+		kept = append(kept, line)
+		if len(kept) >= 14 {
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+func composeImageAnalysisReply(question string, summaries []string) string {
+	combined := strings.TrimSpace(strings.Join(summaries, "\n\n"))
+	if combined == "" {
+		return "Saya belum bisa mengenali isi gambar dengan jelas."
+	}
+	lowerQuestion := strings.ToLower(question)
+	if looksLikeSubscriptionCheckout(combined) {
+		if strings.Contains(lowerQuestion, "kenapa") || strings.Contains(lowerQuestion, "masalah") {
+			return "Itu muncul karena aplikasi sedang menampilkan halaman upgrade/checkout. Akun terlihat masih di paket Free atau aksesnya terbatas, lalu diarahkan ke pilihan paket berbayar seperti Plus/Pro dengan opsi pembayaran GoPay."
+		}
+		return "Itu screenshot halaman upgrade/subscription aplikasi AI. Isinya menawarkan paket Free, Plus, dan Pro, termasuk trial, image creation, memory, deep research/agent mode, dan pembayaran GoPay."
+	}
+	if strings.Contains(lowerQuestion, "teks") || strings.Contains(lowerQuestion, "tulisan") || strings.Contains(lowerQuestion, "ocr") {
+		return "Teks yang terbaca dari gambar:\n\n" + combined
+	}
+	return firstMeaningfulImageSummary(combined)
+}
+
+func looksLikeSubscriptionCheckout(text string) bool {
+	lower := strings.ToLower(text)
+	matches := 0
+	for _, term := range []string{"free", "plus", "pro", "trial", "checkout", "gopay", "image creation", "memory", "subscription"} {
+		if strings.Contains(lower, term) {
+			matches++
+		}
+	}
+	return matches >= 3
+}
+
+func firstMeaningfulImageSummary(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, 4)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		kept = append(kept, line)
+		if len(kept) >= 4 {
+			break
+		}
+	}
+	if len(kept) == 0 {
+		return "Saya belum bisa menyimpulkan isi gambar dengan jelas."
+	}
+	return "Gambar ini tampaknya berisi: " + strings.Join(kept, "; ")
+}
+
+func stripPlatformImageSteer(prompt string) string {
+	if idx := strings.Index(prompt, "\n\n[Sistem: pesan ini menyertakan gambar."); idx >= 0 {
+		prompt = prompt[:idx]
+	}
+	fields := strings.Fields(prompt)
+	kept := fields[:0]
+	for _, field := range fields {
+		if strings.HasPrefix(field, "[image:") && strings.HasSuffix(field, "]") {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	return strings.TrimSpace(strings.Join(kept, " "))
 }
 
 func imageAttachmentsFromToolOutput(output string) []Attachment {

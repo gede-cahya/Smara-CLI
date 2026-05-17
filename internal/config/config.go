@@ -26,14 +26,17 @@ type MCPServer struct {
 
 // PlatformBotConfig holds config for a single platform bot.
 type PlatformBotConfig struct {
-	Enabled      bool     `mapstructure:"enabled" yaml:"enabled"`
-	Token        string   `mapstructure:"token" yaml:"token"`
-	AllowedUsers []string `mapstructure:"allowed_users" yaml:"allowed_users"`
-	BlockedUsers []string `mapstructure:"blocked_users" yaml:"blocked_users"`
-	GuildIDs     []string `mapstructure:"guild_ids" yaml:"guild_ids"`         // Discord only
-	AllowedRoles []string `mapstructure:"allowed_roles" yaml:"allowed_roles"` // Discord only
-	RateLimit    int      `mapstructure:"rate_limit" yaml:"rate_limit"`       // requests per minute
-	RateBurst    int      `mapstructure:"rate_burst" yaml:"rate_burst"`       // burst size
+	Enabled              bool     `mapstructure:"enabled" yaml:"enabled"`
+	Token                string   `mapstructure:"token" yaml:"token"`
+	AllowedUsers         []string `mapstructure:"allowed_users" yaml:"allowed_users"`
+	BlockedUsers         []string `mapstructure:"blocked_users" yaml:"blocked_users"`
+	OwnerID              string   `mapstructure:"owner_id" yaml:"owner_id"`
+	SensitiveKeywords    []string `mapstructure:"sensitive_keywords" yaml:"sensitive_keywords"`
+	SensitiveDenyMessage string   `mapstructure:"sensitive_deny_message" yaml:"sensitive_deny_message"`
+	GuildIDs             []string `mapstructure:"guild_ids" yaml:"guild_ids"`         // Discord only
+	AllowedRoles         []string `mapstructure:"allowed_roles" yaml:"allowed_roles"` // Discord only
+	RateLimit            int      `mapstructure:"rate_limit" yaml:"rate_limit"`       // requests per minute
+	RateBurst            int      `mapstructure:"rate_burst" yaml:"rate_burst"`       // burst size
 }
 
 // WhatsAppConfig holds config specifically for WhatsApp.

@@ -50,6 +50,9 @@ func RunCustomWorkflow(supervisor *agent.Supervisor, provider llm.Provider, cw *
 		}
 	}
 	injectInputsFrom(cw, sharedState)
+	if err := hydrateMemoryNodes(cw, supervisor, provider, sharedState); err != nil {
+		return nil, fmt.Errorf("memory node failed: %w", err)
+	}
 	runner := NewRunner(bp, workerMap, sharedState)
 	allResults, err := runner.Run(context.Background(), supervisor)
 	if err != nil {

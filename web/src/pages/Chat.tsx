@@ -825,15 +825,19 @@ export default function Chat() {
     >
       {/* Header */}
       <div className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-900/50">
-        <div className="flex items-center gap-2">
-          <Bot className="w-5 h-5 text-smara-400" />
+        <div className="flex items-center gap-3 min-w-0">
+          <Bot className="w-5 h-5 text-smara-400 shrink-0" />
           <button
             onClick={() => setShowSessions(!showSessions)}
-            className="font-medium hover:text-smara-300 transition-colors"
+            className="group flex items-center gap-2 min-w-0 max-w-[360px] px-3 py-1.5 rounded-lg border border-gray-700/70 bg-gray-950/50 hover:border-smara-500/60 hover:bg-smara-950/30 transition-colors"
+            title="Pilih sesi chat"
           >
-            {current.name}
+            <MessageSquare className="w-4 h-4 text-gray-500 group-hover:text-smara-300 shrink-0" />
+            <span className="font-medium truncate group-hover:text-smara-200">{current.name}</span>
+            <span className="text-[10px] text-gray-500 shrink-0">{sessions.length} sesi</span>
+            <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform shrink-0 ${showSessions ? 'rotate-180 text-smara-300' : ''}`} />
           </button>
-          <span className="text-[10px] text-gray-500 font-mono ml-2">{sessionId}</span>
+          <span className="hidden md:inline text-[10px] text-gray-500 font-mono truncate max-w-[180px]">{sessionId}</span>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -854,41 +858,64 @@ export default function Chat() {
 
       {/* Session dropdown */}
       {showSessions && (
-        <div className="absolute top-14 left-64 right-0 z-50 bg-gray-900 border-b border-gray-800 p-2 max-h-48 overflow-y-auto">
-          <div className="flex items-center justify-between mb-2 px-2">
-            <span className="text-xs text-gray-500 font-medium">Sesi Chat ({sessions.length})</span>
-            <button onClick={() => setShowSessions(false)} className="text-xs text-gray-500 hover:text-gray-300">Tutup</button>
-          </div>
-          <div className="space-y-1">
-            {sessions.map(s => (
-              <div
-                key={s.id}
-                onClick={() => { setCurrent(s); setShowSessions(false); }}
-                className={`flex items-center justify-between p-2 rounded cursor-pointer text-sm ${
-                  s.id === current.id ? 'bg-smara-900/40 border border-smara-700/30' : 'hover:bg-gray-800'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-3 h-3 text-gray-500" />
-                  <span className="truncate max-w-[200px]">{s.name}</span>
-                  <span className="text-[10px] text-gray-600">{s.messages.length} pesan</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-600 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {new Date(s.updatedAt).toLocaleTimeString()}
-                  </span>
-                  {sessions.length > 1 && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
-                      className="text-gray-600 hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
+        <div className="absolute top-14 left-0 right-0 md:left-64 z-50 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl shadow-2xl shadow-black/40">
+          <div className="mx-auto max-w-5xl p-3">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div>
+                <div className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Sesi dari Smara Web</div>
+                <div className="text-[11px] text-gray-600">Pilih sesi untuk ditampilkan di chat</div>
               </div>
-            ))}
+              <button onClick={() => setShowSessions(false)} className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800">Tutup</button>
+            </div>
+            <div className="grid gap-2 max-h-80 overflow-y-auto pr-1">
+              {sessions.length === 0 && (
+                <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-sm text-gray-500">Belum ada sesi tersimpan.</div>
+              )}
+              {sessions.map(s => {
+                const last = s.messages[s.messages.length - 1]
+                return (
+                  <div
+                    key={s.id}
+                    onClick={() => { setCurrent(s); setShowSessions(false); }}
+                    className={`group flex items-center justify-between gap-3 p-3 rounded-xl cursor-pointer text-sm border transition-all ${
+                      s.id === current.id
+                        ? 'bg-smara-900/35 border-smara-500/40 shadow-sm shadow-smara-950/40'
+                        : 'bg-gray-900/60 border-gray-800 hover:bg-gray-800 hover:border-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className={`mt-0.5 rounded-lg p-2 ${s.id === current.id ? 'bg-smara-500/15 text-smara-300' : 'bg-gray-800 text-gray-500 group-hover:text-gray-300'}`}>
+                        <MessageSquare className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-medium text-gray-100 truncate max-w-[360px]">{s.name}</span>
+                          {s.id === current.id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-smara-500/15 text-smara-200 border border-smara-500/20">aktif</span>}
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500 truncate max-w-[520px]">
+                          {last?.content ? last.content : 'Sesi kosong'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="hidden sm:flex flex-col items-end text-[10px] text-gray-600">
+                        <span>{s.messages.length} pesan</span>
+                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(s.updatedAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      {sessions.length > 1 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                          className="text-gray-600 hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-950/30"
+                          title="Hapus sesi"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
       )}

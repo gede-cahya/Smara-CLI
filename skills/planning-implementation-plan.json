@@ -1,0 +1,32 @@
+{
+  "name": "planning-implementation-plan",
+  "description": "Buat rencana implementasi ringkas dengan context, recommended approach, file terkait, verifikasi, dan risiko.",
+  "version": 1,
+  "tags": ["planning", "implementation", "engineering"],
+  "category_path": ["planning", "implementation"],
+  "params": [
+    {
+      "name": "goal",
+      "type": "string",
+      "description": "Perubahan atau fitur yang ingin diimplementasikan",
+      "required": true
+    },
+    {
+      "name": "context",
+      "type": "string",
+      "description": "Konteks teknis, batasan, atau file yang sudah diketahui",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "tool": "planning_template",
+      "args": {
+        "kind": "implementation-plan",
+        "goal": "__PARAM__goal",
+        "context": "__PARAM__context"
+      }
+    }
+  ]
+}

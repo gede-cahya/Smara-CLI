@@ -52,6 +52,15 @@ func TestGetModeInfo_UnknownModeDefaultsToAsk(t *testing.T) {
 	assert.Equal(t, "Ask", info.Label)
 }
 
+func TestModePlan_SystemPromptStructure(t *testing.T) {
+	info := GetModeInfo(ModePlan)
+	assert.Contains(t, info.SystemPrompt, "Recommended approach")
+	assert.Contains(t, info.SystemPrompt, "Verification")
+	assert.Contains(t, info.SystemPrompt, "Risks / rollback")
+	assert.Contains(t, info.SystemPrompt, "planning-agile-minsky")
+	assert.Contains(t, info.SystemPrompt, "Lanjutkan eksekusi? (ya/tidak)")
+}
+
 func TestValidMode(t *testing.T) {
 	assert.True(t, ValidMode("ask"))
 	assert.True(t, ValidMode("rush"))

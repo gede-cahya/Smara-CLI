@@ -753,6 +753,29 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "planning_template",
+			Description: "Menghasilkan scaffold markdown read-only untuk planning terstruktur. Gunakan melalui planning skills atau langsung saat user meminta rencana, review risiko, test plan, atau Agile/Minsky planning.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"kind": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"clarify-requirements", "implementation-plan", "risk-review", "test-plan", "agile-minsky"},
+						"description": "Jenis template planning yang diinginkan.",
+					},
+					"goal": map[string]interface{}{
+						"type":        "string",
+						"description": "Tujuan, fitur, bug, atau keputusan yang ingin direncanakan.",
+					},
+					"context": map[string]interface{}{
+						"type":        "string",
+						"description": "Konteks tambahan seperti repo, batasan, deadline, stakeholder, atau catatan teknis.",
+					},
+				},
+				"required": []string{"kind", "goal"},
+			},
+		},
+		{
 			Name:        "skill_delete",
 			Description: "Menghapus skill tersimpan. Gunakan hanya jika user eksplisit minta skill dihapus.",
 			Parameters: map[string]interface{}{
@@ -1858,6 +1881,9 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("gagal menghapus skill: %w", err)
 		}
 		return fmt.Sprintf("Skill '%s' dihapus.", name), nil
+
+	case "planning_template":
+		return buildPlanningTemplate(getStr(args, "kind"), getStr(args, "goal"), getStr(args, "context"))
 
 	case "schedule_reminder":
 		promptText := getStr(args, "prompt_text")

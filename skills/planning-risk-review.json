@@ -1,0 +1,32 @@
+{
+  "name": "planning-risk-review",
+  "description": "Review risiko sebelum eksekusi, termasuk security, data loss, compatibility, performance, UX, dan mitigasi.",
+  "version": 1,
+  "tags": ["planning", "risk", "review"],
+  "category_path": ["planning", "review"],
+  "params": [
+    {
+      "name": "goal",
+      "type": "string",
+      "description": "Rencana atau perubahan yang perlu direview risikonya",
+      "required": true
+    },
+    {
+      "name": "context",
+      "type": "string",
+      "description": "Konteks tambahan tentang sistem, data, atau deployment",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "tool": "planning_template",
+      "args": {
+        "kind": "risk-review",
+        "goal": "__PARAM__goal",
+        "context": "__PARAM__context"
+      }
+    }
+  ]
+}

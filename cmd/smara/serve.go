@@ -254,6 +254,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if len(enabledPlatforms) == 0 {
 		return fmt.Errorf("tidak ada platform yang diaktifkan. Gunakan --platform atau atur di config")
 	}
+	configureSensitiveDataGuards(gateway, cfg, enabledPlatforms)
 
 	// 7. Connect platform adapters
 	ctx, cancel := context.WithCancel(context.Background())
@@ -412,6 +413,37 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func configureSensitiveDataGuards(gateway *platform.Gateway, cfg *config.SmaraConfig, enabledPlatforms []string) {
+	if !platformEnabled(enabledPlatforms, "discord") {
+		return
+	}
+	discordCfg := cfg.Platforms.Discord
+	ownerID := strings.TrimSpace(discordCfg.OwnerID)
+	if envOwnerID := strings.TrimSpace(os.Getenv("SMARA_DISCORD_OWNER_ID")); envOwnerID != "" {
+		ownerID = envOwnerID
+	}
+	if ownerID == "" && len(discordCfg.AllowedUsers) == 1 {
+		ownerID = strings.TrimSpace(discordCfg.AllowedUsers[0])
+	}
+	gateway.SetSensitiveDataGuard("discord", platform.SensitiveDataGuard{
+		OwnerIDs:          []string{ownerID},
+		SensitiveKeywords: discordCfg.SensitiveKeywords,
+		DenyMessage:       discordCfg.SensitiveDenyMessage,
+	})
+	if ownerID == "" {
+		ui.PrintWarning("Discord sensitive-data guard aktif tanpa owner_id; prompt sensitif akan ditolak sampai platforms.discord.owner_id atau SMARA_DISCORD_OWNER_ID diatur")
+	}
+}
+
+func platformEnabled(platforms []string, target string) bool {
+	for _, platform := range platforms {
+		if platform == target {
+			return true
+		}
+	}
+	return false
 }
 
 // determinePlatforms figures out which platforms to enable based on CLI flags and config.
