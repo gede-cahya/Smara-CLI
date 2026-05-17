@@ -333,6 +333,9 @@ func (a *Adapter) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	msg := a.convertMessage(m)
+	if len(msg.Attachments) > 0 || msg.ReplyTo != "" || msg.Metadata["reply_message_id"] != "" {
+		log.Printf("[discord] converted message attachments=%d reply=%s referenced=%s", len(msg.Attachments), msg.ReplyTo, msg.Metadata["reply_message_id"])
+	}
 
 	// Check if the message mentions the bot or is a DM
 	isDM := m.GuildID == ""
@@ -413,21 +416,33 @@ func (a *Adapter) convertMessage(m *discordgo.MessageCreate) platform.IncomingMe
 	// Store guild info
 	msg.Metadata["guild_id"] = m.GuildID
 
-	a.appendDiscordAttachments(&msg, m.Attachments)
+	a.appendDiscordMessageImages(&msg, m.Message)
 	if m.ReferencedMessage != nil {
 		msg.Metadata["reply_message_id"] = m.ReferencedMessage.ID
-		a.appendDiscordAttachments(&msg, m.ReferencedMessage.Attachments)
+		a.appendDiscordMessageImages(&msg, m.ReferencedMessage)
 	} else if m.MessageReference != nil && m.MessageReference.MessageID != "" && a.session != nil {
 		msg.Metadata["reply_message_id"] = m.MessageReference.MessageID
-		ref, err := a.session.ChannelMessage(m.ChannelID, m.MessageReference.MessageID)
+		channelID := m.ChannelID
+		if m.MessageReference.ChannelID != "" {
+			channelID = m.MessageReference.ChannelID
+		}
+		ref, err := a.session.ChannelMessage(channelID, m.MessageReference.MessageID)
 		if err != nil {
-			log.Printf("[discord] gagal mengambil referenced message %s: %v", m.MessageReference.MessageID, err)
+			log.Printf("[discord] gagal mengambil referenced message %s/%s: %v", channelID, m.MessageReference.MessageID, err)
 		} else {
-			a.appendDiscordAttachments(&msg, ref.Attachments)
+			a.appendDiscordMessageImages(&msg, ref)
 		}
 	}
 
 	return msg
+}
+
+func (a *Adapter) appendDiscordMessageImages(msg *platform.IncomingMessage, message *discordgo.Message) {
+	if message == nil {
+		return
+	}
+	a.appendDiscordAttachments(msg, message.Attachments)
+	a.appendDiscordEmbeds(msg, message.Embeds)
 }
 
 func (a *Adapter) appendDiscordAttachments(msg *platform.IncomingMessage, attachments []*discordgo.MessageAttachment) {
@@ -446,6 +461,35 @@ func (a *Adapter) appendDiscordAttachments(msg *platform.IncomingMessage, attach
 			Size:     int64(att.Size),
 		})
 	}
+}
+
+func (a *Adapter) appendDiscordEmbeds(msg *platform.IncomingMessage, embeds []*discordgo.MessageEmbed) {
+	for _, embed := range embeds {
+		if embed == nil {
+			continue
+		}
+		if embed.Image != nil {
+			a.appendDiscordEmbedImage(msg, embed.Image.URL, embed.Image.ProxyURL)
+		}
+		if embed.Thumbnail != nil {
+			a.appendDiscordEmbedImage(msg, embed.Thumbnail.URL, embed.Thumbnail.ProxyURL)
+		}
+	}
+}
+
+func (a *Adapter) appendDiscordEmbedImage(msg *platform.IncomingMessage, imageURL, proxyURL string) {
+	url := imageURL
+	if proxyURL != "" {
+		url = proxyURL
+	}
+	if url == "" {
+		return
+	}
+	msg.Attachments = append(msg.Attachments, platform.Attachment{
+		Type:     "image",
+		URL:      url,
+		FileName: filepath.Base(strings.Split(imageURL, "?")[0]),
+	})
 }
 
 // registerSlashCommands registers Discord slash commands.

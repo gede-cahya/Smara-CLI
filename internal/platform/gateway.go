@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -293,6 +294,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	// 0. Download image attachments (if any) and inject [image:/path] tokens
 	// into the prompt. Adapters declare attachment download capability via
 	// the AttachmentDownloader interface.
+	downloadedImages := []string{}
 	if len(msg.Attachments) > 0 {
 		if downloader, ok := adapter.(AttachmentDownloader); ok {
 			injected := []string{}
@@ -310,6 +312,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 					continue
 				}
 				log.Printf("[gateway] image attachment di-download: %s", path)
+				downloadedImages = append(downloadedImages, path)
 				injected = append(injected, "[image:"+path+"]")
 			}
 			if len(injected) > 0 {
@@ -324,6 +327,15 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 			log.Printf("[gateway] adapter %s belum support download attachment, %d attachment di-skip",
 				msg.Platform, len(msg.Attachments))
 		}
+	}
+
+	if len(downloadedImages) > 0 && isImageAnalysisPrompt(msg.Content) {
+		_ = adapter.SendTyping(ctx, msg.ChannelID)
+		output, err := analyzeDownloadedImages(ctx, downloadedImages, msg.Content)
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
+		}
+		return g.sendReply(ctx, msg, output)
 	}
 
 	if isImageGenerationPrompt(msg.Content) {
@@ -452,6 +464,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	startTime := time.Now()
 	result, err := g.supervisor.ProcessPrompt(promptCtx, msg.Content)
 	latencyMs := time.Since(startTime).Milliseconds()
+	promptErr := promptCtx.Err()
 	log.Printf("[gateway] supervisor.ProcessPrompt done in %dms, err=%v", latencyMs, err)
 
 	// Stop typing indicator & heartbeat
@@ -475,7 +488,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 			g.metrics.RecordError(msg.Platform, err.Error())
 		}
 		errText := err.Error()
-		if promptCtx.Err() != nil {
+		if errors.Is(promptErr, context.DeadlineExceeded) {
 			totalSec := int(time.Since(startHeartbeat).Seconds())
 			errText = fmt.Sprintf(
 				"Timeout: proses berjalan %ds dan melewati batas maksimal %ds.\n\n"+
@@ -649,6 +662,65 @@ func isImageGenerationPrompt(prompt string) bool {
 		}
 	}
 	return false
+}
+
+func isImageAnalysisPrompt(prompt string) bool {
+	p := strings.ToLower(prompt)
+	terms := []string{"analisa", "analisis", "analyze", "lihat", "gambar", "image", "foto", "screenshot", "ini kenapa", "jelaskan", "apa ini", "cek ini"}
+	for _, term := range terms {
+		if strings.Contains(p, term) {
+			return true
+		}
+	}
+	return strings.TrimSpace(prompt) == ""
+}
+
+func analyzeDownloadedImages(ctx context.Context, paths []string, question string) (string, error) {
+	var sb strings.Builder
+	question = stripPlatformImageSteer(question)
+	sb.WriteString("📷 Hasil analisis gambar")
+	if question != "" {
+		sb.WriteString(" untuk: ")
+		sb.WriteString(question)
+	}
+	sb.WriteString("\n\n")
+	for i, path := range paths {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		out, err := agent.ExecuteBuiltinTool("analyze_image", map[string]interface{}{"path": path, "ocr_lang": "eng+ind", "include_metadata": true}, nil)
+		if err != nil {
+			return "", err
+		}
+		if len(paths) > 1 {
+			sb.WriteString(fmt.Sprintf("## Gambar %d\n\n", i+1))
+		}
+		sb.WriteString(out)
+		if !strings.HasSuffix(out, "\n") {
+			sb.WriteString("\n")
+		}
+		if i < len(paths)-1 {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String(), nil
+}
+
+func stripPlatformImageSteer(prompt string) string {
+	if idx := strings.Index(prompt, "\n\n[Sistem: pesan ini menyertakan gambar."); idx >= 0 {
+		prompt = prompt[:idx]
+	}
+	fields := strings.Fields(prompt)
+	kept := fields[:0]
+	for _, field := range fields {
+		if strings.HasPrefix(field, "[image:") && strings.HasSuffix(field, "]") {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	return strings.TrimSpace(strings.Join(kept, " "))
 }
 
 func imageAttachmentsFromToolOutput(output string) []Attachment {

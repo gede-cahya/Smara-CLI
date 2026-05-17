@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"image"
 	_ "image/gif" // register decoders
@@ -96,8 +97,13 @@ func runTesseract(imgPath, lang string) (string, error) {
 		lang = "eng"
 	}
 	// `tesseract input stdout -l <lang>` writes text to stdout.
-	cmd := exec.Command("tesseract", imgPath, "stdout", "-l", lang)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tesseract", imgPath, "stdout", "-l", lang)
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("tesseract timeout setelah 20 detik")
+	}
 	if err != nil {
 		// Tesseract may complain about missing language packs; surface that.
 		s := string(out)
