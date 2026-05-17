@@ -30,8 +30,8 @@ class PageErrorBoundary extends Component<{ children: ReactNode; label: string }
     if (this.state.error) {
       return (
         <div className="h-full flex items-center justify-center p-8">
-          <div className="max-w-md bg-gray-900 border border-red-700/40 rounded-lg p-6 space-y-4">
-            <div className="flex items-center gap-2 text-red-400">
+          <div className="max-w-md bg-black/70 border border-red-500/30 rounded-3xl p-6 space-y-4 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center gap-2 text-red-300">
               <AlertTriangle className="w-5 h-5" />
               <span className="font-semibold">{this.props.label} crashed</span>
             </div>
@@ -41,16 +41,10 @@ class PageErrorBoundary extends Component<{ children: ReactNode; label: string }
                 : this.state.error.message}
             </p>
             <div className="flex gap-2">
-              <button
-                onClick={this.resetAll}
-                className="px-3 py-1.5 bg-smara-600 hover:bg-smara-500 text-white text-sm rounded transition-colors"
-              >
+              <button onClick={this.resetAll} className="px-3 py-1.5 bg-smara-600 hover:bg-smara-500 text-white text-sm rounded-xl transition-colors">
                 Reset penyimpanan & reload
               </button>
-              <button
-                onClick={() => this.setState({ error: null })}
-                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded transition-colors"
-              >
+              <button onClick={() => this.setState({ error: null })} className="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-gray-300 text-sm rounded-xl transition-colors">
                 Coba lagi
               </button>
             </div>
@@ -99,67 +93,73 @@ export default function App() {
     try { localStorage.setItem(TAB_KEY, id) } catch {}
   }
 
-  // Also sync from storage events (other tabs)
   useEffect(() => {
     const handler = (e: StorageEvent) => {
-      if (e.key === TAB_KEY && e.newValue && navItems.find(n => n.id === e.newValue)) {
-        setActiveRaw(e.newValue)
-      }
+      if (e.key === TAB_KEY && e.newValue && navItems.find(n => n.id === e.newValue)) setActiveRaw(e.newValue)
     }
     window.addEventListener('storage', handler)
     return () => window.removeEventListener('storage', handler)
   }, [])
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-gray-950 text-gray-100">
-      {/* Sidebar */}
-      <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
-        <div className="p-4 flex items-center gap-3 border-b border-gray-800">
-          <div className="w-8 h-8 rounded-lg bg-smara-600 flex items-center justify-center">
-            <Atom className="w-5 h-5 text-white" />
+    <div className="smara-shell flex h-screen w-screen overflow-hidden text-gray-100">
+      <div className="smara-orb smara-orb-a" />
+      <div className="smara-orb smara-orb-b" />
+      <div className="smara-orb smara-orb-c" />
+
+      <aside className="relative z-10 m-4 mr-0 w-72 rounded-[2rem] border border-white/10 bg-black/35 shadow-2xl shadow-black/50 backdrop-blur-2xl flex flex-col overflow-hidden">
+        <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" />
+        <div className="p-5 flex items-center gap-3 border-b border-white/10">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-400 via-smara-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+            <Atom className="w-6 h-6 text-white" />
           </div>
-          <span className="font-semibold text-lg">Smara</span>
+          <div>
+            <div className="font-bold text-xl tracking-tight">Smara</div>
+            <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-200/70">AI Console</div>
+          </div>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map(item => {
             const Icon = item.icon
+            const isActive = active === item.id
             return (
               <button
                 key={item.id}
                 onClick={() => setActive(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                  active === item.id
-                    ? 'bg-smara-700/20 text-smara-300'
-                    : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm transition-all border ${
+                  isActive
+                    ? 'bg-gradient-to-r from-cyan-500/20 via-smara-500/20 to-fuchsia-500/20 border-cyan-300/25 text-white shadow-lg shadow-cyan-950/30'
+                    : 'border-transparent text-gray-400 hover:bg-white/7 hover:text-gray-100 hover:border-white/10'
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                {item.label}
+                <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-200' : ''}`} />
+                <span className="truncate">{item.label}</span>
               </button>
             )
           })}
         </nav>
 
-        <div className="p-3 border-t border-gray-800 text-xs text-gray-500 flex items-center gap-2">
-          <Terminal className="w-3 h-3" />
+        <div className="p-4 border-t border-white/10 text-xs text-gray-500 flex items-center gap-2 bg-white/[0.03]">
+          <Terminal className="w-3 h-3 text-cyan-300" />
           Smara Web v1.0
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-hidden">
-        <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat /></PageErrorBoundary></div>
-        <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
-        <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
-        <div className={active === 'skills' ? 'h-full' : 'hidden'}><Skills /></div>
-        <div className={active === 'skilltree' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense></div>
-        <div className={active === 'skilldash' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense></div>
-        <div className={active === 'graphify' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense></div>
-        <div className={active === 'memory' ? 'h-full' : 'hidden'}><Memory /></div>
-        <div className={active === 'workspace' ? 'h-full' : 'hidden'}><Workspace /></div>
-        <div className={active === 'config' ? 'h-full' : 'hidden'}><Config /></div>
-        <div className={active === 'dashboard' ? 'h-full' : 'hidden'}><Dashboard /></div>
+      <main className="relative z-10 flex-1 overflow-hidden p-4">
+        <div className="h-full overflow-hidden rounded-[2rem] border border-white/10 bg-black/30 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat /></PageErrorBoundary></div>
+          <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
+          <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
+          <div className={active === 'skills' ? 'h-full' : 'hidden'}><Skills /></div>
+          <div className={active === 'skilltree' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense></div>
+          <div className={active === 'skilldash' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense></div>
+          <div className={active === 'graphify' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense></div>
+          <div className={active === 'memory' ? 'h-full' : 'hidden'}><Memory /></div>
+          <div className={active === 'workspace' ? 'h-full' : 'hidden'}><Workspace /></div>
+          <div className={active === 'config' ? 'h-full' : 'hidden'}><Config /></div>
+          <div className={active === 'dashboard' ? 'h-full' : 'hidden'}><Dashboard /></div>
+        </div>
       </main>
     </div>
   )

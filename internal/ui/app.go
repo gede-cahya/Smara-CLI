@@ -1653,17 +1653,22 @@ func (m AppModel) View() string {
 
 	// ─── Status Bar ────────────────────────────────────────────
 	totalTokens := 0
+	inputTokens := 0
+	outputTokens := 0
 	for _, msg := range m.messages {
+		inputTokens += msg.InputTokens
+		outputTokens += msg.OutputTokens
 		totalTokens += msg.InputTokens + msg.OutputTokens
 	}
 	statusBar := m.statusBarComp.Render(components.StatusContext{
-		Mode:       mode,
-		Provider:   provider,
-		Model:      modelName,
-		TokenCount: totalTokens,
-		Processing: m.processing,
+		Mode:         mode,
+		Provider:     provider,
+		Model:        modelName,
+		TokenCount:   totalTokens,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Processing:   m.processing,
 	})
-
 	// ─── Sidebar ───────────────────────────────────────────────
 	var sidebar string
 	if m.layout.SidebarW > 0 {

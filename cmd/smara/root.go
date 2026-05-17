@@ -51,13 +51,14 @@ func init() {
 	rootCmd.AddCommand(providerCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(dashboardCmd)
+	rootCmd.AddCommand(analyticsCmd)
+	rootCmd.AddCommand(imageCmd)
 	rootCmd.AddCommand(guideCmd)
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(categoryCmd)
 	rootCmd.AddCommand(sshCmd)
 	rootCmd.AddCommand(deployCmd)
 }
-
 func initConfig() {
 	if err := config.Init(cfgFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error config: %v\n", err)

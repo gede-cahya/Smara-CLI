@@ -17,10 +17,16 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/lsp"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 	"github.com/gede-cahya/Smara-CLI/internal/safety"
 	"github.com/gede-cahya/Smara-CLI/internal/session"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
+)
+
+const (
+	maxToolResultChars  = 40000
+	toolResultHeadChars = 26000
 )
 
 // MCPServerInfo holds detailed MCP server information.
@@ -226,6 +232,7 @@ func (s *Supervisor) SetModel(provider, model string) error {
 	}
 
 	s.provider = newProvider
+	s.providerConfig = cfg
 	// We don't wipe history here anymore to maintain session context across model switches
 	return nil
 }
@@ -320,8 +327,9 @@ func (s *Supervisor) discoverProjectContext() {
 
 // GetModel returns the current model name.
 func (s *Supervisor) GetModel() string {
-	// Could be extended to track current model
-	return ""
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerConfig.Model
 }
 
 // GetProvider returns the current LLM provider.
@@ -1308,11 +1316,16 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 	}
 
-	// 5. Update stats (estimate tokens: ~4 chars per token)
+	// 5. Update stats (estimate tokens: ~4 chars per token) and cost using
+	// provider/model-specific pricing.
 	inputTokens := len(userPrompt) / 4
 	outputTokens := len(finalResp) / 4
 	totalTokens := inputTokens + outputTokens
-	estimatedCost := float64(totalTokens) * 0.00001
+	providerName, modelName := s.GetModelInfo()
+	if providerName == "" || providerName == "unknown" {
+		providerName = s.GetProviderName()
+	}
+	estimatedCost := metrics.EstimateCost(providerName, modelName, int64(inputTokens), int64(outputTokens))
 
 	duration := time.Since(startTime)
 	s.updateStats(totalTokens, estimatedCost, duration)
@@ -1617,32 +1630,39 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			}
 		}
 
+		var imageToolOutputs []string
+
 		// Execute each tool and add results to messages
 		for _, tc := range toolCalls {
 			if ctx.Err() != nil {
 				return "", "", nil, nil, ctx.Err()
 			}
 			result, err := s.executeToolCall(tc)
+			toolOutput := result
+			if err != nil {
+				toolOutput = fmt.Sprintf("Error: %s", err)
+			}
+			toolOutput = truncateToolResultForContext(toolOutput)
+			if tc.Function == "generate_image" && err == nil && strings.Contains(toolOutput, "Path:") {
+				imageToolOutputs = append(imageToolOutputs, toolOutput)
+			}
 
 			// Callback: report result
 			if s.callback.OnToolResult != nil {
-				if err != nil {
-					s.callback.OnToolResult(fmt.Sprintf("Error: %s", err))
-				} else {
-					s.callback.OnToolResult(result)
-				}
+				s.callback.OnToolResult(toolOutput)
 			}
 
 			// Add tool result as a user message with tool_call_id
 			toolMsg := llm.Message{
 				Role:       llm.RoleTool,
-				Content:    result,
+				Content:    toolOutput,
 				ToolCallID: tc.ID,
 			}
-			if err != nil {
-				toolMsg.Content = fmt.Sprintf("Error: %s", err)
-			}
 			messages = append(messages, toolMsg)
+		}
+
+		if len(imageToolOutputs) > 0 {
+			return strings.Join(imageToolOutputs, "\n\n"), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 		}
 
 		// Stuck-loop bailout: if we detect the same tool+args repeating,
@@ -1705,6 +1725,23 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	}
 
 	return finalContent, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+}
+
+func truncateToolResultForContext(output string) string {
+	if len(output) <= maxToolResultChars {
+		return output
+	}
+
+	tailChars := maxToolResultChars - toolResultHeadChars
+	if tailChars < 0 {
+		tailChars = 0
+	}
+	omitted := len(output) - toolResultHeadChars - tailChars
+	if omitted < 0 {
+		omitted = 0
+	}
+
+	return output[:toolResultHeadChars] + fmt.Sprintf("\n\n[... %d characters omitted from tool result to keep the LLM context within limits ...]\n\n", omitted) + output[len(output)-tailChars:]
 }
 
 // synthesizeFallbackSummary builds a human-readable recap when the LLM

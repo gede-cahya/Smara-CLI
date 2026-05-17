@@ -3,15 +3,16 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/viper"
 )
 
-// MCPServer represents a configured MCP server endpoint.
 type MCPServer struct {
 	Name    string            `mapstructure:"name" yaml:"name"`
 	Type    string            `mapstructure:"type" yaml:"type"` // "local" or "remote"
@@ -97,6 +98,8 @@ type SmaraConfig struct {
 	SmaraMCPCommand    string            `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
 	SmaraMCPArgs       []string          `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
 	SmaraMCPAPIKey     string            `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	ImageModel         string            `mapstructure:"image_model" yaml:"image_model"`
+	ImageOutputDir     string            `mapstructure:"image_output_dir" yaml:"image_output_dir"`
 	Verbose            bool              `mapstructure:"verbose" yaml:"verbose"`
 	DBPath             string            `mapstructure:"db_path" yaml:"db_path"`
 	ActiveWorkspace    string            `mapstructure:"active_workspace" yaml:"active_workspace"`
@@ -169,6 +172,8 @@ func DefaultConfig() *SmaraConfig {
 		SyncDir:            filepath.Join(smaraDir, "sync"),
 		SyncInterval:       15,
 		MCPServers:         []MCPServer{},
+		ImageModel:         "gpt-image-2",
+		ImageOutputDir:     filepath.Join(smaraDir, "images"),
 		Verbose:            false,
 		DBPath:             filepath.Join(smaraDir, "memory.db"),
 		ActiveWorkspace:    "default",
@@ -268,6 +273,8 @@ func Init(configPath string) error {
 	viper.SetDefault("smara_mcp_command", defaults.SmaraMCPCommand)
 	viper.SetDefault("smara_mcp_args", defaults.SmaraMCPArgs)
 	viper.SetDefault("smara_mcp_api_key", defaults.SmaraMCPAPIKey)
+	viper.SetDefault("image_model", defaults.ImageModel)
+	viper.SetDefault("image_output_dir", defaults.ImageOutputDir)
 	viper.SetDefault("skill_registries", defaults.SkillRegistries)
 	viper.SetDefault("auto_skill_detect", defaults.AutoSkillDetect)
 	viper.SetDefault("auto_skill_threshold", defaults.AutoSkillThreshold)
@@ -341,6 +348,16 @@ func Get() *SmaraConfig {
 // → default fallback). Coerce here based on the existing default value's
 // type, falling back to string when unknown.
 func Set(key, value string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("config key kosong")
+	}
+	trimmed := strings.TrimSpace(value)
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil && (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") || trimmed == "true" || trimmed == "false" || strings.HasPrefix(trimmed, `"`)) {
+		viper.Set(key, parsed)
+		applyRuntimeConfigValue()
+		return Save()
+	}
 	defaults := DefaultConfig()
 	defaultsAll := allSettingsFromStruct(defaults)
 	if existing, ok := defaultsAll[key]; ok {
@@ -348,40 +365,57 @@ func Set(key, value string) error {
 		case int, int32, int64:
 			if n, err := strconv.Atoi(value); err == nil {
 				viper.Set(key, n)
+				applyRuntimeConfigValue()
 				return Save()
 			}
 		case float32, float64:
 			if f, err := strconv.ParseFloat(value, 64); err == nil {
 				viper.Set(key, f)
+				applyRuntimeConfigValue()
 				return Save()
 			}
 		case bool:
 			if b, err := strconv.ParseBool(value); err == nil {
 				viper.Set(key, b)
+				applyRuntimeConfigValue()
 				return Save()
 			}
 		}
 	}
 	viper.Set(key, value)
+	applyRuntimeConfigValue()
 	return Save()
 }
 
-// allSettingsFromStruct flattens a SmaraConfig into key→value map using the
-// same lowercase keys viper uses. Only top-level scalar fields are needed
-// for coercion in Set; nested structs (CloudMemory, Platforms) keep their
-// existing string handling because they are not exposed via `config set`.
+func applyRuntimeConfigValue() {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	_ = viper.Unmarshal(cfg)
+}
+
+// allSettingsFromStruct flattens scalar settings for type coercion in Set.
 func allSettingsFromStruct(c *SmaraConfig) map[string]interface{} {
 	if c == nil {
 		return map[string]interface{}{}
 	}
 	return map[string]interface{}{
-		"agent_max_iterations":      c.AgentMaxIterations,
-		"agent_request_timeout_sec": c.AgentRequestTimeoutSec,
-		"auto_skill_detect":         c.AutoSkillDetect,
-		"auto_skill_threshold":      c.AutoSkillThreshold,
-		"platform_prompt_timeout":   c.PlatformPromptTimeout,
-		"sync_interval":             c.SyncInterval,
-		"verbose":                   c.Verbose,
+		"agent_max_iterations":           c.AgentMaxIterations,
+		"agent_request_timeout_sec":      c.AgentRequestTimeoutSec,
+		"auto_skill_detect":              c.AutoSkillDetect,
+		"auto_skill_threshold":           c.AutoSkillThreshold,
+		"platform_prompt_timeout":        c.PlatformPromptTimeout,
+		"image_model":                    c.ImageModel,
+		"image_output_dir":               c.ImageOutputDir,
+		"sync_interval":                  c.SyncInterval,
+		"verbose":                        c.Verbose,
+		"smara_mcp_enabled":              c.SmaraMCPEnabled,
+		"cloud_memory.enabled":           c.CloudMemory.Enabled,
+		"cloud_memory.sync_interval_sec": c.CloudMemory.SyncIntervalSec,
+		"cloud_memory.encrypt_at_rest":   c.CloudMemory.EncryptAtRest,
+		"cloud_memory.max_rows_per_hour": c.CloudMemory.MaxRowsPerHour,
+		"cloud_memory.max_storage_mb":    c.CloudMemory.MaxStorageMB,
+		"cloud_memory.embeddings_cloud":  c.CloudMemory.EmbeddingsCloud,
 	}
 }
 
@@ -390,7 +424,6 @@ func GetValue(key string) interface{} {
 	return viper.Get(key)
 }
 
-// AllSettings returns all current settings as a map.
 func AllSettings() map[string]interface{} {
 	return viper.AllSettings()
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -260,10 +262,29 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		_ = adapter.SendTyping(ctx, msg.ChannelID)
 	}
 
+	var generatedMu sync.Mutex
+	var generatedAttachments []Attachment
+	currentTool := ""
+	g.supervisor.SetCallback(agent.AgenticCallback{
+		OnToolCall: func(server, tool string, args map[string]interface{}) {
+			generatedMu.Lock()
+			currentTool = tool
+			generatedMu.Unlock()
+		},
+		OnToolResult: func(output string) {
+			generatedMu.Lock()
+			if currentTool == "generate_image" {
+				generatedAttachments = append(generatedAttachments, imageAttachmentsFromToolOutput(output)...)
+			}
+			generatedMu.Unlock()
+		},
+	})
+
 	// Process via supervisor
 	startTime := time.Now()
 	result, err := g.supervisor.ProcessPrompt(ctx, msg.Content)
 	latencyMs := time.Since(startTime).Milliseconds()
+	g.supervisor.SetCallback(agent.AgenticCallback{})
 
 	if err != nil {
 		if g.metrics != nil {
@@ -276,18 +297,26 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	if g.metrics != nil {
 		g.metrics.RecordMessageOut(msg.Platform)
 		g.metrics.RecordLatency(msg.Platform, latencyMs)
+		model := g.supervisor.GetModel()
 		cost := metrics.EstimateCost(
-			g.supervisor.GetProviderName(), "",
+			g.supervisor.GetProviderName(), model,
 			int64(result.InputTokens), int64(result.OutputTokens),
 		)
 		g.metrics.RecordLLMUsage(result.InputTokens, result.OutputTokens, latencyMs, cost)
 	}
 
-	return g.sendReply(ctx, msg, result.Response)
+	generatedMu.Lock()
+	attachments := append([]Attachment(nil), generatedAttachments...)
+	generatedMu.Unlock()
+	return g.sendReplyWithAttachments(ctx, msg, result.Response, attachments)
 }
 
 // sendReply sends a response back to the platform where the message originated.
 func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, content string) error {
+	return g.sendReplyWithAttachments(ctx, original, content, nil)
+}
+
+func (g *Gateway) sendReplyWithAttachments(ctx context.Context, original IncomingMessage, content string, attachments []Attachment) error {
 	g.mu.RLock()
 	adapter, ok := g.adapters[original.Platform]
 	g.mu.RUnlock()
@@ -295,13 +324,18 @@ func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, conte
 		return fmt.Errorf("adapter tidak ditemukan untuk platform: %s", original.Platform)
 	}
 
+	attachments = mergeAttachments(attachments, imageAttachmentsFromToolOutput(content))
+
 	// Split long messages
 	parts := splitMessage(content, maxMessageLength)
-	for _, part := range parts {
+	for i, part := range parts {
 		outMsg := OutgoingMessage{
 			Content: part,
 			Format:  FormatMarkdown,
 			ReplyTo: original.ID,
+		}
+		if i == 0 {
+			outMsg.Attachments = attachments
 		}
 		if err := adapter.SendMessage(ctx, original.ChannelID, outMsg); err != nil {
 			return fmt.Errorf("gagal mengirim reply ke %s: %w", original.Platform, err)
@@ -309,6 +343,72 @@ func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, conte
 	}
 
 	return nil
+}
+
+func imageAttachmentsFromToolOutput(output string) []Attachment {
+	seen := map[string]bool{}
+	var attachments []Attachment
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Path:") {
+			continue
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(line, "Path:"))
+		if path == "" || seen[path] {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		seen[path] = true
+		attachments = append(attachments, Attachment{
+			Type:     "image",
+			FilePath: path,
+			FileName: filepath.Base(path),
+			MimeType: imageMimeType(path),
+			Size:     info.Size(),
+		})
+	}
+	return attachments
+}
+
+func mergeAttachments(primary, secondary []Attachment) []Attachment {
+	if len(primary) == 0 {
+		return secondary
+	}
+	if len(secondary) == 0 {
+		return primary
+	}
+	seen := map[string]bool{}
+	merged := make([]Attachment, 0, len(primary)+len(secondary))
+	for _, att := range append(primary, secondary...) {
+		key := att.FilePath
+		if key == "" {
+			key = att.URL
+		}
+		if key != "" && seen[key] {
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		merged = append(merged, att)
+	}
+	return merged
+}
+
+func imageMimeType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "image/png"
+	}
 }
 
 // splitMessage breaks a long message into chunks that fit within the platform limit.

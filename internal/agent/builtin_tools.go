@@ -161,6 +161,36 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "generate_image",
+			Description: "Membuat/generate gambar dari prompt teks menggunakan image model OpenAI-compatible seperti gpt-image-2 atau gemini-2.5-flash-image. Gunakan saat user meminta dibuatkan gambar, logo, ilustrasi, icon, poster, atau desain visual.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "Deskripsi gambar yang ingin dibuat",
+					},
+					"model": map[string]interface{}{
+						"type":        "string",
+						"description": "Model gambar, default dari config image_model",
+					},
+					"output_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path output opsional, misalnya /tmp/logo.png",
+					},
+					"size": map[string]interface{}{
+						"type":        "string",
+						"description": "Ukuran gambar opsional, misalnya 1024x1024",
+					},
+					"quality": map[string]interface{}{
+						"type":        "string",
+						"description": "Kualitas gambar opsional: low, medium, high, auto",
+					},
+				},
+				"required": []string{"prompt"},
+			},
+		},
+		{
 			Name:        "analyze_workspace",
 			Description: "Menganalisis struktur proyek saat ini untuk mendapatkan gambaran umum file dan folder penting.",
 			Parameters: map[string]interface{}{
@@ -1053,6 +1083,9 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	}()
 
 	switch toolName {
+	case "generate_image":
+		return executeGenerateImageTool(args)
+
 	case "request_iteration_budget":
 		ctrl := getActiveBudgetController()
 		if ctrl == nil {

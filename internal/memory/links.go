@@ -77,6 +77,18 @@ func EnsureLinksSchema(db *sql.DB) error {
 // AddLink creates a manual link between two memories.
 // Self-links are rejected. Duplicate (source,target,relation) is upserted (weight/note updated).
 func (s *SQLiteStore) AddLink(sourceID, targetID int64, relation string, weight float64, note string) (*MemoryLink, error) {
+	return s.addLinkInternal(sourceID, targetID, relation, weight, note, false)
+}
+
+// AddBidirectionalLink creates a canonical undirected link between two memories.
+// The edge is stored once (smaller id as source) and is returned by ListLinksFor
+// from either memory, giving Obsidian-style bidirectional backlinks without
+// duplicating graph edges.
+func (s *SQLiteStore) AddBidirectionalLink(sourceID, targetID int64, relation string, weight float64, note string) (*MemoryLink, error) {
+	return s.addLinkInternal(sourceID, targetID, relation, weight, note, true)
+}
+
+func (s *SQLiteStore) addLinkInternal(sourceID, targetID int64, relation string, weight float64, note string, bidirectional bool) (*MemoryLink, error) {
 	if sourceID == targetID {
 		return nil, fmt.Errorf("tidak bisa link memory ke dirinya sendiri")
 	}
@@ -85,6 +97,9 @@ func (s *SQLiteStore) AddLink(sourceID, targetID int64, relation string, weight 
 	}
 	if weight <= 0 || weight > 1 {
 		weight = 0.5
+	}
+	if bidirectional && sourceID > targetID {
+		sourceID, targetID = targetID, sourceID
 	}
 	if err := EnsureLinksSchema(s.db); err != nil {
 		return nil, err

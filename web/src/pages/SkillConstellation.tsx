@@ -441,41 +441,73 @@ export default function SkillConstellation({ skills }: { skills: SkillItem[] }) 
     return { x: baseX + dx, y: baseY + dy }
   }, [nodeDeltas, parentOf])
 
+  const draggingRef = useRef(false)
+  const draggedNodeRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    draggingRef.current = dragging
+  }, [dragging])
+
+  useEffect(() => {
+    draggedNodeRef.current = draggedNode
+  }, [draggedNode])
+
   // ---- Drag handlers ----
 
   const onCanvasMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0 || draggedNode) return
+    if (e.button !== 0 || draggedNodeRef.current) return
     setDragging(true)
+    draggingRef.current = true
     dragStart.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y, dx: 0, dy: 0 }
-  }, [pan, draggedNode])
+  }, [pan])
 
-  const onCanvasMouseMove = useCallback((e: React.MouseEvent) => {
-    if (draggedNode) {
-      const dx = dragStart.current.dx + (e.clientX - dragStart.current.x) / zoom
-      const dy = dragStart.current.dy + (e.clientY - dragStart.current.y) / zoom
+  const moveDrag = useCallback((clientX: number, clientY: number) => {
+    const activeNode = draggedNodeRef.current
+    if (activeNode) {
+      const dx = dragStart.current.dx + (clientX - dragStart.current.x) / zoom
+      const dy = dragStart.current.dy + (clientY - dragStart.current.y) / zoom
       setNodeDeltas(prev => {
         const next = new Map(prev)
-        next.set(draggedNode, { dx, dy })
+        next.set(activeNode, { dx, dy })
         return next
       })
       return
     }
-    if (!dragging) return
+    if (!draggingRef.current) return
     setPan({
-      x: dragStart.current.px + (e.clientX - dragStart.current.x) / zoom,
-      y: dragStart.current.py + (e.clientY - dragStart.current.y) / zoom,
+      x: dragStart.current.px + (clientX - dragStart.current.x) / zoom,
+      y: dragStart.current.py + (clientY - dragStart.current.y) / zoom,
     })
-  }, [dragging, zoom, draggedNode])
+  }, [zoom])
+
+  const onCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+    moveDrag(e.clientX, e.clientY)
+  }, [moveDrag])
 
   const endDrag = useCallback(() => {
     setDragging(false)
     setDraggedNode(null)
+    draggingRef.current = false
+    draggedNodeRef.current = null
   }, [])
 
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => moveDrag(e.clientX, e.clientY)
+    const onUp = () => endDrag()
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [moveDrag, endDrag])
+
   const onNodeMouseDown = useCallback((name: string, e: React.MouseEvent) => {
+    e.preventDefault()
     e.stopPropagation()
     if (e.button !== 0) return
     setDraggedNode(name)
+    draggedNodeRef.current = name
     const existing = nodeDeltas.get(name) ?? { dx: 0, dy: 0 }
     dragStart.current = {
       x: e.clientX,

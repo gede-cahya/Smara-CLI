@@ -72,6 +72,8 @@ type SmaraConfig struct {
 	SmaraMCPCommand    string         `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
 	SmaraMCPArgs       []string       `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
 	SmaraMCPAPIKey     string         `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	ImageModel         string         `mapstructure:"image_model" yaml:"image_model"`
+	ImageOutputDir     string         `mapstructure:"image_output_dir" yaml:"image_output_dir"`
 	Verbose            bool           `mapstructure:"verbose" yaml:"verbose"`
 	DBPath             string         `mapstructure:"db_path" yaml:"db_path"`
 	ActiveWorkspace    string         `mapstructure:"active_workspace" yaml:"active_workspace"`
@@ -107,6 +109,8 @@ func DefaultConfig() *SmaraConfig {
 		SyncDir:            filepath.Join(smaraDir, "sync"),
 		SyncInterval:       15,
 		MCPServers:         []MCPServer{},
+		ImageModel:         "gpt-image-2",
+		ImageOutputDir:     filepath.Join(smaraDir, "images"),
 		Verbose:            false,
 		DBPath:             filepath.Join(smaraDir, "memory.db"),
 		ActiveWorkspace:    "default",
@@ -175,6 +179,8 @@ func Init(configPath string) error {
 	viper.SetDefault("smara_mcp_command", defaults.SmaraMCPCommand)
 	viper.SetDefault("smara_mcp_args", defaults.SmaraMCPArgs)
 	viper.SetDefault("smara_mcp_api_key", defaults.SmaraMCPAPIKey)
+	viper.SetDefault("image_model", defaults.ImageModel)
+	viper.SetDefault("image_output_dir", defaults.ImageOutputDir)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")

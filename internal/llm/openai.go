@@ -37,6 +37,11 @@ func (o *OpenAIProvider) Name() string {
 	return "openai"
 }
 
+func (o *OpenAIProvider) GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
+	opts.Prompt = prompt
+	return generateOpenAIImage(o.client, o.host, o.apiKey, o.model, opts)
+}
+
 func (o *OpenAIProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
 		Model:    o.model,

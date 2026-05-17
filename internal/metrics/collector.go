@@ -344,20 +344,92 @@ func (c *MetricsCollector) getOrCreatePlatform(name string) *platformCounter {
 
 // EstimateCost estimates LLM cost based on provider and model.
 func EstimateCost(provider, model string, inputTokens, outputTokens int64) float64 {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+
+	inputCost := func(ratePerMillion float64) float64 {
+		return float64(inputTokens) * ratePerMillion / 1_000_000
+	}
+	outputCost := func(ratePerMillion float64) float64 {
+		return float64(outputTokens) * ratePerMillion / 1_000_000
+	}
+	cost := func(inRate, outRate float64) float64 { return inputCost(inRate) + outputCost(outRate) }
+
+	// Local/offline providers do not bill per token.
+	if provider == "ollama" || provider == "local" || provider == "llamacpp" || provider == "unknown" {
+		return 0
+	}
+
 	switch provider {
 	case "anthropic":
 		switch {
 		case strings.Contains(model, "haiku"):
-			return float64(inputTokens)*0.25/1_000_000 + float64(outputTokens)*1.25/1_000_000
+			return cost(0.25, 1.25)
 		case strings.Contains(model, "sonnet"):
-			return float64(inputTokens)*3.0/1_000_000 + float64(outputTokens)*15.0/1_000_000
+			return cost(3.0, 15.0)
 		case strings.Contains(model, "opus"):
-			return float64(inputTokens)*15.0/1_000_000 + float64(outputTokens)*75.0/1_000_000
+			return cost(15.0, 75.0)
 		}
+		// Safe default for current Claude Sonnet-class models.
+		return cost(3.0, 15.0)
 	case "openai":
-		return float64(inputTokens)*5.0/1_000_000 + float64(outputTokens)*15.0/1_000_000
+		switch {
+		case strings.Contains(model, "gpt-4o-mini"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "gpt-4o"):
+			return cost(5.0, 15.0)
+		case strings.Contains(model, "gpt-4.1-mini"):
+			return cost(0.40, 1.60)
+		case strings.Contains(model, "gpt-4.1-nano"):
+			return cost(0.10, 0.40)
+		case strings.Contains(model, "gpt-4.1"):
+			return cost(2.0, 8.0)
+		case strings.Contains(model, "o3-mini") || strings.Contains(model, "o4-mini"):
+			return cost(1.10, 4.40)
+		}
+		return cost(5.0, 15.0)
 	case "openrouter":
-		return float64(inputTokens)*3.0/1_000_000 + float64(outputTokens)*15.0/1_000_000
+		// OpenRouter passes many upstream model names. Match common routes first.
+		switch {
+		case strings.Contains(model, "claude") || strings.Contains(model, "sonnet"):
+			return cost(3.0, 15.0)
+		case strings.Contains(model, "haiku"):
+			return cost(0.25, 1.25)
+		case strings.Contains(model, "gpt-4o-mini"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "gpt-4o"):
+			return cost(5.0, 15.0)
+		case strings.Contains(model, "free"):
+			return 0
+		}
+		return cost(3.0, 15.0)
+	case "custom":
+		// Custom is an OpenAI-compatible paid proxy. It may expose model names like
+		// custom/gpt-55, gpt-5.5, deepseek, minimax, etc. Do not return zero just
+		// because the exact upstream model is unknown; use conservative paid defaults.
+		switch {
+		case strings.Contains(model, "free") || strings.Contains(model, "local"):
+			return 0
+		case strings.Contains(model, "haiku"):
+			return cost(0.25, 1.25)
+		case strings.Contains(model, "sonnet") || strings.Contains(model, "claude"):
+			return cost(3.0, 15.0)
+		case strings.Contains(model, "gpt-4o-mini"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "gpt-4o"):
+			return cost(5.0, 15.0)
+		case strings.Contains(model, "gpt-4.1-mini"):
+			return cost(0.40, 1.60)
+		case strings.Contains(model, "gpt-4.1"):
+			return cost(2.0, 8.0)
+		case strings.Contains(model, "deepseek"):
+			return cost(0.55, 2.19)
+		case strings.Contains(model, "minimax"):
+			return cost(0.20, 1.10)
+		case strings.Contains(model, "gpt"):
+			return cost(3.0, 15.0)
+		}
+		return cost(3.0, 15.0)
 	}
 	return 0
 }

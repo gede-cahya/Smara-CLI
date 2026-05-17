@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -93,6 +94,9 @@ func (a *Adapter) SendMessage(ctx context.Context, channelID string, msg platfor
 	}
 
 	content := msg.Content
+	if len(msg.Attachments) > 0 {
+		return a.sendMessageWithAttachments(channelID, content, msg.Attachments)
+	}
 
 	// If content is short enough, send as plain message
 	if len(content) <= 2000 {
@@ -139,6 +143,53 @@ func (a *Adapter) SendMessage(ctx context.Context, channelID string, msg platfor
 		}
 	}
 
+	return nil
+}
+
+func (a *Adapter) sendMessageWithAttachments(channelID, content string, attachments []platform.Attachment) error {
+	var files []*discordgo.File
+	for _, att := range attachments {
+		if att.FilePath == "" {
+			continue
+		}
+		f, err := os.Open(att.FilePath)
+		if err != nil {
+			return fmt.Errorf("gagal membuka attachment: %w", err)
+		}
+		defer f.Close()
+		name := att.FileName
+		if name == "" {
+			name = f.Name()
+		}
+		files = append(files, &discordgo.File{
+			Name:        name,
+			ContentType: att.MimeType,
+			Reader:      f,
+		})
+	}
+	if len(files) == 0 {
+		_, err := a.session.ChannelMessageSend(channelID, content)
+		if err != nil {
+			return fmt.Errorf("gagal mengirim pesan: %w", err)
+		}
+		return nil
+	}
+	if len(content) > 2000 {
+		parts := splitContent(content, 2000)
+		for _, part := range parts[:len(parts)-1] {
+			if _, err := a.session.ChannelMessageSend(channelID, part); err != nil {
+				return fmt.Errorf("gagal mengirim pesan: %w", err)
+			}
+		}
+		content = parts[len(parts)-1]
+	}
+	_, err := a.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: content,
+		Files:   files,
+	})
+	if err != nil {
+		return fmt.Errorf("gagal mengirim attachment: %w", err)
+	}
 	return nil
 }
 

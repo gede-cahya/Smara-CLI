@@ -3,6 +3,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -73,6 +74,41 @@ type openAIEmbedRequest struct {
 type openAIEmbedResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
+	} `json:"data"`
+}
+
+type ImageGenerationOptions struct {
+	Model          string
+	Prompt         string
+	Size           string
+	Quality        string
+	N              int
+	ResponseFormat string
+}
+
+type ImageGenerationResult struct {
+	Data          []byte
+	Model         string
+	RevisedPrompt string
+	MIME          string
+	Extension     string
+}
+
+type openAIImageRequest struct {
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt"`
+	N              int    `json:"n,omitempty"`
+	Size           string `json:"size,omitempty"`
+	Quality        string `json:"quality,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+}
+
+type openAIImageResponse struct {
+	Created int64 `json:"created"`
+	Data    []struct {
+		B64JSON       string `json:"b64_json"`
+		URL           string `json:"url,omitempty"`
+		RevisedPrompt string `json:"revised_prompt,omitempty"`
 	} `json:"data"`
 }
 
@@ -154,6 +190,7 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 	var toolCallsRawArgs = make(map[int]*strings.Builder)
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -240,4 +277,98 @@ func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatReques
 		Thinking: fullThinking.String(),
 		Model:    finalModel,
 	}, toolCalls, nil
+}
+
+func generateOpenAIImage(client *http.Client, host, apiKey, defaultModel string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
+	prompt := strings.TrimSpace(opts.Prompt)
+	if prompt == "" {
+		return nil, fmt.Errorf("prompt gambar kosong")
+	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		model = defaultModel
+	}
+	if model == "" {
+		return nil, fmt.Errorf("model gambar kosong")
+	}
+	format := opts.ResponseFormat
+	if format == "" {
+		format = "b64_json"
+	}
+
+	reqBody := openAIImageRequest{
+		Model:          model,
+		Prompt:         prompt,
+		N:              opts.N,
+		Size:           opts.Size,
+		Quality:        opts.Quality,
+		ResponseFormat: format,
+	}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("gagal marshal image request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", strings.TrimRight(host, "/")+"/images/generations", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("gagal menghubungi image provider: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("gagal membaca image response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("image provider error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var imageResp openAIImageResponse
+	if err := json.Unmarshal(body, &imageResp); err != nil {
+		return nil, fmt.Errorf("gagal decode image response: %w", err)
+	}
+	if len(imageResp.Data) == 0 {
+		return nil, fmt.Errorf("image response kosong")
+	}
+
+	b64 := imageResp.Data[0].B64JSON
+	if strings.HasPrefix(b64, "data:") {
+		if _, data, ok := strings.Cut(b64, ","); ok {
+			b64 = data
+		}
+	}
+	if b64 == "" {
+		return nil, fmt.Errorf("image provider tidak mengembalikan b64_json")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, fmt.Errorf("gagal decode b64_json: %w", err)
+	}
+
+	mime := http.DetectContentType(decoded)
+	return &ImageGenerationResult{
+		Data:          decoded,
+		Model:         model,
+		RevisedPrompt: imageResp.Data[0].RevisedPrompt,
+		MIME:          mime,
+		Extension:     imageExtension(mime),
+	}, nil
+}
+
+func imageExtension(mime string) string {
+	switch mime {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
 }

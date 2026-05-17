@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -321,7 +323,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	}
 
 	// 1. Send initial status message
-	statusMsg := OutgoingMessage{Content: "🤔 Sedang berpikir...", Format: FormatPlain}
+	statusMsg := OutgoingMessage{Content: RenderStatusMessage(msg.Platform, "thinking", "Sedang menyiapkan jawaban terbaik...", 0), Format: FormatMarkdown}
 	statusMsgID, err := adapter.SendMessageWithID(ctx, msg.ChannelID, statusMsg)
 	if err != nil {
 		// Fallback: just send typing indicator if status message fails
@@ -331,7 +333,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 
 	// 2. Track current status for live updates
 	var statusMu sync.Mutex
-	currentStatus := "🤔 Sedang berpikir..."
+	currentStatus := statusMsg.Content
 	lastEditTime := time.Now()
 
 	updateStatus := func(newStatus string) {
@@ -346,28 +348,42 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		}
 		currentStatus = newStatus
 		lastEditTime = time.Now()
-		editMsg := OutgoingMessage{Content: newStatus, Format: FormatPlain}
+		editMsg := OutgoingMessage{Content: newStatus, Format: FormatMarkdown}
 		_ = adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg)
 	}
+
+	startHeartbeat := time.Now()
+
+	var generatedMu sync.Mutex
+	var generatedAttachments []Attachment
+	currentTool := ""
 
 	// 3. Set up supervisor callbacks for phase changes
 	g.supervisor.SetCallback(agent.AgenticCallback{
 		OnPhaseChange: func(phase, description string) {
-			emoji := phaseEmoji(phase)
-			updateStatus(fmt.Sprintf("%s %s...", emoji, description))
+			updateStatus(RenderStatusMessage(msg.Platform, phase, description, time.Since(startHeartbeat)))
 		},
 		OnToolCall: func(server, tool string, args map[string]interface{}) {
+			generatedMu.Lock()
+			currentTool = tool
+			generatedMu.Unlock()
+
 			toolName := tool
 			if len(toolName) > 30 {
 				toolName = toolName[:30] + "…"
 			}
-			updateStatus(fmt.Sprintf("🔧 Menjalankan: %s", toolName))
+			updateStatus(RenderStatusMessage(msg.Platform, "tool_call", "Menjalankan: "+toolName, time.Since(startHeartbeat)))
 		},
 		OnToolResult: func(output string) {
-			updateStatus("📝 Menganalisis hasil...")
+			generatedMu.Lock()
+			if currentTool == "generate_image" {
+				generatedAttachments = append(generatedAttachments, imageAttachmentsFromToolOutput(output)...)
+			}
+			generatedMu.Unlock()
+			updateStatus(RenderStatusMessage(msg.Platform, "analyzing", "Menganalisis hasil tool...", time.Since(startHeartbeat)))
 		},
 		OnIteration: func(current, max int) {
-			updateStatus(fmt.Sprintf("🔄 Iterasi %d/%d...", current, max))
+			updateStatus(RenderStatusMessage(msg.Platform, "iteration", fmt.Sprintf("Iterasi %d/%d", current, max), time.Since(startHeartbeat)))
 		},
 	})
 
@@ -397,7 +413,6 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 
 	// Heartbeat progress updates: every 15s, update status message with elapsed
 	// time so the user knows the bot is still working (not frozen).
-	startHeartbeat := time.Now()
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
@@ -414,7 +429,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 				if remaining < 0 {
 					remaining = 0
 				}
-				updateStatus(fmt.Sprintf("⏳ Masih memproses... %ds berlalu (est. maks %ds tersisa)", secs, remaining))
+				updateStatus(RenderStatusMessage(msg.Platform, "processing", fmt.Sprintf("Masih memproses • %ds berlalu • est. maks %ds tersisa", secs, remaining), elapsed))
 			}
 		}
 	}()
@@ -479,8 +494,9 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	if g.metrics != nil {
 		g.metrics.RecordMessageOut(msg.Platform)
 		g.metrics.RecordLatency(msg.Platform, latencyMs)
+		model := g.supervisor.GetModel()
 		cost := metrics.EstimateCost(
-			g.supervisor.GetProviderName(), "",
+			g.supervisor.GetProviderName(), model,
 			int64(result.InputTokens), int64(result.OutputTokens),
 		)
 		g.metrics.RecordLLMUsage(result.InputTokens, result.OutputTokens, latencyMs, cost)
@@ -499,31 +515,35 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		// something actionable instead of a misleading "Selesai".
 		finalResp = buildFallbackSummary(result.Thoughts, result.ToolsExecuted)
 	}
-	if latencyMs > 2000 {
-		duration := time.Duration(latencyMs) * time.Millisecond
-		footer := fmt.Sprintf("\n\n⏱ %.1fs", duration.Seconds())
-		if len(result.ToolsExecuted) > 0 {
-			footer += fmt.Sprintf(" • 🔧 %d tools", len(result.ToolsExecuted))
-		}
-		finalResp += footer
-	}
+	finalResp = RenderPlatformResponse(
+		msg.Platform,
+		finalResp,
+		g.supervisor.GetModel(),
+		time.Duration(latencyMs)*time.Millisecond,
+		len(result.ToolsExecuted),
+		result.InputTokens,
+		result.OutputTokens,
+	)
+	generatedMu.Lock()
+	attachments := append([]Attachment(nil), generatedAttachments...)
+	generatedMu.Unlock()
 
 	// 10. Update status message with final response, or send new message
 	if statusMsgID != "" {
-		// If response is short enough, edit the status message
-		if len(finalResp) <= maxMessageLength {
-			editMsg := OutgoingMessage{Content: finalResp, Format: FormatPlain}
+		// If response is short enough and has no file attachments, edit the status message
+		if len(attachments) == 0 && len(finalResp) <= maxMessageLength {
+			editMsg := OutgoingMessage{Content: finalResp, Format: FormatMarkdown}
 			if err := adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg); err == nil {
 				return nil
 			}
 		}
-		// For long responses or edit failure, delete status and send normally
+		// For attachments, long responses, or edit failure, finish status and send normally
 		editMsg := OutgoingMessage{Content: "✅", Format: FormatPlain}
 		_ = adapter.EditMessage(ctx, msg.ChannelID, statusMsgID, editMsg)
 	}
 
 	log.Printf("[gateway] Sending reply to %s/%s", msg.Platform, msg.ChannelID)
-	return g.sendReply(ctx, msg, finalResp)
+	return g.sendReplyWithAttachments(ctx, msg, finalResp, attachments)
 }
 
 // phaseEmoji returns an emoji for a processing phase.
@@ -564,6 +584,10 @@ func sanitizeDSML(text string) string {
 
 // sendReply sends a response back to the platform where the message originated.
 func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, content string) error {
+	return g.sendReplyWithAttachments(ctx, original, content, nil)
+}
+
+func (g *Gateway) sendReplyWithAttachments(ctx context.Context, original IncomingMessage, content string, attachments []Attachment) error {
 	g.mu.RLock()
 	adapter, ok := g.adapters[original.Platform]
 	g.mu.RUnlock()
@@ -573,14 +597,18 @@ func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, conte
 
 	// Sanitize DSML markup before sending
 	content = sanitizeDSML(content)
+	attachments = mergeAttachments(attachments, imageAttachmentsFromToolOutput(content))
 
 	// Split long messages
 	parts := splitMessage(content, maxMessageLength)
-	for _, part := range parts {
+	for i, part := range parts {
 		outMsg := OutgoingMessage{
 			Content: part,
 			Format:  FormatMarkdown,
 			ReplyTo: original.ID,
+		}
+		if i == 0 {
+			outMsg.Attachments = attachments
 		}
 		if err := adapter.SendMessage(ctx, original.ChannelID, outMsg); err != nil {
 			return fmt.Errorf("gagal mengirim reply ke %s: %w", original.Platform, err)
@@ -588,6 +616,72 @@ func (g *Gateway) sendReply(ctx context.Context, original IncomingMessage, conte
 	}
 
 	return nil
+}
+
+func imageAttachmentsFromToolOutput(output string) []Attachment {
+	seen := map[string]bool{}
+	var attachments []Attachment
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Path:") {
+			continue
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(line, "Path:"))
+		if path == "" || seen[path] {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		seen[path] = true
+		attachments = append(attachments, Attachment{
+			Type:     "image",
+			FilePath: path,
+			FileName: filepath.Base(path),
+			MimeType: imageMimeType(path),
+			Size:     info.Size(),
+		})
+	}
+	return attachments
+}
+
+func mergeAttachments(primary, secondary []Attachment) []Attachment {
+	if len(primary) == 0 {
+		return secondary
+	}
+	if len(secondary) == 0 {
+		return primary
+	}
+	seen := map[string]bool{}
+	merged := make([]Attachment, 0, len(primary)+len(secondary))
+	for _, att := range append(primary, secondary...) {
+		key := att.FilePath
+		if key == "" {
+			key = att.URL
+		}
+		if key != "" && seen[key] {
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		merged = append(merged, att)
+	}
+	return merged
+}
+
+func imageMimeType(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "image/png"
+	}
 }
 
 // splitMessage breaks a long message into chunks that fit within the platform limit.

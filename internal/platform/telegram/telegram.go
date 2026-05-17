@@ -102,26 +102,40 @@ func (a *Adapter) SendMessage(ctx context.Context, channelID string, msg platfor
 		return err
 	}
 
-	tgMsg := tgbotapi.NewMessage(chatID, msg.Content)
+	if strings.TrimSpace(msg.Content) != "" {
+		tgMsg := tgbotapi.NewMessage(chatID, msg.Content)
+		if msg.Format == platform.FormatMarkdown {
+			tgMsg.ParseMode = "Markdown"
+		}
+		tgMsg.DisableWebPagePreview = true
 
-	// Set parse mode based on format
-	if msg.Format == platform.FormatMarkdown {
-		tgMsg.ParseMode = "Markdown"
+		if _, err := a.bot.Send(tgMsg); err != nil {
+			if msg.Format == platform.FormatMarkdown {
+				tgMsg.ParseMode = ""
+				if _, retryErr := a.bot.Send(tgMsg); retryErr != nil {
+					return fmt.Errorf("gagal mengirim pesan: %w", retryErr)
+				}
+			} else {
+				return fmt.Errorf("gagal mengirim pesan: %w", err)
+			}
+		}
 	}
 
-	// Disable web page preview for cleaner output
-	tgMsg.DisableWebPagePreview = true
-
-	if _, err := a.bot.Send(tgMsg); err != nil {
-		// Retry without markdown if parsing fails
-		if msg.Format == platform.FormatMarkdown {
-			tgMsg.ParseMode = ""
-			if _, retryErr := a.bot.Send(tgMsg); retryErr != nil {
-				return fmt.Errorf("gagal mengirim pesan: %w", retryErr)
-			}
-			return nil
+	for _, att := range msg.Attachments {
+		if att.FilePath == "" {
+			continue
 		}
-		return fmt.Errorf("gagal mengirim pesan: %w", err)
+		if att.Type == "image" || strings.HasPrefix(att.MimeType, "image/") {
+			photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(att.FilePath))
+			if _, err := a.bot.Send(photo); err != nil {
+				return fmt.Errorf("gagal mengirim gambar: %w", err)
+			}
+			continue
+		}
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(att.FilePath))
+		if _, err := a.bot.Send(doc); err != nil {
+			return fmt.Errorf("gagal mengirim file: %w", err)
+		}
 	}
 
 	return nil
@@ -155,6 +169,9 @@ func (a *Adapter) SendMessageWithID(ctx context.Context, channelID string, msg p
 	}
 
 	tgMsg := tgbotapi.NewMessage(chatID, msg.Content)
+	if msg.Format == platform.FormatMarkdown {
+		tgMsg.ParseMode = "Markdown"
+	}
 	tgMsg.DisableWebPagePreview = true
 
 	sent, err := a.bot.Send(tgMsg)
@@ -183,6 +200,9 @@ func (a *Adapter) EditMessage(ctx context.Context, channelID string, messageID s
 	}
 
 	editMsg := tgbotapi.NewEditMessageText(chatID, int(msgID), msg.Content)
+	if msg.Format == platform.FormatMarkdown {
+		editMsg.ParseMode = "Markdown"
+	}
 	editMsg.DisableWebPagePreview = true
 
 	if _, err := a.bot.Send(editMsg); err != nil {

@@ -39,6 +39,11 @@ func (c *CustomProvider) Name() string {
 	return c.name
 }
 
+func (c *CustomProvider) GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
+	opts.Prompt = prompt
+	return generateOpenAIImage(c.client, c.baseURL, c.apiKey, c.model, opts)
+}
+
 func (c *CustomProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
 		Model:    c.model,

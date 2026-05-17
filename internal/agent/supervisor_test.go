@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -182,6 +185,55 @@ func TestSupervisor_CognitiveValidation(t *testing.T) {
 	if err != nil {
 		assert.NotContains(t, err.Error(), "cognitive validation failed")
 	}
+}
+
+func TestSupervisor_TruncatesLargeToolResultBeforeModelAndCallback(t *testing.T) {
+	path := t.TempDir() + "/large.txt"
+	largeOutput := strings.Repeat("A", toolResultHeadChars+1000) + "MIDDLE" + strings.Repeat("Z", maxToolResultChars)
+	require.NoError(t, os.WriteFile(path, []byte(largeOutput), 0644))
+
+	mock := &mockSSHProvider{
+		returnToolCall: true,
+		toolCalls: []llm.ToolCall{
+			{
+				ID:       "call_read",
+				Function: "read_file",
+				Args: map[string]interface{}{
+					"path": path,
+				},
+			},
+		},
+		finalContent: "done",
+	}
+
+	s := NewSupervisor(mock, nil)
+	s.SetMode(ModeRush)
+
+	var callbackOutput string
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) { callbackOutput = output },
+		OnPhaseChange: func(phase, description string) {},
+		OnConfirm:     func(message string) bool { return true },
+	}
+
+	_, err := s.ProcessPrompt(context.Background(), "read the large file")
+	require.NoError(t, err)
+	require.NotEmpty(t, callbackOutput)
+	assert.Less(t, len(callbackOutput), len(largeOutput))
+	assert.Contains(t, callbackOutput, "characters omitted from tool result")
+	assert.NotContains(t, callbackOutput, "MIDDLE")
+	assert.True(t, strings.HasPrefix(callbackOutput, strings.Repeat("A", 100)))
+	assert.True(t, strings.HasSuffix(callbackOutput, strings.Repeat("Z", 100)))
+
+	var toolMessage *llm.Message
+	for i := range mock.lastMessages {
+		if mock.lastMessages[i].Role == llm.RoleTool {
+			toolMessage = &mock.lastMessages[i]
+			break
+		}
+	}
+	require.NotNil(t, toolMessage)
+	assert.Equal(t, callbackOutput, toolMessage.Content)
 }
 
 func TestPromptResult_Struct(t *testing.T) {

@@ -75,17 +75,24 @@ func (s *Server) handleMemoryLinks(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			SourceID int64   `json:"source_id"`
-			TargetID int64   `json:"target_id"`
-			Relation string  `json:"relation"`
-			Weight   float64 `json:"weight"`
-			Note     string  `json:"note"`
+			SourceID      int64   `json:"source_id"`
+			TargetID      int64   `json:"target_id"`
+			Relation      string  `json:"relation"`
+			Weight        float64 `json:"weight"`
+			Note          string  `json:"note"`
+			Bidirectional bool    `json:"bidirectional"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			errorResponse(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		link, err := store.AddLink(req.SourceID, req.TargetID, req.Relation, req.Weight, req.Note)
+		var link *memory.MemoryLink
+		var err error
+		if req.Bidirectional {
+			link, err = store.AddBidirectionalLink(req.SourceID, req.TargetID, req.Relation, req.Weight, req.Note)
+		} else {
+			link, err = store.AddLink(req.SourceID, req.TargetID, req.Relation, req.Weight, req.Note)
+		}
 		if err != nil {
 			errorResponse(w, http.StatusBadRequest, err.Error())
 			return
@@ -125,6 +132,7 @@ func (s *Server) handleMemoryAutolink(w http.ResponseWriter, r *http.Request) {
 		Threshold float64 `json:"threshold"`
 		TopK      int     `json:"top_k"`
 		Replace   bool    `json:"replace"`
+		WikiLinks bool    `json:"wikilinks"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if req.Threshold == 0 {
@@ -143,5 +151,23 @@ func (s *Server) handleMemoryAutolink(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, report)
+	wikiCreated := 0
+	if req.WikiLinks {
+		wikiCreated, err = store.AutoLinkWikiLinks(s.resolveWorkspaceID())
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"mode":                 report.Mode,
+		"created":              report.Created,
+		"wikilinks_created":    wikiCreated,
+		"memories_scanned":     report.MemoriesScanned,
+		"with_embedding":       report.WithEmbedding,
+		"embedding_ratio":      report.EmbeddingRatio,
+		"threshold":            report.Threshold,
+		"top_k":                report.TopK,
+		"fell_back_to_lexical": report.FellBackToLexical,
+	})
 }

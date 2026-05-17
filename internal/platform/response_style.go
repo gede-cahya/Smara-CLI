@@ -1,0 +1,137 @@
+package platform
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
+)
+
+// RenderStatusMessage returns a polished, compact progress card for chat platforms.
+func RenderStatusMessage(platform, phase, detail string, elapsed time.Duration) string {
+	icon := phaseEmoji(phase)
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		detail = "Smara sedang memproses permintaan Anda"
+	}
+
+	switch strings.ToLower(platform) {
+	case "discord":
+		return fmt.Sprintf("%s **%s**\n> %s%s", icon, titleCase(phase), detail, elapsedSuffix(elapsed))
+	default:
+		return fmt.Sprintf("%s *%s*\n%s%s", icon, titleCase(phase), detail, elapsedSuffix(elapsed))
+	}
+}
+
+// RenderPlatformResponse wraps the final assistant response with a tasteful
+// platform-aware header/footer. It keeps the original content readable while
+// making Telegram, WhatsApp, Discord, and other chat surfaces feel less flat.
+func RenderPlatformResponse(platform, content, modelName string, duration time.Duration, tools, inputTokens, outputTokens int) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		content = "Selesai."
+	}
+
+	totalTokens := inputTokens + outputTokens
+	var meta []string
+	if duration > 0 {
+		meta = append(meta, fmt.Sprintf("⏱ %.1fs", duration.Seconds()))
+	}
+	if tools > 0 {
+		meta = append(meta, fmt.Sprintf("🔧 %d tools", tools))
+	}
+	if totalTokens > 0 {
+		meta = append(meta, fmt.Sprintf("∑ %d tk", totalTokens))
+	}
+	if inputTokens > 0 || outputTokens > 0 {
+		meta = append(meta, fmt.Sprintf("⇣ %d ⇡ %d", inputTokens, outputTokens))
+	}
+	if modelName != "" {
+		meta = append(meta, "🏷 "+modelName)
+	}
+
+	platform = strings.ToLower(platform)
+	switch platform {
+	case "discord":
+		return renderDiscordResponse(content, meta)
+	case "whatsapp", "wa":
+		return renderWhatsAppResponse(content, meta)
+	case "telegram", "telegra":
+		return renderTelegramResponse(content, meta)
+	default:
+		return renderGenericResponse(content, meta)
+	}
+}
+
+func renderTelegramResponse(content string, meta []string) string {
+	var sb strings.Builder
+	sb.WriteString("🌀 *Smara Response*\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(polishMarkdown(content))
+	if len(meta) > 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString("_" + strings.Join(meta, " • ") + "_")
+	}
+	return sb.String()
+}
+
+func renderWhatsAppResponse(content string, meta []string) string {
+	var sb strings.Builder
+	sb.WriteString("🌀 *Smara Response*\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(polishMarkdown(content))
+	if len(meta) > 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString("_" + strings.Join(meta, " • ") + "_")
+	}
+	return sb.String()
+}
+
+func renderDiscordResponse(content string, meta []string) string {
+	var sb strings.Builder
+	sb.WriteString("### 🌀 Smara Response\n")
+	sb.WriteString(polishMarkdown(content))
+	if len(meta) > 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString("-# " + strings.Join(meta, " • "))
+	}
+	return sb.String()
+}
+
+func renderGenericResponse(content string, meta []string) string {
+	if len(meta) == 0 {
+		return content
+	}
+	return content + "\n\n" + strings.Join(meta, " • ")
+}
+
+func polishMarkdown(content string) string {
+	content = strings.TrimSpace(content)
+	// Convert plain hyphen bullets into nicer bullets for chat apps, without
+	// touching horizontal rules or markdown tables.
+	bulletRe := regexp.MustCompile(`(?m)^\s*-\s+`)
+	content = bulletRe.ReplaceAllString(content, "• ")
+	return content
+}
+
+func elapsedSuffix(elapsed time.Duration) string {
+	if elapsed <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n_%.0fs elapsed_", elapsed.Seconds())
+}
+
+func titleCase(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "_", " "))
+	if s == "" {
+		return "Processing"
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func modeTitle(mode agent.Mode) string {
+	info := agent.GetModeInfo(mode)
+	return fmt.Sprintf("%s %s", info.Emoji, info.Label)
+}

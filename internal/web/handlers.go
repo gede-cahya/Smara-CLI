@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,6 +22,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 )
 
@@ -65,12 +67,113 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	if isImageGenerationPrompt(req.Message) {
+		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": req.Message}, nil)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, chatResponse{Response: s.rewriteGeneratedImageLinks(output)})
+		return
+	}
 	result, err := s.Supervisor.ProcessPrompt(ctx, req.Message)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, chatResponse{Response: result.Response})
+	jsonResponse(w, http.StatusOK, chatResponse{Response: s.rewriteGeneratedImageLinks(result.Response)})
+}
+
+func isImageGenerationPrompt(prompt string) bool {
+	p := strings.ToLower(prompt)
+	if strings.Contains(p, "analisa") || strings.Contains(p, "analyze") || strings.Contains(p, "lihat gambar") {
+		return false
+	}
+	imageTerms := []string{"gambar", "image", "logo", "ilustrasi", "illustration", "icon", "ikon", "poster", "desain visual"}
+	generateTerms := []string{"buat", "buatkan", "generate", "gambar kan", "create", "bikin", "design", "desain"}
+	for _, gen := range generateTerms {
+		if !strings.Contains(p, gen) {
+			continue
+		}
+		for _, img := range imageTerms {
+			if strings.Contains(p, img) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) handleGeneratedImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		errorResponse(w, http.StatusBadRequest, "path required")
+		return
+	}
+	allowed, err := s.generatedImagePathAllowed(path)
+	if err != nil {
+		errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	info, err := os.Stat(allowed)
+	if err != nil || info.IsDir() {
+		errorResponse(w, http.StatusNotFound, "image not found")
+		return
+	}
+	http.ServeFile(w, r, allowed)
+}
+
+func (s *Server) rewriteGeneratedImageLinks(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Markdown:") {
+			continue
+		}
+		start := strings.Index(line, "](")
+		end := strings.LastIndex(line, ")")
+		if start < 0 || end <= start+2 {
+			continue
+		}
+		path := line[start+2 : end]
+		if _, err := s.generatedImagePathAllowed(path); err != nil {
+			continue
+		}
+		line = line[:start+2] + "/api/generated-image?path=" + url.QueryEscape(path) + line[end:]
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *Server) generatedImagePathAllowed(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	outputDir := ""
+	if s.Cfg != nil {
+		outputDir = s.Cfg.ImageOutputDir
+	}
+	if outputDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		outputDir = filepath.Join(home, ".smara", "images")
+	}
+	absDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path di luar direktori gambar")
+	}
+	return absPath, nil
 }
 
 // --- WebSocket ---
@@ -90,11 +193,13 @@ type wsMessage struct {
 }
 
 type wsStats struct {
-	PromptCount int     `json:"prompt_count"`
-	TotalTokens int     `json:"total_tokens"`
-	AvgTokens   int     `json:"avg_tokens"`
-	Duration    string  `json:"duration"`
-	Cost        float64 `json:"cost"`
+	PromptCount  int     `json:"prompt_count"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	TotalTokens  int     `json:"total_tokens"`
+	AvgTokens    int     `json:"avg_tokens"`
+	Duration     string  `json:"duration"`
+	Cost         float64 `json:"cost"`
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +268,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: server, Tool: tool, Args: args})
 		},
 		OnToolResult: func(output string) {
-			_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: output})
+			_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: s.rewriteGeneratedImageLinks(output)})
 		},
 		OnLog: func(role, content string) {
 			_ = session.WriteJSON(wsMessage{Type: "log", Payload: content, Role: role})
@@ -181,6 +286,19 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 	prompt := injectAttachmentSteer(msg.Payload)
+	if isImageGenerationPrompt(msg.Payload) {
+		_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: "builtin", Tool: "generate_image", Args: map[string]interface{}{"prompt": msg.Payload}})
+		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Payload}, nil)
+		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
+		if err != nil {
+			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
+			return
+		}
+		output = s.rewriteGeneratedImageLinks(output)
+		_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: output})
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: output})
+		return
+	}
 	result, err := s.Supervisor.ProcessPrompt(ctx, prompt)
 
 	// Clear callbacks
@@ -193,7 +311,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		return
 	}
 
-	_ = session.WriteJSON(wsMessage{Type: "chat", Payload: result.Response})
+	_ = session.WriteJSON(wsMessage{Type: "chat", Payload: s.rewriteGeneratedImageLinks(result.Response)})
 
 	// Send stats
 	stats := s.Supervisor.GetStats()
@@ -202,12 +320,36 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		durStr = stats.LastDuration.Round(time.Millisecond).String()
 	}
 	_ = session.WriteJSON(wsMessage{Type: "stats", Stats: &wsStats{
-		PromptCount: stats.PromptCount,
-		TotalTokens: stats.TotalTokens,
-		AvgTokens:   stats.AvgTokensPerReq,
-		Duration:    durStr,
-		Cost:        stats.TotalCost,
+		PromptCount:  stats.PromptCount,
+		InputTokens:  stats.InputTokens,
+		OutputTokens: stats.OutputTokens,
+		TotalTokens:  stats.TotalTokens,
+		AvgTokens:    stats.AvgTokensPerReq,
+		Duration:     durStr,
+		Cost:         stats.TotalCost,
 	}})
+
+	if s.Cfg != nil {
+		path := metrics.DefaultAnalyticsPath(s.Cfg.DBPath)
+		provider := s.Supervisor.GetProviderName()
+		model := s.Supervisor.GetModel()
+		if model == "" {
+			model = s.Cfg.Model
+		}
+		_ = metrics.AppendUsageEvent(path, metrics.UsageEvent{
+			Timestamp:    time.Now(),
+			Provider:     provider,
+			Model:        model,
+			PromptCount:  1,
+			RequestCount: 1,
+			InputTokens:  result.InputTokens,
+			OutputTokens: result.OutputTokens,
+			TotalTokens:  result.TotalTokens,
+			CostUSD:      metrics.EstimateCost(provider, model, int64(result.InputTokens), int64(result.OutputTokens)),
+			DurationMs:   result.Duration.Milliseconds(),
+			Workspace:    s.Cfg.ActiveWorkspace,
+		})
+	}
 }
 
 // --- Memories ---
@@ -440,11 +582,17 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
 		return
 	}
-	// Read metrics from file if collector available
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status": "ok",
-		"note":   "metrics from metrics.json",
-	})
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days <= 0 {
+		days = 30
+	}
+	path := metrics.DefaultAnalyticsPath(s.Cfg.DBPath)
+	summary, err := metrics.ReadAnalyticsSummary(path, s.Cfg.DBPath, days)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, summary)
 }
 
 // --- Mode ---

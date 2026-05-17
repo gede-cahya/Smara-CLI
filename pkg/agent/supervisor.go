@@ -12,6 +12,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/pkg/llm"
 	"github.com/gede-cahya/Smara-CLI/pkg/mcp"
 	"github.com/gede-cahya/Smara-CLI/pkg/memory"
+	"github.com/gede-cahya/Smara-CLI/pkg/metrics"
 	"github.com/gede-cahya/Smara-CLI/pkg/session"
 )
 
@@ -167,6 +168,7 @@ func (s *Supervisor) SetModel(provider, model string) error {
 	}
 
 	s.provider = newProvider
+	s.providerConfig = cfg
 	// We don't wipe history here anymore to maintain session context across model switches
 	return nil
 }
@@ -261,8 +263,9 @@ func (s *Supervisor) discoverProjectContext() {
 
 // GetModel returns the current model name.
 func (s *Supervisor) GetModel() string {
-	// Could be extended to track current model
-	return ""
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerConfig.Model
 }
 
 // GetMode returns the current agent mode.
@@ -729,11 +732,16 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 	}
 
-	// 5. Update stats (estimate tokens: ~4 chars per token)
+	// 5. Update stats (estimate tokens: ~4 chars per token) and cost using
+	// provider/model-specific pricing.
 	inputTokens := len(userPrompt) / 4
 	outputTokens := len(finalResp) / 4
 	totalTokens := inputTokens + outputTokens
-	estimatedCost := float64(totalTokens) * 0.00001
+	providerName, modelName := s.GetModelInfo()
+	if providerName == "" || providerName == "unknown" {
+		providerName = s.GetProviderName()
+	}
+	estimatedCost := metrics.EstimateCost(providerName, modelName, int64(inputTokens), int64(outputTokens))
 
 	duration := time.Since(startTime)
 	s.updateStats(totalTokens, estimatedCost, duration)
@@ -743,7 +751,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	s.stats.OutputTokens += outputTokens
 	s.stats.LastDuration = duration
 	s.mu.Unlock()
-
+	s.mu.Unlock()
 	result := &PromptResult{
 		Response:     finalResp,
 		Thinking:     finalThinking,
@@ -960,32 +968,38 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			}
 		}
 
+		var imageToolOutputs []string
+
 		// Execute each tool and add results to messages
 		for _, tc := range toolCalls {
 			if ctx.Err() != nil {
 				return "", "", nil, nil, ctx.Err()
 			}
 			result, err := s.executeToolCall(tc)
+			toolOutput := result
+			if err != nil {
+				toolOutput = fmt.Sprintf("Error: %s", err)
+			}
+			if tc.Function == "generate_image" && err == nil && strings.Contains(toolOutput, "Path:") {
+				imageToolOutputs = append(imageToolOutputs, toolOutput)
+			}
 
 			// Callback: report result
 			if s.callback.OnToolResult != nil {
-				if err != nil {
-					s.callback.OnToolResult(fmt.Sprintf("Error: %s", err))
-				} else {
-					s.callback.OnToolResult(result)
-				}
+				s.callback.OnToolResult(toolOutput)
 			}
 
 			// Add tool result as a user message with tool_call_id
 			toolMsg := llm.Message{
 				Role:       llm.RoleTool,
-				Content:    result,
+				Content:    toolOutput,
 				ToolCallID: tc.ID,
 			}
-			if err != nil {
-				toolMsg.Content = fmt.Sprintf("Error: %s", err)
-			}
 			messages = append(messages, toolMsg)
+		}
+
+		if len(imageToolOutputs) > 0 {
+			return strings.Join(imageToolOutputs, "\n\n"), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 		}
 
 		// Loop continues — LLM will process tool results and either call more tools or give final answer

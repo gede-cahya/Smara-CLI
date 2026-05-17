@@ -276,13 +276,13 @@ func NewStyles() Styles {
 		ChatAgent: lipgloss.NewStyle().
 			Foreground(ClrText).
 			Background(ClrSurface).
-			Padding(0, 2).
-			BorderStyle(lipgloss.ThickBorder()).
-			BorderLeft(true).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ClrAccent).
 			BorderBackground(ClrBase).
-			MarginLeft(1),
-
+			MarginLeft(1).
+			MarginTop(1).
+			MarginBottom(1),
 		ChatSystem: lipgloss.NewStyle().
 			Foreground(ClrSubtext).
 			Background(ClrSurface).
@@ -733,8 +733,9 @@ func GetTheme() *Theme {
 		CompletionFooter: lipgloss.NewStyle().
 			Foreground(ClrMuted).
 			Border(lipgloss.NormalBorder(), true, false, false, false).
-			BorderForeground(ClrBorder).
-			PaddingLeft(1),
+			BorderForeground(ClrAccent).
+			PaddingLeft(1).
+			MarginLeft(1),
 		CompletionModel: lipgloss.NewStyle().
 			Foreground(ClrAccent).
 			Bold(true),

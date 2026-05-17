@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   ReactFlow,
   Background,
@@ -153,6 +153,58 @@ export default function Graphify() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+
+  const highlightedNodes = useMemo(() => {
+    if (!selectedNodeId) return nodes
+    const connected = new Set<string>([selectedNodeId])
+    edges.forEach(edge => {
+      if (edge.source === selectedNodeId) connected.add(edge.target)
+      if (edge.target === selectedNodeId) connected.add(edge.source)
+    })
+    return nodes.map(node => {
+      const isSelected = node.id === selectedNodeId
+      const isConnected = connected.has(node.id)
+      const type = (node.data?.type as string) || ''
+      const color = getNodeColor(type)
+      return {
+        ...node,
+        selected: isSelected,
+        draggable: true,
+        style: {
+          ...node.style,
+          border: isSelected ? `2px solid #facc15` : isConnected ? `2px solid ${color}` : `1px solid ${color}`,
+          boxShadow: isSelected
+            ? '0 0 22px rgba(250, 204, 21, 0.75)'
+            : isConnected
+              ? `0 0 14px ${color}77`
+              : 'none',
+          opacity: !selectedNodeId || isConnected ? 1 : 0.35,
+        },
+      }
+    })
+  }, [nodes, edges, selectedNodeId])
+
+  const highlightedEdges = useMemo(() => {
+    if (!selectedNodeId) return edges
+    return edges.map(edge => {
+      const isConnected = edge.source === selectedNodeId || edge.target === selectedNodeId
+      return {
+        ...edge,
+        animated: isConnected || edge.animated,
+        style: {
+          ...edge.style,
+          stroke: isConnected ? '#facc15' : '#374151',
+          strokeWidth: isConnected ? 3 : 1,
+          opacity: isConnected ? 1 : 0.25,
+        },
+        labelStyle: {
+          ...edge.labelStyle,
+          fill: isConnected ? '#fde68a' : '#6b7280',
+        },
+      }
+    })
+  }, [edges, selectedNodeId])
 
   const loadGraphList = useCallback(async () => {
     setLoadingList(true)
@@ -177,6 +229,7 @@ export default function Graphify() {
     setError(null)
     setWarning(null)
     setSelectedNode(null)
+    setSelectedNodeId(null)
     setUploadData(null)
     try {
       const data = await fetchGraphData(id)
@@ -190,7 +243,7 @@ export default function Graphify() {
     } finally {
       setLoadingData(false)
     }
-  }, [setNodes, setEdges, setSelectedNode])
+  }, [setNodes, setEdges])
 
   const handleGraphSelect = useCallback((id: string) => {
     if (!id) return
@@ -203,6 +256,8 @@ export default function Graphify() {
     setLoadingData(true)
     setError(null)
     setWarning(null)
+    setSelectedNodeId(null)
+    setSelectedNode(null)
     try {
       const result = await fetchGraphQuery(selectedGraph, searchText.trim(), 2)
       setNodes(toFlowNodes(result.nodes))
@@ -215,13 +270,15 @@ export default function Graphify() {
     } finally {
       setLoadingData(false)
     }
-  }, [selectedGraph, searchText, setNodes, setEdges, setSelectedNode])
+  }, [selectedGraph, searchText, setNodes, setEdges])
 
   const handleFilterType = useCallback((type: string) => {
     setFilterType(type)
-    if (!uploadData && !selectedGraph) return
-    const baseNodes = uploadData?.nodes || []
-    const baseEdges = uploadData?.edges || []
+    if (!uploadData) return
+    setSelectedNodeId(null)
+    setSelectedNode(null)
+    const baseNodes = uploadData.nodes || []
+    const baseEdges = uploadData.edges || []
     if (type === '') {
       setNodes(toFlowNodes(baseNodes))
       setEdges(toFlowEdges(baseEdges))
@@ -232,7 +289,7 @@ export default function Graphify() {
     const filteredEdges = baseEdges.filter(e => filteredIds.has(e.source) && filteredIds.has(e.target))
     setNodes(toFlowNodes(filtered))
     setEdges(toFlowEdges(filteredEdges))
-  }, [uploadData, selectedGraph, setNodes, setEdges, setSelectedNode])
+  }, [uploadData, setNodes, setEdges])
 
   const handleFile = useCallback((file: File) => {
     if (!file.name.endsWith('.json')) {
@@ -251,6 +308,8 @@ export default function Graphify() {
         }
         setSelectedGraph(null)
         setUploadData({ nodes: dataNodes, edges: dataEdges })
+        setSelectedNodeId(null)
+        setSelectedNode(null)
         setNodes(toFlowNodes(dataNodes))
         setEdges(toFlowEdges(dataEdges))
         setError(null)
@@ -260,7 +319,7 @@ export default function Graphify() {
       }
     }
     reader.readAsText(file)
-  }, [setNodes, setEdges, setSelectedNode])
+  }, [setNodes, setEdges])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -469,12 +528,20 @@ export default function Graphify() {
         {(nodes.length > 0 || edges.length > 0 || selectedGraph || uploadData) && (
           <div className="flex-1 overflow-hidden bg-gray-950 relative">
             <ReactFlow
-              nodes={nodes}
-              edges={edges}
+              nodes={highlightedNodes}
+              edges={highlightedEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
+              nodesDraggable
+              nodesConnectable={false}
+              elementsSelectable
+              onPaneClick={() => {
+                setSelectedNodeId(null)
+                setSelectedNode(null)
+              }}
               onNodeClick={(_, node) => {
                 const original = (node.data?.original as GraphNode) || null
+                setSelectedNodeId(node.id)
                 setSelectedNode(original)
               }}
               nodeTypes={{ custom: CustomNode }}

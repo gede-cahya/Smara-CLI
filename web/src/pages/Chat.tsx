@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
 import {
   Send, Bot, User, RefreshCw, Plus, Trash2, MessageSquare, Clock,
   Zap, ClipboardList, FlaskConical, ArrowRightLeft, MessageCircle,
@@ -8,7 +9,6 @@ import {
 } from 'lucide-react'
 import type { ChatMessage } from '../api'
 import { uploadClipboardImage, uploadAttachment } from '../api'
-
 type Attachment = {
   path: string
   size: number
@@ -25,6 +25,49 @@ function attachmentIcon(name: string, mime?: string) {
   if (['go', 'ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'java', 'c', 'cpp', 'h', 'sh'].includes(ext)) return FileCode
   if (mime === 'application/pdf' || ext === 'pdf') return FileText
   return FileIcon
+}
+
+function generatedImageUrls(text?: string): string[] {
+  if (!text) return []
+  const urls = new Set<string>()
+  const re = /!\[[^\]]*\]\((\/api\/generated-image\?path=[^)]+)\)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) urls.add(match[1])
+  return [...urls]
+}
+
+function SmaraMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      components={{
+        p: ({ children }) => <p className="mb-3 last:mb-0 text-gray-200 leading-7">{children}</p>,
+        strong: ({ children }) => <strong className="font-semibold text-white bg-smara-500/10 px-0.5 rounded">{children}</strong>,
+        em: ({ children }) => <em className="text-smara-200 not-italic">{children}</em>,
+        ul: ({ children }) => <ul className="my-3 space-y-2 pl-1">{children}</ul>,
+        ol: ({ children }) => <ol className="my-3 space-y-2 pl-5 list-decimal marker:text-smara-400">{children}</ol>,
+        li: ({ children }) => (
+          <li className="relative pl-5 text-gray-200 leading-7 before:content-[''] before:absolute before:left-0 before:top-3 before:w-1.5 before:h-1.5 before:rounded-full before:bg-gradient-to-r before:from-smara-400 before:to-cyan-300">
+            {children}
+          </li>
+        ),
+        code: ({ inline, children, ...props }: any) => inline ? (
+          <code className="rounded-md border border-smara-500/20 bg-smara-950/40 px-1.5 py-0.5 text-[0.85em] text-cyan-200 font-mono" {...props}>{children}</code>
+        ) : (
+          <code className="block overflow-x-auto rounded-xl border border-gray-700/70 bg-gray-950/80 p-4 text-xs leading-6 text-gray-100 shadow-inner shadow-black/30 font-mono" {...props}>{children}</code>
+        ),
+        pre: ({ children }) => <pre className="my-4 overflow-x-auto">{children}</pre>,
+        blockquote: ({ children }) => <blockquote className="my-4 border-l-2 border-smara-400/70 bg-smara-950/20 px-4 py-3 text-gray-300 rounded-r-xl">{children}</blockquote>,
+        a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-4 hover:text-cyan-200">{children}</a>,
+        img: ({ src, alt }) => <img src={src || ''} alt={alt || 'generated image'} className="my-3 max-h-96 rounded-xl border border-gray-700/70 shadow-lg shadow-black/30" />,
+        h1: ({ children }) => <h1 className="mb-3 mt-1 text-xl font-bold text-white tracking-tight">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-3 mt-4 text-lg font-semibold text-white tracking-tight">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold text-smara-100">{children}</h3>,
+        hr: () => <hr className="my-5 border-gray-700/60" />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
 }
 
 // Tools whose primary purpose is to mutate the filesystem or remote state.
@@ -87,8 +130,9 @@ function ToolCallCard({
   const status = msg.status || 'running'
   const logs = msg.logs || []
   const hasOutput = !!msg.output && msg.output.trim().length > 0
+  const imageUrls = generatedImageUrls(msg.output)
   const collapsed = msg.collapsed ?? false
-  const hasBody = logs.length > 0 || hasOutput
+  const hasBody = logs.length > 0 || hasOutput || imageUrls.length > 0
 
   const accent =
     kind === 'shell' ? 'border-cyan-700/50 bg-cyan-950/20'
@@ -186,6 +230,13 @@ function ToolCallCard({
               </summary>
               <pre className="mt-1 whitespace-pre-wrap">{msg.output}</pre>
             </details>
+          )}
+          {imageUrls.length > 0 && (
+            <div className="mt-3 grid gap-2">
+              {imageUrls.map(url => (
+                <img key={url} src={url} alt="generated image" className="max-h-72 rounded-lg border border-gray-700/70 object-contain shadow-lg shadow-black/30" />
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -391,7 +442,7 @@ export default function Chat() {
   const [showSessions, setShowSessions] = useState(false)
   const [mode, setMode] = useState('ask')
   const [spinnerIdx, setSpinnerIdx] = useState(0)
-  const [statusStats, setStatusStats] = useState<{ prompts: number; tokens: number; duration: string; cost: number } | null>(null)
+  const [statusStats, setStatusStats] = useState<{ prompts: number; inputTokens: number; outputTokens: number; tokens: number; duration: string; cost: number } | null>(null)
   const [activePhases, setActivePhases] = useState<Array<{ phase: string; description: string; status: 'running' | 'done' }>>([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
@@ -578,6 +629,8 @@ export default function Chat() {
           if (msg.stats) {
             setStatusStats({
               prompts: msg.stats.prompt_count,
+              inputTokens: msg.stats.input_tokens || 0,
+              outputTokens: msg.stats.output_tokens || 0,
               tokens: msg.stats.total_tokens,
               duration: msg.stats.duration,
               cost: msg.stats.cost,
@@ -874,63 +927,69 @@ export default function Chat() {
           }
           return (
             <div key={i} className={`flex gap-3 group ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                msg.role === 'user' ? 'bg-smara-700' : 'bg-gray-700'
-              }`}>
-                {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-300" />}
-              </div>
-              <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm leading-relaxed relative ${
+              <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ring-1 ${
                 msg.role === 'user'
-                  ? 'bg-smara-700/30 border border-smara-700/50'
+                  ? 'bg-gradient-to-br from-smara-600 to-smara-800 ring-smara-400/30 shadow-smara-950/40'
                   : msg.role === 'error'
-                  ? 'bg-red-900/30 border border-red-700/50 text-red-200'
-                  : 'bg-gray-800/50 border border-gray-700/50'
+                  ? 'bg-gradient-to-br from-red-700 to-red-950 ring-red-400/30 shadow-red-950/40'
+                  : 'bg-gradient-to-br from-gray-700 via-gray-800 to-smara-950 ring-smara-400/20 shadow-smara-950/40'
               }`}>
+                {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-200" />}
+              </div>
+              <div className={`max-w-[84%] rounded-2xl px-4 py-3 text-sm leading-relaxed relative shadow-xl backdrop-blur-sm overflow-hidden ${
+                msg.role === 'user'
+                  ? 'bg-gradient-to-br from-smara-800/50 to-smara-950/30 border border-smara-500/40 shadow-smara-950/20'
+                  : msg.role === 'error'
+                  ? 'bg-gradient-to-br from-red-950/70 to-gray-950/60 border border-red-600/50 text-red-100 shadow-red-950/20'
+                  : 'bg-gradient-to-br from-gray-900/95 via-gray-900/80 to-smara-950/35 border border-gray-700/70 shadow-black/25 before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-smara-300/50 before:to-transparent'
+              }`}>
+                {msg.role !== 'user' && msg.role !== 'error' && (
+                  <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-smara-300/90">
+                    <span className="h-1.5 w-1.5 rounded-full bg-smara-300 shadow-[0_0_12px_rgba(45,212,191,0.8)]" />
+                    Smara Response
+                  </div>
+                )}
                 {msg.attachments && msg.attachments.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-2">
+                  <div className="flex flex-wrap gap-2 mb-3">
                     {msg.attachments.map((att, ai) => {
                       const Icon = attachmentIcon(att.name || att.path, undefined)
                       return (
                         <div key={ai} className="relative group/att">
                           {att.kind === 'image' && att.preview ? (
-                            <img
-                              src={att.preview}
-                              alt={att.path}
-                              className="max-h-32 rounded border border-gray-700"
-                            />
+                            <img src={att.preview} alt={att.path} className="max-h-32 rounded-xl border border-gray-700/70 shadow-lg" />
                           ) : (
-                            <div className="flex items-center gap-2 px-2 py-2 bg-gray-900/60 border border-gray-700 rounded">
+                            <div className="flex items-center gap-2 px-3 py-2 bg-gray-950/60 border border-gray-700/70 rounded-xl shadow-inner">
                               <Icon className="w-5 h-5 text-smara-300 shrink-0" />
                               <div className="flex flex-col min-w-0">
-                                <span className="text-xs text-gray-200 truncate max-w-[200px]">
-                                  {att.name || att.path.split('/').pop()}
-                                </span>
-                                <span className="text-[10px] text-gray-500 font-mono">
-                                  {(att.size / 1024).toFixed(0)} KB
-                                </span>
+                                <span className="text-xs text-gray-200 truncate max-w-[200px]">{att.name || att.path.split('/').pop()}</span>
+                                <span className="text-[10px] text-gray-500 font-mono">{(att.size / 1024).toFixed(0)} KB</span>
                               </div>
                             </div>
                           )}
                           {att.kind === 'image' && (
-                            <div className="text-[10px] text-gray-500 mt-0.5 font-mono truncate max-w-[200px]">
-                              {(att.size / 1024).toFixed(0)} KB
-                            </div>
+                            <div className="text-[10px] text-gray-500 mt-0.5 font-mono truncate max-w-[200px]">{(att.size / 1024).toFixed(0)} KB</div>
                           )}
                         </div>
                       )
                     })}
                   </div>
                 )}
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-                <div className="text-[10px] text-gray-500 mt-1 text-right">
+                {msg.role === 'user' ? (
+                  <div className="whitespace-pre-wrap text-gray-100 leading-7">{msg.content}</div>
+                ) : msg.role === 'error' ? (
+                  <div className="whitespace-pre-wrap leading-7">{msg.content}</div>
+                ) : (
+                  <SmaraMarkdown content={msg.content} />
+                )}
+                <div className="mt-3 flex justify-end border-t border-white/5 pt-2 text-[10px] text-gray-500">
                   {new Date(msg.timestamp).toLocaleTimeString()}
                 </div>
                 <button
                   onClick={() => copyMessage(i, msg.content)}
                   title="Salin pesan"
-                  className={`absolute -top-2 ${msg.role === 'user' ? '-left-2' : '-right-2'} w-6 h-6 rounded-md bg-gray-800 border border-gray-700 hover:bg-gray-700 hover:border-smara-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity`}
+                  className={`absolute -top-2 ${msg.role === 'user' ? '-left-2' : '-right-2'} w-7 h-7 rounded-lg bg-gray-900/95 border border-gray-700 hover:bg-gray-800 hover:border-smara-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-lg`}
                 >
-                  {copiedIdx === i ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-gray-400" />}
+                  {copiedIdx === i ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
                 </button>
               </div>
             </div>
@@ -984,6 +1043,8 @@ export default function Chat() {
           </span>
           <span>prompts={statusStats.prompts}</span>
           <span>tokens={statusStats.tokens}</span>
+          <span>in={statusStats.inputTokens}</span>
+          <span>out={statusStats.outputTokens}</span>
           <span>dur={statusStats.duration}</span>
           <span>cost=${statusStats.cost.toFixed(4)}</span>
         </div>

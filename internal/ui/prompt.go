@@ -510,7 +510,25 @@ func PrintHelp() {
 // PrintUsageStats displays usage statistics after each prompt.
 // Accepts agent.Stats but displays it in a user-friendly format.
 func PrintUsageStats(promptCount int, totalTokens int, avgTokens int, totalCost float64, totalDuration string) {
+	PrintUsageStatsWithTokenBreakdown(promptCount, totalTokens, 0, 0, avgTokens, totalCost, totalDuration)
+}
+
+// PrintUsageStatsWithTokenBreakdown displays usage statistics with separate input/output tokens.
+func PrintUsageStatsWithTokenBreakdown(promptCount int, totalTokens int, inputTokens int, outputTokens int, avgTokens int, totalCost float64, totalDuration string) {
 	if promptCount == 0 {
+		return
+	}
+	if inputTokens > 0 || outputTokens > 0 {
+		fmt.Printf("  %s📊 Stats:%s prompts=%d tokens=%d input=%d output=%d avg=%d cost=$%.4f duration=%s\n",
+			Dim, Reset,
+			promptCount,
+			totalTokens,
+			inputTokens,
+			outputTokens,
+			avgTokens,
+			totalCost,
+			totalDuration,
+		)
 		return
 	}
 	fmt.Printf("  %s📊 Stats:%s prompts=%d tokens=%d avg=%d cost=$%.4f duration=%s\n",
@@ -521,31 +539,6 @@ func PrintUsageStats(promptCount int, totalTokens int, avgTokens int, totalCost 
 		totalCost,
 		totalDuration,
 	)
-}
-
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-var spinIdx = 0
-
-// SpinnerStart begins a spinner animation (call in goroutine).
-func SpinnerStart(msg string) {
-	fmt.Printf("\r  %s%s%s", Cyan, spinnerFrames[0], Reset)
-	fmt.Printf(" %s...", msg)
-}
-
-// SpinnerTick updates the spinner animation.
-func SpinnerTick() {
-	spinIdx = (spinIdx + 1) % len(spinnerFrames)
-	fmt.Printf("\r  %s%s%s", Cyan, spinnerFrames[spinIdx], Reset)
-}
-
-// SpinnerStop ends the spinner animation.
-func SpinnerStop(success bool) {
-	clearLine()
-	if success {
-		fmt.Printf("\r  %s✓%s %s\n", Green, Reset, "Done")
-	} else {
-		fmt.Printf("\r  %s✗%s %s\n", Red, Reset, "Failed")
-	}
 }
 
 // PrintStatusBar displays a status bar at the bottom of the terminal.

@@ -69,6 +69,10 @@ func (r *MessageRenderer) RenderMessage(role, content, thinking string, thoughts
 			"  " + lipgloss.NewStyle().Foreground(prefixColor).Background(ClrSurface).Padding(0, 1).Render(modeLabel) +
 			modelTag
 		bubbleStyle = r.theme.MessageAgent.Width(contentWidth).BorderForeground(prefixColor)
+		if content != "" {
+			title := lipgloss.NewStyle().Foreground(prefixColor).Bold(true).Render("╭─ ✨ Smara Response")
+			content = title + "\n" + content
+		}
 	case "System":
 		icon = "🔔"
 		var col = r.theme.AccentYellow
@@ -288,7 +292,7 @@ func (r *MessageRenderer) RenderCompletionFooter(modelName string, duration time
 	}
 
 	footerContent := strings.Join(parts, "  ")
-	return r.theme.CompletionFooter.Width(width).Render(footerContent)
+	return r.theme.CompletionFooter.Width(width).Render("╰─ " + footerContent)
 }
 
 // dotsSpinner returns the current dots spinner frame.

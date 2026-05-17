@@ -32,14 +32,15 @@ func (sb *StatusBar) SetWidth(width int) {
 
 // StatusContext holds runtime context for the status bar.
 type StatusContext struct {
-	Mode       string
-	Provider   string
-	Model      string
-	TokenCount int
-	Processing bool
+	Mode         string
+	Provider     string
+	Model        string
+	TokenCount   int
+	InputTokens  int
+	OutputTokens int
+	Processing   bool
 }
 
-// Render renders the status bar — Hermes style with left/right layout.
 func (sb *StatusBar) Render(ctx StatusContext) string {
 	var leftParts []string
 	var rightParts []string
@@ -68,9 +69,13 @@ func (sb *StatusBar) Render(ctx StatusContext) string {
 		rightParts = append(rightParts, provInfo)
 	}
 
-	// Token count
+	// Token counts
 	if ctx.TokenCount > 0 {
-		rightParts = append(rightParts, sb.theme.StatsValue.Render(fmt.Sprintf("∑%d tk", ctx.TokenCount)))
+		tokenLabel := fmt.Sprintf("∑%d tk", ctx.TokenCount)
+		if ctx.InputTokens > 0 || ctx.OutputTokens > 0 {
+			tokenLabel = fmt.Sprintf("∑%d tk ⇣%d ⇡%d", ctx.TokenCount, ctx.InputTokens, ctx.OutputTokens)
+		}
+		rightParts = append(rightParts, sb.theme.StatsValue.Render(tokenLabel))
 	}
 
 	// ── Layout: LEFT …… RIGHT ───────────────────────────────────

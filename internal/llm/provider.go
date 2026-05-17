@@ -45,6 +45,10 @@ type Streamer interface {
 	ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error)
 }
 
+type ImageGenerator interface {
+	GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error)
+}
+
 // ProviderInfo describes an available provider.
 type ProviderInfo struct {
 	Name        string
@@ -65,7 +69,7 @@ func AvailableProviders() map[string]ProviderInfo {
 		"openai": {
 			Name:        "openai",
 			Description: "OpenAI API (requires API key)",
-			Models:      []string{"gpt-4o", "gpt-4o-mini", "o1", "o3-mini"},
+			Models:      []string{"gpt-4o", "gpt-4o-mini", "o1", "o3-mini", "gpt-image-2"},
 			NeedsAPIKey: true,
 		},
 		"openrouter": {
@@ -83,7 +87,7 @@ func AvailableProviders() map[string]ProviderInfo {
 		"custom": {
 			Name:        "custom",
 			Description: "CLIProxyAPI (OpenAI-compatible) via local proxy at localhost:8317",
-			Models:      []string{"deepseek-v4-pro", "deepseek-v4-flash", "minimax-m2.7", "minimax-auto"},
+			Models:      []string{"deepseek-v4-pro", "deepseek-v4-flash", "minimax-m2.7", "minimax-auto", "gpt-image-2", "gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"},
 			NeedsAPIKey: true,
 		},
 	}

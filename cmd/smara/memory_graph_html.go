@@ -139,20 +139,55 @@ function toVisNodes(nodes) {
   });
 }
 
+function baseEdgeColor(e) {
+  return e.auto ? 'rgba(106,138,58,0.55)' : 'rgba(190,242,100,0.85)';
+}
+
 function toVisEdges(edges) {
   return edges.map((e, i) => ({
     id: 'e' + i,
     from: e.from,
     to: e.to,
     label: e.relation === 'similar' ? '' : e.relation,
-    color: { color: e.auto ? 'rgba(106,138,58,0.55)' : 'rgba(190,242,100,0.85)',
-             highlight: '#bef264' },
+    color: { color: baseEdgeColor(e), highlight: '#38bdf8', hover: '#38bdf8' },
     dashes: !!e.auto,
     width: Math.max(0.6, Math.min(3.5, (e.weight || 0.4) * 3.5)),
     arrows: { to: { enabled: !e.auto, scaleFactor: 0.5 } },
-    smooth: { type: 'continuous' },
+    smooth: { enabled: true, type: 'continuous', roundness: 0.35 },
     font: { color: '#8a9078', size: 10, strokeWidth: 0, align: 'top' },
   }));
+}
+
+function resetEdgeStyles() {
+  if (!edgesDS) return;
+  edgesDS.update(allEdges.map((e, i) => ({
+    id: 'e' + i,
+    color: { color: baseEdgeColor(e), highlight: '#38bdf8', hover: '#38bdf8' },
+    width: Math.max(0.6, Math.min(3.5, (e.weight || 0.4) * 3.5)),
+  })));
+}
+
+function highlightNearest(nodeId) {
+  if (!edgesDS || !nodesDS || !network) return;
+  const connectedEdgeIds = network.getConnectedEdges(nodeId);
+  const connectedNodeIds = new Set([nodeId, ...network.getConnectedNodes(nodeId)]);
+
+  resetEdgeStyles();
+  edgesDS.update(allEdges.map((e, i) => ({
+    id: 'e' + i,
+    color: connectedEdgeIds.includes('e' + i)
+      ? { color: '#38bdf8', highlight: '#7dd3fc', hover: '#7dd3fc' }
+      : { color: e.auto ? 'rgba(106,138,58,0.18)' : 'rgba(190,242,100,0.20)', highlight: '#38bdf8', hover: '#38bdf8' },
+    width: connectedEdgeIds.includes('e' + i)
+      ? Math.max(3, Math.min(6, (e.weight || 0.4) * 6))
+      : Math.max(0.4, Math.min(1.2, (e.weight || 0.4) * 1.2)),
+  })));
+  nodesDS.update(allNodes.map(n => ({ id: n.id, opacity: connectedNodeIds.has(n.id) ? 1 : 0.35 })));
+}
+
+function clearHighlight() {
+  resetEdgeStyles();
+  if (nodesDS) nodesDS.update(allNodes.map(n => ({ id: n.id, opacity: 1 })));
 }
 
 function renderDetail(node) {
@@ -191,6 +226,7 @@ function renderDetail(node) {
       const id = parseInt(el.getAttribute('data-id'));
       network.selectNodes([id]);
       network.focus(id, { scale: 1.2, animation: { duration: 400, easingFunction: 'easeInOutCubic' } });
+      highlightNearest(id);
       const target = allNodes.find(x => x.id === id);
       renderDetail(target);
     });
@@ -215,6 +251,7 @@ async function build() {
     return;
   }
 
+  if (network) network.destroy();
   nodesDS = new vis.DataSet(toVisNodes(allNodes));
   edgesDS = new vis.DataSet(toVisEdges(allEdges));
 
@@ -225,17 +262,30 @@ async function build() {
       forceAtlas2Based: { gravitationalConstant: -45, centralGravity: 0.008, springLength: 90, damping: 0.5 },
       stabilization: { iterations: 200 },
     },
-    interaction: { hover: true, tooltipDelay: 150, navigationButtons: false },
-    nodes: { borderWidthSelected: 2 },
-    edges: { selectionWidth: 2 },
+    interaction: { hover: true, tooltipDelay: 150, navigationButtons: false, dragNodes: true, dragView: true, zoomView: true },
+    manipulation: { enabled: false },
+    nodes: { borderWidthSelected: 2, chosen: true },
+    edges: { selectionWidth: 2, chosen: true },
   });
 
   network.on('click', (params) => {
-    if (params.nodes.length === 0) { renderDetail(null); return; }
+    if (params.nodes.length === 0) { clearHighlight(); renderDetail(null); return; }
     const id = params.nodes[0];
     const node = allNodes.find(n => n.id === id);
     if (!node) return;
+    highlightNearest(id);
     renderDetail(node);
+  });
+
+  network.on('dragStart', (params) => {
+    if (params.nodes && params.nodes.length > 0) highlightNearest(params.nodes[0]);
+  });
+
+  network.on('dragEnd', (params) => {
+    if (params.nodes && params.nodes.length > 0) {
+      network.setOptions({ physics: { enabled: false } });
+      highlightNearest(params.nodes[0]);
+    }
   });
 
   network.once('stabilizationIterationsDone', () => {
@@ -244,11 +294,11 @@ async function build() {
 }
 
 elSearch.addEventListener('input', () => {
-  if (!nodesDS) return;
+  if (!nodesDS || !edgesDS) return;
   const q = elSearch.value.trim().toLowerCase();
   if (!q) {
     nodesDS.update(allNodes.map(n => ({ id: n.id, hidden: false })));
-    edgesDS.update(allEdges.map((_, i) => ({ id: 'e' + i, hidden: false })));
+    edgesDS.update(allEdges.map((e, i) => ({ id: 'e' + i, hidden: false })));
     return;
   }
   const matchedIds = new Set(
@@ -267,10 +317,7 @@ elSearch.addEventListener('input', () => {
   })));
 });
 
-document.getElementById('reload').addEventListener('click', () => {
-  if (network) network.destroy();
-  build();
-});
+document.getElementById('reload').addEventListener('click', () => build());
 
 build();
 </script>

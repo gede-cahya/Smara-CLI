@@ -130,6 +130,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/graph/export", s.handleGraphExport)
 	mux.HandleFunc("/api/clipboard/upload", s.handleClipboardUpload)
 	mux.HandleFunc("/api/attachments/upload", s.handleAttachmentUpload)
+	mux.HandleFunc("/api/generated-image", s.handleGeneratedImage)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
 	// Static SPA (fallback to index.html for client-side routing)
