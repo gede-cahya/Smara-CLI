@@ -25,6 +25,12 @@ type PlatformAdapter interface {
 	Close() error
 }
 
+// AttachmentDownloader is an optional capability for adapters that can
+// fetch incoming attachments to a local file.
+type AttachmentDownloader interface {
+	DownloadAttachment(ctx context.Context, id string) (string, error)
+}
+
 // MessageHandler is a callback function invoked when an incoming message is received.
 type MessageHandler func(ctx context.Context, msg IncomingMessage) error
 

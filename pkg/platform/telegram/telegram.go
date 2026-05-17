@@ -4,7 +4,11 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -156,6 +160,56 @@ func (a *Adapter) Close() error {
 	return nil
 }
 
+// DownloadAttachment fetches a Telegram file by FileID and saves it locally.
+func (a *Adapter) DownloadAttachment(ctx context.Context, fileID string) (string, error) {
+	if a.bot == nil {
+		return "", fmt.Errorf("bot belum terhubung")
+	}
+	fileURL, err := a.bot.GetFileDirectURL(fileID)
+	if err != nil {
+		return "", fmt.Errorf("gagal mendapatkan URL file: %w", err)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".smara", "clip-images")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+
+	ext := filepath.Ext(fileURL)
+	if ext == "" || strings.Contains(ext, "?") {
+		ext = ".jpg"
+	}
+	dest := filepath.Join(dir, fmt.Sprintf("tg-%s%s", fileID, ext))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gagal download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download gagal, status %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(dest)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = os.Remove(dest)
+		return "", err
+	}
+	return dest, nil
+}
+
 // convertMessage converts a Telegram message to a platform.IncomingMessage.
 func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessage {
 	msg := platform.IncomingMessage{
@@ -167,6 +221,11 @@ func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessa
 		Content:   tgMsg.Text,
 		Metadata:  make(map[string]string),
 		Timestamp: time.Unix(int64(tgMsg.Date), 0),
+	}
+
+	// Photo/video messages carry text in Caption, not Text.
+	if msg.Content == "" && tgMsg.Caption != "" {
+		msg.Content = tgMsg.Caption
 	}
 
 	// Use first name if username is empty
@@ -191,11 +250,19 @@ func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessa
 	// Handle reply
 	if tgMsg.ReplyToMessage != nil {
 		msg.ReplyTo = fmt.Sprintf("%d", tgMsg.ReplyToMessage.MessageID)
+		msg.Metadata["reply_message_id"] = msg.ReplyTo
 	}
 
-	// Handle attachments
+	a.appendTelegramAttachments(&msg, tgMsg)
+	if tgMsg.ReplyToMessage != nil {
+		a.appendTelegramAttachments(&msg, tgMsg.ReplyToMessage)
+	}
+
+	return msg
+}
+
+func (a *Adapter) appendTelegramAttachments(msg *platform.IncomingMessage, tgMsg *tgbotapi.Message) {
 	if tgMsg.Photo != nil && len(tgMsg.Photo) > 0 {
-		// Get the largest photo
 		largest := tgMsg.Photo[len(tgMsg.Photo)-1]
 		msg.Attachments = append(msg.Attachments, platform.Attachment{
 			Type:     "image",
@@ -204,15 +271,20 @@ func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessa
 		})
 	}
 	if tgMsg.Document != nil {
+		attType := "file"
+		fileID := tgMsg.Document.FileID
+		fileName := tgMsg.Document.FileName
+		if strings.HasPrefix(tgMsg.Document.MimeType, "image/") {
+			attType = "image"
+			fileName = fileID
+		}
 		msg.Attachments = append(msg.Attachments, platform.Attachment{
-			Type:     "file",
-			FileName: tgMsg.Document.FileName,
+			Type:     attType,
+			FileName: fileName,
 			MimeType: tgMsg.Document.MimeType,
 			Size:     int64(tgMsg.Document.FileSize),
 		})
 	}
-
-	return msg
 }
 
 // parseChatID converts a string channel ID to int64 for the Telegram API.

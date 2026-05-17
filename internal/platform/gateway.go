@@ -300,9 +300,13 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 				if att.Type != "image" {
 					continue
 				}
-				path, err := downloader.DownloadAttachment(ctx, att.FileName)
+				ref := att.URL
+				if ref == "" {
+					ref = att.FileName
+				}
+				path, err := downloader.DownloadAttachment(ctx, ref)
 				if err != nil {
-					log.Printf("[gateway] gagal download attachment %s: %v", att.FileName, err)
+					log.Printf("[gateway] gagal download attachment %s: %v", ref, err)
 					continue
 				}
 				log.Printf("[gateway] image attachment di-download: %s", path)
@@ -320,6 +324,15 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 			log.Printf("[gateway] adapter %s belum support download attachment, %d attachment di-skip",
 				msg.Platform, len(msg.Attachments))
 		}
+	}
+
+	if isImageGenerationPrompt(msg.Content) {
+		_ = adapter.SendTyping(ctx, msg.ChannelID)
+		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Content}, nil)
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
+		}
+		return g.sendReplyWithAttachments(ctx, msg, output, imageAttachmentsFromToolOutput(output))
 	}
 
 	// 1. Send initial status message
@@ -616,6 +629,26 @@ func (g *Gateway) sendReplyWithAttachments(ctx context.Context, original Incomin
 	}
 
 	return nil
+}
+
+func isImageGenerationPrompt(prompt string) bool {
+	p := strings.ToLower(prompt)
+	if strings.Contains(p, "analisa") || strings.Contains(p, "analyze") || strings.Contains(p, "lihat gambar") {
+		return false
+	}
+	imageTerms := []string{"gambar", "image", "logo", "ilustrasi", "illustration", "icon", "ikon", "poster", "desain visual"}
+	generateTerms := []string{"buat", "buatkan", "generate", "create", "bikin", "design", "desain"}
+	for _, gen := range generateTerms {
+		if !strings.Contains(p, gen) {
+			continue
+		}
+		for _, img := range imageTerms {
+			if strings.Contains(p, img) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func imageAttachmentsFromToolOutput(output string) []Attachment {

@@ -314,11 +314,19 @@ func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessa
 	// Handle reply
 	if tgMsg.ReplyToMessage != nil {
 		msg.ReplyTo = fmt.Sprintf("%d", tgMsg.ReplyToMessage.MessageID)
+		msg.Metadata["reply_message_id"] = msg.ReplyTo
 	}
 
-	// Handle attachments
+	a.appendTelegramAttachments(&msg, tgMsg)
+	if tgMsg.ReplyToMessage != nil {
+		a.appendTelegramAttachments(&msg, tgMsg.ReplyToMessage)
+	}
+
+	return msg
+}
+
+func (a *Adapter) appendTelegramAttachments(msg *platform.IncomingMessage, tgMsg *tgbotapi.Message) {
 	if tgMsg.Photo != nil && len(tgMsg.Photo) > 0 {
-		// Get the largest photo
 		largest := tgMsg.Photo[len(tgMsg.Photo)-1]
 		msg.Attachments = append(msg.Attachments, platform.Attachment{
 			Type:     "image",
@@ -327,15 +335,20 @@ func (a *Adapter) convertMessage(tgMsg *tgbotapi.Message) platform.IncomingMessa
 		})
 	}
 	if tgMsg.Document != nil {
+		attType := "file"
+		fileID := tgMsg.Document.FileID
+		fileName := tgMsg.Document.FileName
+		if strings.HasPrefix(tgMsg.Document.MimeType, "image/") {
+			attType = "image"
+			fileName = fileID
+		}
 		msg.Attachments = append(msg.Attachments, platform.Attachment{
-			Type:     "file",
-			FileName: tgMsg.Document.FileName,
+			Type:     attType,
+			FileName: fileName,
 			MimeType: tgMsg.Document.MimeType,
 			Size:     int64(tgMsg.Document.FileSize),
 		})
 	}
-
-	return msg
 }
 
 // parseChatID converts a string channel ID to int64 for the Telegram API.

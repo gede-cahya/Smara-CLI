@@ -258,6 +258,38 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 	g.mu.RLock()
 	adapter, ok := g.adapters[msg.Platform]
 	g.mu.RUnlock()
+	if len(msg.Attachments) > 0 {
+		if downloader, ok := adapter.(AttachmentDownloader); ok {
+			injected := []string{}
+			for _, att := range msg.Attachments {
+				if att.Type != "image" {
+					continue
+				}
+				ref := att.URL
+				if ref == "" {
+					ref = att.FileName
+				}
+				path, err := downloader.DownloadAttachment(ctx, ref)
+				if err != nil {
+					log.Printf("[gateway] gagal download attachment %s: %v", ref, err)
+					continue
+				}
+				log.Printf("[gateway] image attachment di-download: %s", path)
+				injected = append(injected, "[image:"+path+"]")
+			}
+			if len(injected) > 0 {
+				steer := "\n\n[Sistem: pesan ini menyertakan gambar. Pakai tool analyze_image dengan path tersebut untuk melihat konten gambar — jangan menebak isi tanpa membacanya. Setelah dapat hasil, jawab pertanyaan user berdasarkan info tersebut.]"
+				if msg.Content == "" {
+					msg.Content = strings.Join(injected, " ") + " (tidak ada caption — analisa gambar yang dilampirkan)" + steer
+				} else {
+					msg.Content = strings.Join(injected, " ") + " " + msg.Content + steer
+				}
+			}
+		} else {
+			log.Printf("[gateway] adapter %s belum support download attachment, %d attachment di-skip", msg.Platform, len(msg.Attachments))
+		}
+	}
+
 	if ok {
 		_ = adapter.SendTyping(ctx, msg.ChannelID)
 	}
@@ -279,6 +311,14 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 			generatedMu.Unlock()
 		},
 	})
+
+	if isImageGenerationPrompt(msg.Content) {
+		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Content}, nil)
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
+		}
+		return g.sendReplyWithAttachments(ctx, msg, output, imageAttachmentsFromToolOutput(output))
+	}
 
 	// Process via supervisor
 	startTime := time.Now()
@@ -343,6 +383,26 @@ func (g *Gateway) sendReplyWithAttachments(ctx context.Context, original Incomin
 	}
 
 	return nil
+}
+
+func isImageGenerationPrompt(prompt string) bool {
+	p := strings.ToLower(prompt)
+	if strings.Contains(p, "analisa") || strings.Contains(p, "analyze") || strings.Contains(p, "lihat gambar") {
+		return false
+	}
+	imageTerms := []string{"gambar", "image", "logo", "ilustrasi", "illustration", "icon", "ikon", "poster", "desain visual"}
+	generateTerms := []string{"buat", "buatkan", "generate", "create", "bikin", "design", "desain"}
+	for _, gen := range generateTerms {
+		if !strings.Contains(p, gen) {
+			continue
+		}
+		for _, img := range imageTerms {
+			if strings.Contains(p, img) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func imageAttachmentsFromToolOutput(output string) []Attachment {

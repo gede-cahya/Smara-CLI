@@ -4,8 +4,12 @@ package discord
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -208,6 +212,69 @@ func (a *Adapter) sendMessageWithAttachments(channelID, content string, attachme
 	return nil
 }
 
+// DownloadAttachment downloads a Discord attachment URL to a local file.
+func (a *Adapter) DownloadAttachment(ctx context.Context, id string) (string, error) {
+	attachmentURL := strings.TrimSpace(id)
+	if attachmentURL == "" {
+		return "", fmt.Errorf("attachment URL kosong")
+	}
+	parsed, err := url.Parse(attachmentURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("attachment URL Discord tidak valid")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, attachmentURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("gagal membuat request attachment: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gagal download attachment Discord: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gagal download attachment Discord: HTTP %d", resp.StatusCode)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.TempDir()
+	}
+	dir := filepath.Join(home, ".smara", "attachments", "discord")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("gagal membuat folder attachment: %w", err)
+	}
+
+	ext := discordAttachmentExtension(parsed.Path, resp.Header.Get("Content-Type"))
+	file, err := os.CreateTemp(dir, "discord-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("gagal membuat file attachment: %w", err)
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return "", fmt.Errorf("gagal menyimpan attachment: %w", err)
+	}
+	return file.Name(), nil
+}
+
+func discordAttachmentExtension(pathValue, contentType string) string {
+	if ext := filepath.Ext(pathValue); ext != "" {
+		return ext
+	}
+	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".bin"
+	}
+}
+
 // SendTyping sends a typing indicator to a Discord channel.
 func (a *Adapter) SendTyping(ctx context.Context, channelID string) error {
 	if a.session == nil {
@@ -346,8 +413,25 @@ func (a *Adapter) convertMessage(m *discordgo.MessageCreate) platform.IncomingMe
 	// Store guild info
 	msg.Metadata["guild_id"] = m.GuildID
 
-	// Handle attachments
-	for _, att := range m.Attachments {
+	a.appendDiscordAttachments(&msg, m.Attachments)
+	if m.ReferencedMessage != nil {
+		msg.Metadata["reply_message_id"] = m.ReferencedMessage.ID
+		a.appendDiscordAttachments(&msg, m.ReferencedMessage.Attachments)
+	} else if m.MessageReference != nil && m.MessageReference.MessageID != "" && a.session != nil {
+		msg.Metadata["reply_message_id"] = m.MessageReference.MessageID
+		ref, err := a.session.ChannelMessage(m.ChannelID, m.MessageReference.MessageID)
+		if err != nil {
+			log.Printf("[discord] gagal mengambil referenced message %s: %v", m.MessageReference.MessageID, err)
+		} else {
+			a.appendDiscordAttachments(&msg, ref.Attachments)
+		}
+	}
+
+	return msg
+}
+
+func (a *Adapter) appendDiscordAttachments(msg *platform.IncomingMessage, attachments []*discordgo.MessageAttachment) {
+	for _, att := range attachments {
 		attType := "file"
 		if strings.HasPrefix(att.ContentType, "image/") {
 			attType = "image"
@@ -362,8 +446,6 @@ func (a *Adapter) convertMessage(m *discordgo.MessageCreate) platform.IncomingMe
 			Size:     int64(att.Size),
 		})
 	}
-
-	return msg
 }
 
 // registerSlashCommands registers Discord slash commands.
