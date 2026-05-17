@@ -1,12 +1,14 @@
-# Release Notes — Smara CLI v1.20.1
+# Smara CLI v1.20.1
 
-Generated: 2026-05-17T04:02:55Z
+Release otomatis untuk tag v1.20.1.
 
 Previous tag: v1.20.0
 
 ## Changes
 
-- chore: move release notes into versions folder (7f6cfdb)
-## Assets
 
-Compiled binaries are attached to the GitHub Release.
+## Assets
+- Linux amd64: smara-v1.20.1-linux-amd64.tar.gz
+- Windows amd64: smara-v1.20.1-windows-amd64.zip
+- macOS Intel amd64: smara-v1.20.1-darwin-amd64.tar.gz
+- macOS Apple Silicon arm64: smara-v1.20.1-darwin-arm64.tar.gz
