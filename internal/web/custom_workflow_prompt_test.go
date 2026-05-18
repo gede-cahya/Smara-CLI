@@ -25,6 +25,45 @@ func TestExtractCustomWorkflowRunName(t *testing.T) {
 	}
 }
 
+func TestExtractCustomWorkflowCreateName(t *testing.T) {
+	cases := map[string]string{
+		"buat custom workflow spamload discover logic nanti kau rangkum range":        "spamload-discover-logic",
+		"aku sekarang buat custom workflow spamload discover logic nanti kau rangkum": "spamload-discover-logic",
+		"oke sekarang buatkan custom workflow spesialisasi desainer logo nanti":       "spesialisasi-desainer-logo",
+		"buatkan custom workflow untuk testing website profesional":                   "testing-website-profesional",
+		"create custom workflow release pipeline dengan QA":                           "release-pipeline",
+	}
+	for input, want := range cases {
+		got, ok := extractCustomWorkflowCreateName(input)
+		if !ok || got != want {
+			t.Fatalf("extractCustomWorkflowCreateName(%q) = %q, %v; want %q, true", input, got, ok, want)
+		}
+	}
+}
+
+func TestCustomWorkflowQuestionDoesNotCreateWorkflow(t *testing.T) {
+	prompt := "untuk custom workflow apakah ada fitur mengulangannya atau loop nanti saya mau buat custom workflow yang bisa melakukan secara loop pengulangan"
+	if !isCustomWorkflowQuestion(prompt) {
+		t.Fatalf("isCustomWorkflowQuestion(%q) = false; want true", prompt)
+	}
+	if _, ok := extractCustomWorkflowCreateName(prompt); !ok {
+		t.Fatalf("extractCustomWorkflowCreateName(%q) = false; sanity check expected raw marker to match", prompt)
+	}
+}
+
+func TestBuildPromptCustomWorkflowForLogoUsesGenerateImageTool(t *testing.T) {
+	cw := buildPromptCustomWorkflow("spesialisasi-desainer-logo", "oke sekarang buatkan custom workflow spesialisasi desainer logo nanti bisa mengenerate image")
+	var found bool
+	for _, a := range cw.Agents {
+		if a.Role == "image-generator" && len(a.Tasks) == 1 {
+			found = a.Tasks[0].MCPServer == "builtin" && a.Tasks[0].ToolName == "generate_image" && a.Tasks[0].ToolArgs["prompt"] != ""
+		}
+	}
+	if !found {
+		t.Fatalf("logo workflow did not include image-generator builtin generate_image task: %#v", cw.Agents)
+	}
+}
+
 func TestFindCustomWorkflowByAgentRole(t *testing.T) {
 	cfg := config.Get()
 	oldDBPath := cfg.DBPath

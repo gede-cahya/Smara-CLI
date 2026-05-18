@@ -19,6 +19,7 @@ import (
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
+	"github.com/gede-cahya/Smara-CLI/internal/browser"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
@@ -75,13 +76,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
 		return
 	}
-	if isImageGenerationPrompt(req.Message) {
-		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": req.Message}, nil)
+	if response, handled, err := s.tryCreateCustomWorkflowPrompt(req.Message); handled {
 		if err != nil {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		jsonResponse(w, http.StatusOK, chatResponse{Response: s.rewriteGeneratedImageLinks(output)})
+		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
 		return
 	}
 	result, err := s.Supervisor.ProcessPrompt(ctx, req.Message)
@@ -90,26 +90,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, chatResponse{Response: s.rewriteGeneratedImageLinks(result.Response)})
-}
-
-func isImageGenerationPrompt(prompt string) bool {
-	p := strings.ToLower(prompt)
-	if strings.Contains(p, "analisa") || strings.Contains(p, "analyze") || strings.Contains(p, "lihat gambar") {
-		return false
-	}
-	imageTerms := []string{"gambar", "image", "logo", "ilustrasi", "illustration", "icon", "ikon", "poster", "desain visual"}
-	generateTerms := []string{"buat", "buatkan", "generate", "gambar kan", "create", "bikin", "design", "desain"}
-	for _, gen := range generateTerms {
-		if !strings.Contains(p, gen) {
-			continue
-		}
-		for _, img := range imageTerms {
-			if strings.Contains(p, img) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (s *Server) handleGeneratedImage(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +112,54 @@ func (s *Server) handleGeneratedImage(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusNotFound, "image not found")
 		return
 	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(allowed)))
 	http.ServeFile(w, r, allowed)
+}
+
+func (s *Server) handleLocalImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		errorResponse(w, http.StatusBadRequest, "path required")
+		return
+	}
+	allowed, err := localImagePathAllowed(path)
+	if err != nil {
+		errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	info, err := os.Stat(allowed)
+	if err != nil || info.IsDir() {
+		errorResponse(w, http.StatusNotFound, "image not found")
+		return
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(allowed)))
+	http.ServeFile(w, r, allowed)
+}
+
+func localImagePathAllowed(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	ext := strings.ToLower(filepath.Ext(absPath))
+	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" {
+		return "", fmt.Errorf("hanya file gambar yang diizinkan")
+	}
+	for _, dir := range []string{"/tmp", os.TempDir()} {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absDir, absPath)
+		if err == nil && rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
+			return absPath, nil
+		}
+	}
+	return "", fmt.Errorf("path di luar direktori gambar lokal yang diizinkan")
 }
 
 func (s *Server) rewriteGeneratedImageLinks(text string) string {
@@ -182,6 +209,100 @@ func (s *Server) generatedImagePathAllowed(path string) (string, error) {
 		return "", fmt.Errorf("path di luar direktori gambar")
 	}
 	return absPath, nil
+}
+
+func (s *Server) handleBrowserArtifact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		errorResponse(w, http.StatusBadRequest, "path required")
+		return
+	}
+	allowed, err := browserArtifactPathAllowed(path)
+	if err != nil {
+		errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	info, err := os.Stat(allowed)
+	if err != nil || info.IsDir() {
+		errorResponse(w, http.StatusNotFound, "artifact not found")
+		return
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(allowed)))
+	http.ServeFile(w, r, allowed)
+}
+
+func browserArtifactPathAllowed(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	ext := strings.ToLower(filepath.Ext(absPath))
+	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".md" {
+		return "", fmt.Errorf("hanya file gambar/report browser yang diizinkan")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Join(home, ".smara", "artifacts", "browser-runs")
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path di luar direktori artifact browser")
+	}
+	return absPath, nil
+}
+
+func (s *Server) runBrowserTest(ctx context.Context, prompt string) (string, error) {
+	task, err := browser.Plan(prompt)
+	if err != nil {
+		return "", err
+	}
+	res, runErr := browser.Run(ctx, task, browser.Options{Timeout: 45 * time.Second})
+	return s.formatBrowserTestResponse(task, res, runErr), nil
+}
+
+func (s *Server) formatBrowserTestResponse(task browser.Task, res browser.Result, runErr error) string {
+	var sb strings.Builder
+	sb.WriteString("## Web Test Result\n\n")
+	sb.WriteString(fmt.Sprintf("Status: %s\n", res.Status))
+	sb.WriteString("Browser: Chromium via go-rod\n")
+	sb.WriteString(fmt.Sprintf("URL: %s\n", task.URL))
+	if runErr != nil {
+		sb.WriteString(fmt.Sprintf("Detail: %s\n", runErr.Error()))
+	}
+	if res.ScreenshotPath != "" {
+		imgURL := "/api/browser-artifact?path=" + url.QueryEscape(res.ScreenshotPath)
+		sb.WriteString(fmt.Sprintf("Output: %s\n", res.ScreenshotPath))
+		sb.WriteString(fmt.Sprintf("Screenshot: %s\n\n", imgURL))
+		sb.WriteString(fmt.Sprintf("![Browser Screenshot](%s)\n\n", imgURL))
+	}
+	if res.ReportPath != "" {
+		sb.WriteString(fmt.Sprintf("Report: %s\n\n", res.ReportPath))
+	}
+	sb.WriteString("### Steps\n")
+	steps := res.Steps
+	if len(steps) == 0 {
+		for _, st := range task.Steps {
+			steps = append(steps, browser.StepResult{Step: st, Status: "planned"})
+		}
+	}
+	for i, sr := range steps {
+		line := fmt.Sprintf("%d. %s `%s` — %s", i+1, sr.Step.Action, sr.Step.Target, sr.Status)
+		if sr.Error != "" {
+			line += ": " + sr.Error
+		}
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("\nContoh flow Test: `Buka <URL> klik <teks> tunggu <teks> ambil screenshot`.\n")
+	return sb.String()
 }
 
 // --- WebSocket ---
@@ -303,15 +424,27 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response})
 		return
 	}
-	if isImageGenerationPrompt(msg.Payload) {
-		_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: "builtin", Tool: "generate_image", Args: map[string]interface{}{"prompt": msg.Payload}})
-		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Payload}, nil)
+	if response, handled, err := s.tryCreateCustomWorkflowPrompt(msg.Payload); handled {
 		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
 		if err != nil {
 			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
 			return
 		}
-		output = s.rewriteGeneratedImageLinks(output)
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response})
+		return
+	}
+	activeMode := msg.Mode
+	if activeMode == "" {
+		activeMode = string(s.Supervisor.GetMode())
+	}
+	if activeMode == string(agent.ModeTest) && browser.IsBrowserPrompt(msg.Payload) {
+		_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: "browser", Tool: "browser_run", Args: map[string]interface{}{"prompt": msg.Payload}})
+		output, err := s.runBrowserTest(ctx, msg.Payload)
+		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
+		if err != nil {
+			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
+			return
+		}
 		_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: output})
 		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: output})
 		return
@@ -385,6 +518,25 @@ func (s *Server) tryRunCustomWorkflowPrompt(prompt string) (string, bool, error)
 	return formatCustomWorkflowRunResponse(matched, result), true, nil
 }
 
+func (s *Server) tryCreateCustomWorkflowPrompt(prompt string) (string, bool, error) {
+	if isCustomWorkflowQuestion(prompt) {
+		return "", false, nil
+	}
+	name, ok := extractCustomWorkflowCreateName(prompt)
+	if !ok {
+		return "", false, nil
+	}
+	uniqueName, err := uniqueCustomWorkflowName(name)
+	if err != nil {
+		return "", true, err
+	}
+	cw := buildPromptCustomWorkflow(uniqueName, prompt)
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		return "", true, fmt.Errorf("gagal menyimpan custom workflow '%s': %w", uniqueName, err)
+	}
+	return formatCustomWorkflowCreateResponse(cw), true, nil
+}
+
 func extractCustomWorkflowRunName(prompt string) (string, bool) {
 	text := strings.TrimSpace(prompt)
 	if text == "" {
@@ -419,6 +571,132 @@ func extractCustomWorkflowRunName(prompt string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func isCustomWorkflowQuestion(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	if !strings.Contains(p, "custom workflow") && !strings.Contains(p, "workflow") {
+		return false
+	}
+	questionTerms := []string{"?", "apakah", "apa ", "gimana", "bagaimana", "ada fitur", "bisa gak", "bisa nggak", "bisa ngga", "bisakah", "kalau", "untuk custom workflow"}
+	for _, term := range questionTerms {
+		if strings.Contains(p, term) {
+			return true
+		}
+	}
+	return strings.Contains(p, "saya mau buat") && (strings.Contains(p, "nanti") || strings.Contains(p, "yang bisa"))
+}
+
+func extractCustomWorkflowCreateName(prompt string) (string, bool) {
+	text := strings.TrimSpace(prompt)
+	if text == "" {
+		return "", false
+	}
+	lower := strings.ToLower(text)
+	markers := []string{
+		"buatkan custom workflow ",
+		"buat custom workflow ",
+		"bikin custom workflow ",
+		"create custom workflow ",
+		"generate custom workflow ",
+		"scaffold custom workflow ",
+	}
+	for _, marker := range markers {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			name := deriveCustomWorkflowName(text[idx+len(marker):])
+			if name != "" {
+				return name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func deriveCustomWorkflowName(text string) string {
+	lower := strings.ToLower(text)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	stopAfter := map[string]bool{"nanti": true, "lalu": true, "kemudian": true, "yang": true, "dengan": true, "agar": true, "supaya": true, "dan": true}
+	skip := map[string]bool{"untuk": true, "sebuah": true, "satu": true, "custom": true, "workflow": true, "agent": true}
+	parts := make([]string, 0, 4)
+	for _, word := range words {
+		if word == "" || skip[word] {
+			continue
+		}
+		if len(parts) > 0 && stopAfter[word] {
+			break
+		}
+		parts = append(parts, word)
+		if len(parts) == 4 {
+			break
+		}
+	}
+	return strings.Join(parts, "-")
+}
+
+func uniqueCustomWorkflowName(base string) (string, error) {
+	names, err := workflow.ListCustomWorkflows()
+	if err != nil {
+		return "", err
+	}
+	used := make(map[string]bool, len(names))
+	for _, name := range names {
+		used[strings.ToLower(name)] = true
+	}
+	candidate := base
+	for i := 2; used[strings.ToLower(candidate)]; i++ {
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+	return candidate, nil
+}
+
+func buildPromptCustomWorkflow(name, prompt string) *workflow.CustomWorkflow {
+	if isLogoImageWorkflowPrompt(prompt) {
+		return buildLogoImageCustomWorkflow(name, prompt)
+	}
+	return &workflow.CustomWorkflow{
+		Name:        name,
+		Description: prompt,
+		Agents: []workflow.CustomAgent{
+			{Role: "master", Description: "Orkestrator workflow dari prompt utama. Pecah tujuan menjadi scope, batasan, agent route, dan acceptance criteria.", Skills: []string{"orchestrator"}, Tasks: []workflow.Task{{ID: "intake", Description: "Baca prompt utama berikut, tetapkan tujuan workflow, asumsi, batasan aman, dan urutan kerja: " + prompt}}},
+			{Role: "discover-logic", Description: "Agent discovery yang memetakan logic, alur keputusan, input/output, dan dependency penting.", Skills: []string{"analysis", "workflow"}, Tasks: []workflow.Task{{ID: "discover", Description: "Temukan logic inti, aktor, data/input, output, dependency, dan area yang perlu diverifikasi dari prompt master."}}, DependsOn: []string{"master"}, InputsFrom: map[string][]string{"master": {"intake"}}},
+			{Role: "range-summarizer", Description: "Agent yang merangkum range/scope dan batasan agar workflow tidak melebar ke hal generik.", Skills: []string{"planning", "scope"}, Tasks: []workflow.Task{{ID: "range", Description: "Ringkas range kerja, prioritas, out-of-scope, dan guardrail eksekusi."}}, DependsOn: []string{"discover-logic"}, InputsFrom: map[string][]string{"discover-logic": {"discover"}}},
+			{Role: "skill-fit-auditor", Description: "Agent yang menilai skill/tool yang cocok, yang terlalu generik, dan gap kemampuan.", Skills: []string{"skill-audit", "evaluation"}, Tasks: []workflow.Task{{ID: "fit", Description: "Petakan skill yang dibutuhkan, skill yang fit, skill yang terlalu generik, dan rekomendasi perbaikan instruction."}}, DependsOn: []string{"discover-logic"}, InputsFrom: map[string][]string{"discover-logic": {"discover"}}},
+			{Role: "weakness-auditor", Description: "Agent kritik yang mencari kelemahan workflow, ambiguity, edge case, dan risiko salah routing.", Skills: []string{"risk", "review"}, Tasks: []workflow.Task{{ID: "weakness", Description: "Jelaskan kelemahan, failure mode, ambiguity, risiko over-generic, dan mitigasi praktis."}}, DependsOn: []string{"range-summarizer", "skill-fit-auditor"}, InputsFrom: map[string][]string{"range-summarizer": {"range"}, "skill-fit-auditor": {"fit"}}},
+			{Role: "report-writer", Description: "Agent finalizer yang mengompilasi hasil menjadi laporan actionable.", Skills: []string{"reporting"}, Tasks: []workflow.Task{{ID: "final", Description: "Buat laporan final Markdown: ringkasan logic, range/scope, skill fit, kelemahan, rekomendasi, dan next actions."}}, DependsOn: []string{"weakness-auditor"}, InputsFrom: map[string][]string{"weakness-auditor": {"weakness"}}},
+		},
+	}
+}
+
+func isLogoImageWorkflowPrompt(prompt string) bool {
+	p := strings.ToLower(prompt)
+	return strings.Contains(p, "logo") || strings.Contains(p, "generate image") || strings.Contains(p, "mengenerate image") || strings.Contains(p, "gambar") || strings.Contains(p, "desain visual")
+}
+
+func buildLogoImageCustomWorkflow(name, prompt string) *workflow.CustomWorkflow {
+	imagePrompt := "Professional logo design based on this brief: " + prompt + ". Create a clean, memorable, high-quality logo on a simple background, suitable for brand identity presentation."
+	return &workflow.CustomWorkflow{
+		Name:        name,
+		Description: prompt,
+		Agents: []workflow.CustomAgent{
+			{Role: "master", Description: "Orkestrator workflow desain logo. Tangkap brief, tujuan brand, constraint visual, output image, review, dan revised prompt.", Skills: []string{"orchestrator", "logo-design"}, Tasks: []workflow.Task{{ID: "brief", Description: "Baca prompt utama berikut dan susun brief logo: audience, brand personality, visual direction, warna, style, constraint, dan acceptance criteria: " + prompt}}},
+			{Role: "logo-brief-analyst", Description: "Brand strategist yang memperjelas brief logo menjadi arahan visual yang siap digenerate.", Skills: []string{"brand", "logo", "creative-brief"}, Tasks: []workflow.Task{{ID: "creative-brief", Description: "Ubah brief master menjadi creative brief logo yang konkret: konsep utama, simbol/metafora, warna, typography direction, mood, dan negative constraints."}}, DependsOn: []string{"master"}, InputsFrom: map[string][]string{"master": {"brief"}}},
+			{Role: "logo-designer", Description: "Designer agent yang membuat prompt image logo profesional dari creative brief.", Skills: []string{"logo-design", "prompt-engineering", "visual-design"}, Tasks: []workflow.Task{{ID: "image-prompt", Description: "Buat final image prompt untuk generate_image. Prompt harus spesifik, profesional, tidak generik, dan cocok untuk logo/brand identity."}}, DependsOn: []string{"logo-brief-analyst"}, InputsFrom: map[string][]string{"logo-brief-analyst": {"creative-brief"}}},
+			{Role: "image-generator", Description: "Tool node yang menjalankan builtin generate_image untuk menghasilkan logo dari prompt desain.", Skills: []string{"tool", "image-generation"}, Tasks: []workflow.Task{{ID: "generate", Description: "Generate logo image menggunakan builtin generate_image berdasarkan brief dan prompt desain.", Type: "mcp", MCPServer: "builtin", ToolName: "generate_image", ToolArgs: map[string]interface{}{"prompt": imagePrompt, "size": "1024x1024", "quality": "high"}}}, DependsOn: []string{"logo-designer"}, InputsFrom: map[string][]string{"logo-designer": {"image-prompt"}}},
+			{Role: "logo-reviewer", Description: "Reviewer desain logo yang menjelaskan keistimewaan, kekurangan, dan kualitas hasil image.", Skills: []string{"design-review", "brand", "critique"}, Tasks: []workflow.Task{{ID: "review", Description: "Review hasil logo: jelaskan keistimewaan, brand fit, readability, scalability, memorability, risiko visual, dan rekomendasi revisi."}}, DependsOn: []string{"image-generator"}, InputsFrom: map[string][]string{"image-generator": {"generate"}}},
+			{Role: "revised-prompt-writer", Description: "Prompt engineer yang membuat revised prompt berdasarkan review agar user bisa generate versi lebih baik.", Skills: []string{"prompt-engineering", "revision"}, Tasks: []workflow.Task{{ID: "revised-prompt", Description: "Buat revised image prompt yang lebih kuat berdasarkan hasil dan review. Sertakan alasan perubahan dan varian prompt alternatif bila perlu."}}, DependsOn: []string{"logo-reviewer"}, InputsFrom: map[string][]string{"logo-reviewer": {"review"}}},
+			{Role: "report-writer", Description: "Finalizer yang mengompilasi link/image output, review, keistimewaan logo, dan revised prompt.", Skills: []string{"reporting"}, Tasks: []workflow.Task{{ID: "final", Description: "Buat laporan final Markdown: image output, brief, konsep logo, keistimewaan, kekurangan, rekomendasi revisi, dan revised prompt siap pakai."}}, DependsOn: []string{"revised-prompt-writer"}, InputsFrom: map[string][]string{"revised-prompt-writer": {"revised-prompt"}}},
+		},
+	}
+}
+
+func formatCustomWorkflowCreateResponse(cw *workflow.CustomWorkflow) string {
+	roles := make([]string, 0, len(cw.Agents))
+	for _, a := range cw.Agents {
+		roles = append(roles, a.Role)
+	}
+	return fmt.Sprintf("Custom workflow '%s' berhasil dibuat dan disimpan.\n\nAgents: %s\n\nBuka Custom Workflow Node Builder untuk edit node, atau jalankan dari chat dengan: `jalankan custom workflow %s`", cw.Name, strings.Join(roles, ", "), cw.Name)
 }
 
 func findCustomWorkflowByNameOrAgent(candidate string) (*workflow.CustomWorkflow, string, error) {

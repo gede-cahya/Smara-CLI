@@ -87,7 +87,13 @@ func runStep(page *rod.Page, step Step, dir string, res *Result) error {
 		}
 		return el.Input(step.Value)
 	case "click":
-		el, err := findByText(page, step.Target)
+		var el *rod.Element
+		var err error
+		if step.Target == "youtube:first-video" {
+			el, err = findYouTubeFirstVideo(page)
+		} else {
+			el, err = findByText(page, step.Target)
+		}
 		if err != nil {
 			return err
 		}
@@ -175,6 +181,33 @@ func findByText(page *rod.Page, text string) (*rod.Element, error) {
 		return el, nil
 	}
 	return nil, fmt.Errorf("elemen teks %q tidak ditemukan", text)
+}
+
+func findYouTubeFirstVideo(page *rod.Page) (*rod.Element, error) {
+	selectors := []string{
+		`a#thumbnail[href^="/watch"]`,
+		`ytd-rich-item-renderer a#thumbnail`,
+		`a[href^="/watch?v="]`,
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, sel := range selectors {
+			els, err := page.Elements(sel)
+			if err != nil || len(els) == 0 {
+				continue
+			}
+			for _, el := range els {
+				href, _ := el.Attribute("href")
+				if href == nil || !strings.Contains(*href, "watch") {
+					continue
+				}
+				_ = el.ScrollIntoView()
+				return el, nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("video pertama YouTube tidak ditemukan")
 }
 
 func waitText(page *rod.Page, text string, timeout time.Duration) error {

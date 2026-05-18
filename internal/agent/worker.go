@@ -39,8 +39,11 @@ func NewSpecializedWorker(provider llm.Provider, mcpClients map[string]*mcp.Clie
 
 // Execute runs a task and returns the result.
 func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
-	// Check if task requires MCP tool call
+	// Check if task requires MCP or builtin tool call
 	if task.MCPServer != "" && task.ToolName != "" {
+		if task.MCPServer == builtinMCPServerName {
+			return w.executeBuiltinTask(task)
+		}
 		// Validate: if MCP client exists but tool doesn't, fallback to LLM
 		if client, ok := w.mcpClients[task.MCPServer]; ok && !client.HasTool(task.ToolName) {
 			return w.executeLLMTask(ctx, Task{
@@ -53,6 +56,14 @@ func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
 
 	// Otherwise, use LLM to execute the task
 	return w.executeLLMTask(ctx, task)
+}
+
+func (w *Worker) executeBuiltinTask(task Task) TaskResult {
+	output, err := ExecuteBuiltinTool(task.ToolName, task.ToolArgs, nil)
+	if err != nil {
+		return TaskResult{TaskID: task.ID, Status: TaskFailed, Error: fmt.Sprintf("gagal memanggil builtin tool '%s': %v", task.ToolName, err)}
+	}
+	return TaskResult{TaskID: task.ID, Status: TaskCompleted, Output: output}
 }
 
 // executeMCPTask runs a task that involves an MCP server tool call.

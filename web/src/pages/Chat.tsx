@@ -417,6 +417,12 @@ const MAX_MESSAGES_PER_SESSION = 200
 const MAX_SESSIONS = 20
 const MAX_OUTPUT_CHARS = 4000
 const MAX_LOG_LINES = 50
+// Runtime caps keep the live React tree from growing forever during long
+// terminal/tool streams. Persistence caps alone are not enough because the
+// lag happens before data is written to localStorage.
+const MAX_RUNTIME_MESSAGES = 120
+const MAX_RUNTIME_OUTPUT_CHARS = 50_000
+const MAX_RUNTIME_LOG_LINES = 300
 // Hard ceiling on a single serialized session. If a session would exceed
 // this, we keep only the most recent messages until it fits.
 const MAX_SESSION_BYTES = 800 * 1024
@@ -445,6 +451,22 @@ function slimMessage(m: ChatMessage): ChatMessage {
     out.logs = [`[... ${dropped} earlier lines truncated for storage ...]`, ...out.logs.slice(-MAX_LOG_LINES)]
   }
   return out
+}
+
+function capRuntimeMessages(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length <= MAX_RUNTIME_MESSAGES) return messages
+  return messages.slice(-MAX_RUNTIME_MESSAGES)
+}
+
+function capRuntimeOutput(output?: string): string | undefined {
+  if (!output || output.length <= MAX_RUNTIME_OUTPUT_CHARS) return output
+  return output.slice(-MAX_RUNTIME_OUTPUT_CHARS)
+}
+
+function capRuntimeLogs(logs: string[]): string[] {
+  if (logs.length <= MAX_RUNTIME_LOG_LINES) return logs
+  const dropped = logs.length - MAX_RUNTIME_LOG_LINES
+  return [`[... ${dropped} earlier live lines truncated ...]`, ...logs.slice(-MAX_RUNTIME_LOG_LINES)]
 }
 
 function rawSetItem(key: string, value: string): boolean {
@@ -602,7 +624,7 @@ export default function Chat() {
     setCurrentRaw(s)
     setSessionId(s.id)
     setItemSafe(CURRENT_SESSION_KEY, s.id)
-    setMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })))
+    setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
   }
 
   useEffect(() => {
@@ -626,7 +648,7 @@ export default function Chat() {
     setSessions(getAllSessions())
     setCurrentRaw(s)
     setSessionId(s.id)
-    setMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })))
+    setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
   }
 
   const deleteSession = (id: string) => {
@@ -642,7 +664,7 @@ export default function Chat() {
         setCurrentRaw(next)
         setSessionId(next.id)
         setItemSafe(CURRENT_SESSION_KEY, next.id)
-        setMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })))
+        setMessages(capRuntimeMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
       }
       else newSession()
     }
@@ -675,9 +697,11 @@ export default function Chat() {
         case 'thinking':
           setThinking(msg.payload === 'true')
           if (msg.payload === 'true') {
-            spinnerTimer.current = setInterval(() => {
-              setSpinnerIdx(i => (i + 1) % spinnerFrames.length)
-            }, 80)
+            if (!spinnerTimer.current) {
+              spinnerTimer.current = setInterval(() => {
+                setSpinnerIdx(i => (i + 1) % spinnerFrames.length)
+              }, 80)
+            }
           } else {
             if (spinnerTimer.current) clearInterval(spinnerTimer.current)
             spinnerTimer.current = null
@@ -687,13 +711,13 @@ export default function Chat() {
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
-          setMessages(prev => [...prev, { role: 'assistant', content: msg.payload, timestamp: new Date() }])
+          setMessages(prev => capRuntimeMessages([...prev, { role: 'assistant', content: msg.payload, timestamp: new Date() }]))
           break
         case 'error':
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
-          setMessages(prev => [...prev, { role: 'error', content: msg.payload, timestamp: new Date() }])
+          setMessages(prev => capRuntimeMessages([...prev, { role: 'error', content: msg.payload, timestamp: new Date() }]))
           break
         case 'phase':
           setActivePhases(prev => {
@@ -704,11 +728,11 @@ export default function Chat() {
             } else {
               next.push({ phase: msg.phase, description: msg.description || msg.phase, status: 'running' })
             }
-            return next
+            return next.slice(-12)
           })
           break
         case 'tool_call':
-          setMessages(prev => [...prev, {
+          setMessages(prev => capRuntimeMessages([...prev, {
             role: 'tool_call',
             content: msg.tool || 'tool',
             tool: msg.tool,
@@ -718,7 +742,7 @@ export default function Chat() {
             status: 'running',
             collapsed: false,
             timestamp: new Date(),
-          }])
+          }]))
           break
         case 'tool_result':
           setMessages(prev => {
@@ -728,17 +752,17 @@ export default function Chat() {
               if (next[i].role === 'tool_call' && next[i].status === 'running') {
                 next[i] = {
                   ...next[i],
-                  output: msg.output,
+                  output: capRuntimeOutput(msg.output),
                   status: 'done',
                   // Auto-collapse cards with bulky output to reduce noise.
                   collapsed: (next[i].logs?.length || 0) > 6,
                 }
-                return next
+                return capRuntimeMessages(next)
               }
             }
             // No open card — surface as a standalone block (rare).
-            next.push({ role: 'tool_result', content: '', output: msg.output, timestamp: new Date() })
-            return next
+            next.push({ role: 'tool_result', content: '', output: capRuntimeOutput(msg.output), timestamp: new Date() })
+            return capRuntimeMessages(next)
           })
           break
         case 'log':
@@ -750,14 +774,14 @@ export default function Chat() {
             if ((msg.role === 'Terminal' || msg.role === 'terminal') && msg.payload !== undefined) {
               for (let i = next.length - 1; i >= 0; i--) {
                 if (next[i].role === 'tool_call' && next[i].status === 'running') {
-                  const logs = [...(next[i].logs || []), msg.payload]
+                  const logs = capRuntimeLogs([...(next[i].logs || []), msg.payload])
                   next[i] = { ...next[i], logs }
-                  return next
+                  return capRuntimeMessages(next)
                 }
               }
             }
             next.push({ role: 'log', content: msg.payload, timestamp: new Date() })
-            return next
+            return capRuntimeMessages(next)
           })
           break
         case 'mode':
@@ -783,6 +807,8 @@ export default function Chat() {
     connectWs()
     return () => {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      if (spinnerTimer.current) clearInterval(spinnerTimer.current)
+      spinnerTimer.current = null
       wsRef.current?.close()
     }
   }, [connectWs])
@@ -800,24 +826,24 @@ export default function Chat() {
     const messageText = [refs, text].filter(Boolean).join(' ')
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setMessages(prev => [...prev, {
+      setMessages(prev => capRuntimeMessages([...prev, {
         role: 'user',
         content: messageText,
         timestamp: new Date(),
         attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
-      }])
+      }]))
       setInput('')
       setAttachments([])
       connectWs()
       return
     }
 
-    setMessages(prev => [...prev, {
+    setMessages(prev => capRuntimeMessages([...prev, {
       role: 'user',
       content: messageText,
       timestamp: new Date(),
       attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
-    }])
+    }]))
     setInput('')
     setAttachments([])
     wsRef.current.send(JSON.stringify({ type: 'chat', payload: messageText, mode }))

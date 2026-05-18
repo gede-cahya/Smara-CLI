@@ -102,6 +102,7 @@ func BuildRoleTasks(spec AgentSpec, state *SharedState) []agent.Task {
 			AssignedTo:  spec.Role,
 			MCPServer:   t.MCPServer,
 			ToolName:    t.ToolName,
+			ToolArgs:    t.ToolArgs,
 		})
 	}
 

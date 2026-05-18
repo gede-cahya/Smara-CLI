@@ -170,6 +170,7 @@ func BuildCustomRoleTasks(spec AgentSpec, state *SharedState, inputsFrom map[str
 			AssignedTo:  spec.Role,
 			MCPServer:   t.MCPServer,
 			ToolName:    t.ToolName,
+			ToolArgs:    t.ToolArgs,
 		})
 	}
 	return tasks

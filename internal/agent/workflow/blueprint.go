@@ -40,11 +40,12 @@ type AgentSpec struct {
 
 // Task defines a unit of work within an agent spec.
 type Task struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	Type        string `json:"type,omitempty"` // "llm" or "mcp"
-	MCPServer   string `json:"mcp_server,omitempty"`
-	ToolName    string `json:"tool_name,omitempty"`
+	ID          string                 `json:"id"`
+	Description string                 `json:"description"`
+	Type        string                 `json:"type,omitempty"` // "llm" or "mcp"
+	MCPServer   string                 `json:"mcp_server,omitempty"`
+	ToolName    string                 `json:"tool_name,omitempty"`
+	ToolArgs    map[string]interface{} `json:"tool_args,omitempty"`
 }
 
 // DomainRegistry maps domain keywords to professional domains.

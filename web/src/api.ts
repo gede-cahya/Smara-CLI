@@ -261,6 +261,26 @@ export interface MemoryNodeConfig {
   limit?: number
 }
 
+export type LoopMode = 'count' | 'until_success' | 'until_condition' | 'while_condition' | 'for_each' | 'interval' | 'retry_backoff' | 'infinite_guarded'
+
+export interface LoopRetryConfig {
+  max_attempts?: number
+  initial_delay_ms?: number
+  multiplier?: number
+  max_delay_ms?: number
+}
+
+export interface LoopNodeConfig {
+  mode?: LoopMode
+  max_iterations?: number
+  delay_ms?: number
+  timeout_ms?: number
+  condition?: string
+  items_source?: string
+  retry?: LoopRetryConfig
+  on_error?: 'stop' | 'continue' | 'retry' | 'skip'
+}
+
 export interface CustomWorkflowAgent {
   role: string
   description: string
@@ -269,8 +289,8 @@ export interface CustomWorkflowAgent {
   depends_on?: string[]
   inputs_from?: Record<string, string[]>
   memory?: MemoryNodeConfig
+  loop?: LoopNodeConfig
 }
-
 export interface CustomWorkflowItem {
   name: string
   description: string

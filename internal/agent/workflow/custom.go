@@ -19,6 +19,24 @@ type MemoryNodeConfig struct {
 	Limit   int    `json:"limit,omitempty"`
 }
 
+type LoopRetryConfig struct {
+	MaxAttempts    int     `json:"max_attempts,omitempty"`
+	InitialDelayMs int     `json:"initial_delay_ms,omitempty"`
+	Multiplier     float64 `json:"multiplier,omitempty"`
+	MaxDelayMs     int     `json:"max_delay_ms,omitempty"`
+}
+
+type LoopNodeConfig struct {
+	Mode          string           `json:"mode,omitempty"` // count, until_success, until_condition, while_condition, for_each, interval, retry_backoff, infinite_guarded
+	MaxIterations int              `json:"max_iterations,omitempty"`
+	DelayMs       int              `json:"delay_ms,omitempty"`
+	TimeoutMs     int              `json:"timeout_ms,omitempty"`
+	Condition     string           `json:"condition,omitempty"`
+	ItemsSource   string           `json:"items_source,omitempty"`
+	Retry         *LoopRetryConfig `json:"retry,omitempty"`
+	OnError       string           `json:"on_error,omitempty"` // stop, continue, retry, skip
+}
+
 // CustomAgent defines a manually-configured agent in a custom workflow.
 type CustomAgent struct {
 	Role        string              `json:"role"`
@@ -28,6 +46,7 @@ type CustomAgent struct {
 	DependsOn   []string            `json:"depends_on,omitempty"`
 	InputsFrom  map[string][]string `json:"inputs_from,omitempty"`
 	Memory      *MemoryNodeConfig   `json:"memory,omitempty"`
+	Loop        *LoopNodeConfig     `json:"loop,omitempty"`
 }
 
 // CustomWorkflow is a user-defined workflow with manually-specified agents and connections.
@@ -69,6 +88,11 @@ func (cw *CustomWorkflow) Validate() error {
 			}
 			_ = keys
 		}
+		if a.Loop != nil {
+			if err := validateLoopNodeConfig(a.Loop); err != nil {
+				return fmt.Errorf("agent '%s' loop: %w", a.Role, err)
+			}
+		}
 	}
 
 	// Check dependencies reference known roles
@@ -82,7 +106,6 @@ func (cw *CustomWorkflow) Validate() error {
 
 	return nil
 }
-
 func (cw *CustomWorkflow) hasRole(role string) bool {
 	for _, a := range cw.Agents {
 		if a.Role == role {
