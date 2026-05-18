@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/browser"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 )
@@ -363,6 +364,10 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 			return g.sendReply(ctx, msg, "❌ Error: "+err.Error())
 		}
 		return g.sendReplyWithAttachments(ctx, msg, output, imageAttachmentsFromToolOutput(output))
+	}
+
+	if browser.IsBrowserPrompt(msg.Content) {
+		return g.processBrowserPrompt(ctx, msg)
 	}
 
 	// 1. Send initial status message
