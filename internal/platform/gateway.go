@@ -205,10 +205,11 @@ Selamat datang! Saya adalah agen AI yang siap membantu Anda.
 *Perintah:*
 /ask <prompt> — Kirim pertanyaan
 /mode <ask|rush|plan> — Ganti mode agen
+/prd [idea] — Buat PRD interaktif dengan button dan file Markdown
 /mcp — Lihat MCP tools
 /clear — Reset percakapan
 /help — Bantuan
-
+/help — Bantuan
 Atau langsung ketik pesan untuk memulai percakapan.`
 		return g.sendReply(ctx, msg, welcome)
 
@@ -218,6 +219,7 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 /ask <prompt> — Kirim prompt ke Smara
 /mode — Lihat mode saat ini
 /mode <ask|rush|plan> — Ganti mode
+/prd [idea] — Buat PRD interaktif dengan button dan file Markdown
 /mcp — Daftar MCP tools
 /clear — Reset history percakapan
 /help — Tampilkan pesan ini
@@ -235,6 +237,9 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		promptMsg.Content = prompt
 		return g.processPrompt(ctx, promptMsg)
 
+	case "prd":
+		return g.sendReply(ctx, msg, "ℹ️ Fitur PRD interaktif tersedia di Discord slash command: `/smara prd idea:<ide produk>`. Gunakan slash command agar button Discord bisa muncul dan PRD dikirim sebagai file Markdown.")
+
 	case "mode":
 		if len(msg.CommandArgs) == 0 {
 			// Show current mode
@@ -251,7 +256,6 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		info := agent.GetModeInfo(agent.Mode(newMode))
 		return g.sendReply(ctx, msg, fmt.Sprintf("%s Mode diubah ke *%s*\n%s", info.Emoji, info.Label, info.Description))
 
-	case "mcp":
 		mcpInfo := g.supervisor.GetMCPInfo()
 		if len(mcpInfo) == 0 {
 			return g.sendReply(ctx, msg, "ℹ️ Tidak ada MCP server yang terhubung.")
@@ -638,8 +642,8 @@ func (g *Gateway) sendReplyWithAttachments(ctx context.Context, original Incomin
 	// Sanitize DSML markup before sending
 	content = sanitizeDSML(content)
 	attachments = mergeAttachments(attachments, imageAttachmentsFromToolOutput(content))
+	attachments = mergeAttachments(attachments, autoVisualAttachmentsFromResponse(content))
 
-	// Split long messages
 	parts := splitMessage(content, maxMessageLength)
 	for i, part := range parts {
 		outMsg := OutgoingMessage{

@@ -28,11 +28,12 @@ type Adapter struct {
 	handler platform.MessageHandler
 	ctx     context.Context
 	botID   string
+	prd     *prdWizardStore
 }
 
 // New creates a new Discord adapter.
 func New() *Adapter {
-	return &Adapter{}
+	return &Adapter{prd: newPRDWizardStore()}
 }
 
 // Name returns the platform identifier.
@@ -70,10 +71,10 @@ func (a *Adapter) Listen(ctx context.Context, handler platform.MessageHandler) e
 	a.handler = handler
 	a.ctx = ctx
 
-	// Register message handler
+	// Register message and interaction handlers
 	a.session.AddHandler(a.onMessageCreate)
+	a.session.AddHandler(a.onInteractionCreate)
 
-	// Open websocket connection
 	if err := a.session.Open(); err != nil {
 		return fmt.Errorf("gagal membuka koneksi Discord: %w", err)
 	}
@@ -504,12 +505,7 @@ func (a *Adapter) registerSlashCommands() {
 					Description: "Kirim pertanyaan ke Smara",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Name:        "prompt",
-							Description: "Pertanyaan atau perintah",
-							Type:        discordgo.ApplicationCommandOptionString,
-							Required:    true,
-						},
+						{Name: "prompt", Description: "Pertanyaan atau perintah", Type: discordgo.ApplicationCommandOptionString, Required: true},
 					},
 				},
 				{
@@ -517,18 +513,17 @@ func (a *Adapter) registerSlashCommands() {
 					Description: "Ganti mode agen (ask/rush/plan)",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Name:        "name",
-							Description: "Nama mode: ask, rush, plan",
-							Type:        discordgo.ApplicationCommandOptionString,
-							Required:    false,
-						},
+						{Name: "name", Description: "Nama mode: ask, rush, plan", Type: discordgo.ApplicationCommandOptionString, Required: false},
 					},
 				},
+				{Name: "help", Description: "Tampilkan bantuan", Type: discordgo.ApplicationCommandOptionSubCommand},
 				{
-					Name:        "help",
-					Description: "Tampilkan bantuan",
+					Name:        "prd",
+					Description: "Buat PRD interaktif dengan quest dan button",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{Name: "idea", Description: "Ide produk singkat untuk PRD", Type: discordgo.ApplicationCommandOptionString, Required: false},
+					},
 				},
 			},
 		},
@@ -537,7 +532,6 @@ func (a *Adapter) registerSlashCommands() {
 	// Register globally (or per guild)
 	guildIDs := a.config.GuildIDs
 	if len(guildIDs) == 0 {
-		// Register globally
 		for _, cmd := range commands {
 			_, err := a.session.ApplicationCommandCreate(a.session.State.User.ID, "", cmd)
 			if err != nil {
@@ -554,53 +548,6 @@ func (a *Adapter) registerSlashCommands() {
 			}
 		}
 	}
-
-	// Handle slash command interactions
-	a.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if i.Type != discordgo.InteractionApplicationCommand {
-			return
-		}
-
-		data := i.ApplicationCommandData()
-		if data.Name != "smara" {
-			return
-		}
-
-		if len(data.Options) == 0 {
-			return
-		}
-
-		subCmd := data.Options[0]
-		msg := platform.IncomingMessage{
-			ID:        i.ID,
-			Platform:  "discord",
-			ChannelID: i.ChannelID,
-			UserID:    i.Member.User.ID,
-			Username:  i.Member.User.Username,
-			IsCommand: true,
-			Command:   subCmd.Name,
-			Metadata:  map[string]string{"guild_id": i.GuildID, "interaction": "true"},
-			Timestamp: time.Now(),
-		}
-
-		// Extract options
-		for _, opt := range subCmd.Options {
-			msg.CommandArgs = append(msg.CommandArgs, opt.StringValue())
-		}
-		msg.Content = strings.Join(msg.CommandArgs, " ")
-
-		// Acknowledge the interaction
-		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		})
-
-		// Process in background
-		go func() {
-			if err := a.handler(a.ctx, msg); err != nil {
-				log.Printf("[discord] Error handling slash command: %v", err)
-			}
-		}()
-	})
 }
 
 // splitContent splits a long string into chunks.
@@ -623,4 +570,160 @@ func splitContent(content string, maxLen int) []string {
 		content = content[splitAt:]
 	}
 	return parts
+}
+
+func (a *Adapter) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
+		a.onSlashCommand(s, i)
+	case discordgo.InteractionMessageComponent:
+		a.onComponentInteraction(s, i)
+	}
+}
+
+func (a *Adapter) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.ApplicationCommandData()
+	if data.Name != "smara" || len(data.Options) == 0 {
+		return
+	}
+
+	subCmd := data.Options[0]
+	user := interactionUser(i)
+	if user == nil {
+		return
+	}
+
+	if subCmd.Name == "prd" {
+		idea := ""
+		for _, opt := range subCmd.Options {
+			if opt.Name == "idea" {
+				idea = opt.StringValue()
+			}
+		}
+		a.startPRDWizardInteraction(s, i, user, idea)
+		return
+	}
+
+	msg := platform.IncomingMessage{
+		ID:        i.ID,
+		Platform:  "discord",
+		ChannelID: i.ChannelID,
+		UserID:    user.ID,
+		Username:  user.Username,
+		IsCommand: true,
+		Command:   subCmd.Name,
+		Metadata:  map[string]string{"guild_id": i.GuildID, "interaction": "true"},
+		Timestamp: time.Now(),
+	}
+	for _, opt := range subCmd.Options {
+		msg.CommandArgs = append(msg.CommandArgs, opt.StringValue())
+	}
+	msg.Content = strings.Join(msg.CommandArgs, " ")
+
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredChannelMessageWithSource})
+	go func() {
+		if err := a.handler(a.ctx, msg); err != nil {
+			log.Printf("[discord] Error handling slash command: %v", err)
+		}
+	}()
+}
+
+func (a *Adapter) startPRDWizardInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, user *discordgo.User, idea string) {
+	if a.prd == nil {
+		a.prd = newPRDWizardStore()
+	}
+	a.prd.cleanup(2 * time.Hour)
+	sess := a.prd.start(i.GuildID, i.ChannelID, user.ID, user.Username, idea)
+	resp := &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content:    renderPRDWizardMessage(sess),
+			Components: renderPRDComponents(sess),
+		},
+	}
+	if err := s.InteractionRespond(i.Interaction, resp); err != nil {
+		log.Printf("[discord] gagal memulai PRD wizard: %v", err)
+	}
+}
+
+func (a *Adapter) onComponentInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.MessageComponentData()
+	sessionID, value, ok := parsePRDButtonID(data.CustomID)
+	if !ok {
+		return
+	}
+	user := interactionUser(i)
+	if user == nil {
+		return
+	}
+	if a.prd == nil {
+		a.prd = newPRDWizardStore()
+	}
+
+	sess, allowed, err := a.prd.apply(sessionID, user.ID, value)
+	if err != nil || !allowed {
+		content := "⚠️ " + err.Error()
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: content, Flags: discordgo.MessageFlagsEphemeral},
+		})
+		return
+	}
+
+	if sess.Step == prdStepDone {
+		a.prd.delete(sessionID)
+		a.finishPRDWizard(s, i, sess)
+		return
+	}
+
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Content:    renderPRDWizardMessage(sess),
+			Components: renderPRDComponents(sess),
+		},
+	})
+}
+
+func (a *Adapter) finishPRDWizard(s *discordgo.Session, i *discordgo.InteractionCreate, sess *prdWizardSession) {
+	prd := GeneratePRDMarkdown(sess.Answers)
+	fileName := PRDFileName(sess.Answers.ProductName)
+	file, err := os.CreateTemp(os.TempDir(), "smara-prd-*.md")
+	if err != nil {
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseChannelMessageWithSource, Data: &discordgo.InteractionResponseData{Content: "❌ Gagal membuat file PRD."}})
+		return
+	}
+	_, writeErr := file.WriteString(prd)
+	_ = file.Close()
+	if writeErr != nil {
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseChannelMessageWithSource, Data: &discordgo.InteractionResponseData{Content: "❌ Gagal menulis file PRD."}})
+		return
+	}
+	defer os.Remove(file.Name())
+
+	preview := prd
+	if len(preview) > 1400 {
+		preview = preview[:1400] + "\n\n...\n"
+	}
+	content := "✅ **PRD selesai dibuat!**\nFile Markdown terlampir untuk download. Preview copy-paste:\n\n```markdown\n" + preview + "```"
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseUpdateMessage, Data: &discordgo.InteractionResponseData{Content: "✅ PRD selesai dibuat. Mengirim file Markdown...", Components: []discordgo.MessageComponent{}}})
+	f, err := os.Open(file.Name())
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, err = s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
+		Content: content,
+		Files:   []*discordgo.File{{Name: fileName, ContentType: "text/markdown", Reader: f}},
+	})
+	if err != nil {
+		log.Printf("[discord] gagal mengirim PRD file: %v", err)
+	}
+}
+
+func interactionUser(i *discordgo.InteractionCreate) *discordgo.User {
+	if i.Member != nil && i.Member.User != nil {
+		return i.Member.User
+	}
+	return i.User
 }

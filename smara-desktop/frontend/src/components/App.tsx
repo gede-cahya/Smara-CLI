@@ -17,7 +17,9 @@ import {
   Sparkles,
   Archive,
   Trash2,
-  RotateCcw
+  RotateCcw,
+  Copy,
+  Check
 } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -59,8 +61,14 @@ interface Message {
 }
 
 // Memoized Message Item to prevent redundant re-renders and re-parsing
-const MessageItem = memo(({ msg }: { msg: Message }) => {
+const MessageItem = memo(({ msg, index, copiedIndex, onCopy }: {
+  msg: Message
+  index: number
+  copiedIndex: number | null
+  onCopy: (index: number, text: string) => void
+}) => {
   const isAssistant = msg.role === 'assistant'
+  const copied = copiedIndex === index
 
   return (
     <div className={cn(
@@ -68,7 +76,7 @@ const MessageItem = memo(({ msg }: { msg: Message }) => {
       msg.role === 'user' ? "justify-end" : "justify-start"
     )}>
       <div className={cn(
-        "max-w-[85%] rounded-2xl px-6 py-4 shadow-sm border transition-all duration-300",
+        "relative max-w-[85%] rounded-2xl px-6 py-4 shadow-sm border transition-all duration-300",
         msg.role === 'user'
           ? "bg-smara text-white border-transparent shadow-lg shadow-primary/10"
           : "bg-card text-card-foreground border-border/50 hover:border-primary/20 prose prose-sm dark:prose-invert max-w-full"
@@ -78,6 +86,21 @@ const MessageItem = memo(({ msg }: { msg: Message }) => {
         ) : (
           <div className="whitespace-pre-wrap font-medium">{msg.content}</div>
         )}
+        <button
+          type="button"
+          onClick={() => onCopy(index, msg.content)}
+          title={copied ? 'Tersalin' : 'Salin pesan'}
+          aria-label={copied ? 'Pesan tersalin' : 'Salin pesan'}
+          className={cn(
+            "absolute -top-3 z-20 flex h-8 w-8 items-center justify-center rounded-xl border shadow-lg transition-all duration-200",
+            msg.role === 'user' ? "-left-3" : "-right-3",
+            copied
+              ? "opacity-100 border-emerald-400/40 bg-emerald-500 text-white"
+              : "opacity-80 md:opacity-0 border-border/70 bg-background/95 text-muted-foreground hover:border-primary/50 hover:bg-primary hover:text-primary-foreground md:group-hover:opacity-100"
+          )}
+        >
+          {copied ? <Check size={15} /> : <Copy size={15} />}
+        </button>
       </div>
     </div>
   )
@@ -97,6 +120,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<'chat' | 'workspace'>('chat')
   const [currentMode, setCurrentMode] = useState<string>('ask')
   const [copyToast, setCopyToast] = useState<string | null>(null)
+  const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null)
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -255,6 +279,21 @@ export default function App() {
         }
         await loadSessions()
       } catch (err) { console.error('handleNewSession error:', err) }
+    }
+  }
+
+
+  const copyMessage = async (index: number, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedMessageIndex(index)
+      setCopyToast('Pesan disalin')
+      window.setTimeout(() => setCopiedMessageIndex(current => (current === index ? null : current)), 1500)
+      window.setTimeout(() => setCopyToast(null), 1500)
+    } catch (err) {
+      console.error('copyMessage error:', err)
+      setCopyToast('Gagal menyalin pesan')
+      window.setTimeout(() => setCopyToast(null), 1500)
     }
   }
 
@@ -629,7 +668,7 @@ export default function App() {
             )}
 
             {messages.map((msg, i) => (
-              <MessageItem key={i} msg={msg} />
+              <MessageItem key={i} msg={msg} index={i} copiedIndex={copiedMessageIndex} onCopy={copyMessage} />
             ))}
 
             {isThinking && messages[messages.length - 1]?.role === 'user' && (

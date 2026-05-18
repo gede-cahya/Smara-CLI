@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import mermaid from 'mermaid'
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import {
   Send, Bot, User, RefreshCw, Plus, Trash2, MessageSquare, Clock,
   Zap, ClipboardList, FlaskConical, ArrowRightLeft, MessageCircle,
@@ -36,6 +39,89 @@ function generatedImageUrls(text?: string): string[] {
   return [...urls]
 }
 
+const CHART_COLORS = ['#22d3ee', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#60a5fa']
+
+function MermaidBlock({ code }: { code: string }) {
+  const [svg, setSvg] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' })
+    const id = `smara-mermaid-${Math.random().toString(36).slice(2)}`
+    mermaid.render(id, code)
+      .then(({ svg }) => {
+        if (!cancelled) setSvg(svg)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err?.message || 'Gagal render diagram')
+      })
+    return () => { cancelled = true }
+  }, [code])
+
+  if (error) {
+    return <div className="my-2 rounded-xl border border-red-700/50 bg-red-950/20 p-3 text-xs text-red-200">Mermaid error: {error}</div>
+  }
+  return (
+    <div className="my-3 overflow-x-auto rounded-2xl border border-smara-500/30 bg-gray-950/70 p-4 shadow-lg shadow-black/25">
+      {svg ? <div className="min-w-fit" dangerouslySetInnerHTML={{ __html: svg }} /> : <div className="text-xs text-gray-400">Rendering diagram...</div>}
+    </div>
+  )
+}
+
+function SmartChart({ data }: { data: any[] }) {
+  const keys = Object.keys(data[0] || {})
+  const labelKey = keys.find(k => typeof data[0]?.[k] === 'string') || keys[0]
+  const numericKeys = keys.filter(k => data.some(row => typeof row?.[k] === 'number'))
+  if (data.length < 2 || numericKeys.length === 0) return null
+  const valueKey = numericKeys[0]
+
+  return (
+    <div className="my-3 grid gap-3 lg:grid-cols-2">
+      <div className="h-72 rounded-2xl border border-cyan-500/20 bg-gray-950/60 p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-300">Auto Bar Chart</div>
+        <ResponsiveContainer width="100%" height="88%">
+          <BarChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey={labelKey} stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip /><Bar dataKey={valueKey} fill="#22d3ee" radius={[6, 6, 0, 0]} /></BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="h-72 rounded-2xl border border-violet-500/20 bg-gray-950/60 p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-violet-300">Auto Line Chart</div>
+        <ResponsiveContainer width="100%" height="88%">
+          <LineChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey={labelKey} stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip /><Line type="monotone" dataKey={valueKey} stroke="#a78bfa" strokeWidth={2} /></LineChart>
+        </ResponsiveContainer>
+      </div>
+      {data.length <= 8 && (
+        <div className="h-72 rounded-2xl border border-emerald-500/20 bg-gray-950/60 p-3 lg:col-span-2">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-300">Auto Pie Chart</div>
+          <ResponsiveContainer width="100%" height="88%">
+            <PieChart><Pie data={data} dataKey={valueKey} nameKey={labelKey} outerRadius={90} label>{data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}</Pie><Tooltip /></PieChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function JsonVisualBlock({ code }: { code: string }) {
+  let parsed: any
+  try { parsed = JSON.parse(code) } catch { return null }
+  const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.data) ? parsed.data : null
+  if (!rows || !rows.every((r: any) => r && typeof r === 'object' && !Array.isArray(r))) return null
+  const columns = Array.from(new Set(rows.flatMap((r: any) => Object.keys(r)))) as string[]
+  return (
+    <div className="my-3 overflow-hidden rounded-2xl border border-smara-500/25 bg-gray-950/60">
+      <div className="border-b border-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-smara-300">Auto Visual JSON</div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-xs text-gray-200">
+          <thead className="bg-gray-900/80 text-gray-300"><tr>{columns.map(c => <th key={c} className="px-3 py-2 font-semibold">{c}</th>)}</tr></thead>
+          <tbody>{rows.map((row: any, i: number) => <tr key={i} className="border-t border-gray-800/80">{columns.map(c => <td key={c} className="px-3 py-2 font-mono">{String(row[c] ?? '')}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+      <div className="p-3"><SmartChart data={rows} /></div>
+    </div>
+  )
+}
+
 function formatCodeBlock(raw: string, language: string) {
   const text = raw.replace(/\n$/, '')
   if (language.toLowerCase() !== 'json') return text
@@ -65,23 +151,30 @@ function MarkdownCodeBlock({ children, className, inline, ...props }: any) {
     } catch {}
   }
 
+  if (language.toLowerCase() === 'mermaid') return <MermaidBlock code={code} />
+  const jsonVisual = language.toLowerCase() === 'json' ? <JsonVisualBlock code={code} /> : null
+
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-gray-700/70 bg-gray-950/85 shadow-inner shadow-black/25">
-      <div className="flex items-center gap-2 border-b border-gray-800/80 bg-gray-900/80 px-3 py-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-smara-300">{language}</span>
-        <button onClick={copy} className="ml-auto flex items-center gap-1 rounded-md border border-gray-700 bg-gray-950/80 px-2 py-1 text-[10px] text-gray-300 hover:border-smara-400 hover:text-white transition-colors" title={language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy code'}>
-          {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-          {copied ? 'Copied' : language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy'}
-        </button>
+    <>
+      {jsonVisual}
+      <div className="my-2 overflow-hidden rounded-xl border border-gray-700/70 bg-gray-950/85 shadow-inner shadow-black/25">
+        <div className="flex items-center gap-2 border-b border-gray-800/80 bg-gray-900/80 px-3 py-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-smara-300">{language}</span>
+          <button onClick={copy} className="ml-auto flex items-center gap-1 rounded-md border border-gray-700 bg-gray-950/80 px-2 py-1 text-[10px] text-gray-300 hover:border-smara-400 hover:text-white transition-colors" title={language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy code'}>
+            {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+            {copied ? 'Copied' : language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy'}
+          </button>
+        </div>
+        <code className="block overflow-x-auto p-3 text-xs leading-5 text-gray-100 font-mono" {...props}>{code}</code>
       </div>
-      <code className="block overflow-x-auto p-3 text-xs leading-5 text-gray-100 font-mono" {...props}>{code}</code>
-    </div>
+    </>
   )
 }
 
 function SmaraMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-200 leading-6">{children}</p>,
         strong: ({ children }) => <strong className="font-semibold text-white bg-smara-500/10 px-0.5 rounded">{children}</strong>,
@@ -95,6 +188,12 @@ function SmaraMarkdown({ content }: { content: string }) {
         ),
         code: MarkdownCodeBlock,
         pre: ({ children }) => <>{children}</>,
+        table: ({ children }) => <div className="my-3 overflow-x-auto rounded-2xl border border-smara-500/25 bg-gray-950/60"><table className="min-w-full text-left text-sm text-gray-200">{children}</table></div>,
+        thead: ({ children }) => <thead className="bg-gray-900/80 text-gray-100">{children}</thead>,
+        tbody: ({ children }) => <tbody className="divide-y divide-gray-800/80">{children}</tbody>,
+        tr: ({ children }) => <tr className="hover:bg-smara-500/5">{children}</tr>,
+        th: ({ children }) => <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-smara-200">{children}</th>,
+        td: ({ children }) => <td className="px-3 py-2 text-sm text-gray-200">{children}</td>,
         blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-smara-400/70 bg-smara-950/20 px-3 py-2 text-gray-300 rounded-r-xl">{children}</blockquote>,
         a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-4 hover:text-cyan-200">{children}</a>,
         img: ({ src, alt }) => <img src={src || ''} alt={alt || 'generated image'} className="my-2 max-h-96 rounded-xl border border-gray-700/70 shadow-lg shadow-black/30" />,
@@ -188,7 +287,7 @@ function ToolCallCard({
   const Icon = kind === 'shell' ? Terminal : kind === 'write' || kind === 'read' ? FileText : Wrench
 
   return (
-    <div className={`ml-11 rounded-lg border ${accent} overflow-hidden`}>
+    <div className={`ml-11 max-w-4xl rounded-2xl border ${accent} overflow-hidden shadow-lg shadow-black/20 backdrop-blur-sm`}>
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2">
         <button
@@ -838,6 +937,7 @@ export default function Chat() {
     try {
       await navigator.clipboard.writeText(text)
       setCopiedIdx(idx)
+      showToast('Pesan disalin')
       window.setTimeout(() => setCopiedIdx(c => (c === idx ? null : c)), 1500)
     } catch {
       showToast('Browser menolak akses clipboard')
@@ -863,9 +963,14 @@ export default function Chat() {
       onDrop={handleDrop}
     >
       {/* Header */}
-      <div className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-900/50">
+      <div className="h-16 border-b border-white/10 flex items-center justify-between px-5 bg-gradient-to-r from-gray-950/75 via-gray-900/55 to-smara-950/35 backdrop-blur-xl shadow-lg shadow-black/15">
         <div className="flex items-center gap-3 min-w-0">
-          <Bot className="w-5 h-5 text-smara-400 shrink-0" />
+          <div className="relative shrink-0">
+            <div className="absolute inset-0 rounded-2xl bg-cyan-400/30 blur-md" />
+            <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-400 via-smara-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-cyan-950/40 ring-1 ring-white/15">
+              <Bot className="w-5 h-5 text-white" />
+            </div>
+          </div>
           <button
             onClick={() => setShowSessions(!showSessions)}
             className="group flex items-center gap-2 min-w-0 max-w-[360px] px-3 py-1.5 rounded-lg border border-gray-700/70 bg-gray-950/50 hover:border-smara-500/60 hover:bg-smara-950/30 transition-colors"
@@ -881,7 +986,7 @@ export default function Chat() {
         <div className="flex items-center gap-3">
           <button
             onClick={newSession}
-            className="flex items-center gap-1 px-2 py-1 text-xs bg-smara-700 hover:bg-smara-600 rounded transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-gradient-to-r from-smara-600 to-cyan-600 hover:from-smara-500 hover:to-cyan-500 rounded-xl transition-all shadow-lg shadow-smara-950/30 border border-white/10"
           >
             <Plus className="w-3 h-3" /> Sesi Baru
           </button>
@@ -890,8 +995,10 @@ export default function Chat() {
               <RefreshCw className="w-3 h-3" /> Reconnect
             </button>
           )}
-          <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-          <span className="text-xs text-gray-500">{connected ? 'Online' : 'Offline'}</span>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${connected ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300' : 'border-red-400/20 bg-red-500/10 text-red-300'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.9)]' : 'bg-red-400'}`} />
+            {connected ? 'Online' : 'Offline'}
+          </span>
         </div>
       </div>
 
@@ -960,7 +1067,7 @@ export default function Chat() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-4 py-5 md:px-7 md:py-6 space-y-4 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]">
         {messages.map((msg, i) => {
           if (msg.role === 'tool_call') {
             return (
@@ -993,7 +1100,7 @@ export default function Chat() {
           }
           return (
             <div key={i} className={`flex gap-3 group ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-              <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ring-1 ${
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ring-1 ${
                 msg.role === 'user'
                   ? 'bg-gradient-to-br from-smara-600 to-smara-800 ring-smara-400/30 shadow-smara-950/40'
                   : msg.role === 'error'
@@ -1002,12 +1109,12 @@ export default function Chat() {
               }`}>
                 {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-200" />}
               </div>
-              <div className={`max-w-[84%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed relative shadow-xl backdrop-blur-sm overflow-hidden ${
+              <div className={`max-w-[88%] md:max-w-[78%] rounded-[1.35rem] px-4 py-3 text-sm leading-relaxed relative shadow-2xl backdrop-blur-md overflow-hidden transition-all duration-200 group-hover:-translate-y-0.5 ${
                 msg.role === 'user'
-                  ? 'bg-gradient-to-br from-smara-800/50 to-smara-950/30 border border-smara-500/40 shadow-smara-950/20'
+                  ? 'bg-gradient-to-br from-cyan-600/30 via-smara-700/35 to-fuchsia-900/25 border border-cyan-300/25 shadow-cyan-950/25 ring-1 ring-white/10'
                   : msg.role === 'error'
                   ? 'bg-gradient-to-br from-red-950/70 to-gray-950/60 border border-red-600/50 text-red-100 shadow-red-950/20'
-                  : 'bg-gradient-to-br from-gray-900/95 via-gray-900/80 to-smara-950/35 border border-gray-700/70 shadow-black/25 before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-smara-300/50 before:to-transparent'
+                  : 'bg-gradient-to-br from-white/[0.08] via-gray-900/85 to-smara-950/35 border border-white/10 shadow-black/30 ring-1 ring-white/[0.04] before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-cyan-200/60 before:to-transparent'
               }`}>
                 {msg.role !== 'user' && msg.role !== 'error' && (
                   <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-smara-300/90">
@@ -1053,9 +1160,10 @@ export default function Chat() {
                 <button
                   onClick={() => copyMessage(i, msg.content)}
                   title="Salin pesan"
-                  className={`absolute -top-2 ${msg.role === 'user' ? '-left-2' : '-right-2'} w-7 h-7 rounded-lg bg-gray-900/95 border border-gray-700 hover:bg-gray-800 hover:border-smara-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-lg`}
+                  aria-label="Salin pesan"
+                  className={`absolute top-2 ${msg.role === 'user' ? 'left-2' : 'right-2'} z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-gray-950/90 text-gray-300 shadow-lg shadow-black/30 backdrop-blur-md opacity-80 transition-all hover:border-smara-400 hover:bg-gray-900 hover:text-white hover:opacity-100 group-hover:opacity-100 md:opacity-0 md:group-hover:opacity-100`}
                 >
-                  {copiedIdx === i ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
+                  {copiedIdx === i ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
@@ -1117,8 +1225,8 @@ export default function Chat() {
       )}
 
       {/* Mode switcher + Input */}
-      <div className="p-3 border-t border-gray-800 bg-gray-900/50 space-y-2">
-        <div className="flex gap-1">
+      <div className="p-4 border-t border-white/10 bg-gray-950/70 backdrop-blur-xl space-y-3 shadow-[0_-18px_40px_rgba(0,0,0,0.25)]">
+        <div className="flex flex-wrap gap-1.5 rounded-2xl border border-white/10 bg-black/20 p-1.5 w-fit">
           {MODES.map(m => {
             const Icon = m.icon
             const active = mode === m.id
@@ -1131,10 +1239,10 @@ export default function Chat() {
                     wsRef.current.send(JSON.stringify({ type: 'mode_change', mode: m.id }))
                   }
                 }}
-                className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl transition-all ${
                   active
-                    ? `${m.bg} text-white border ${m.border}`
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 border border-transparent'
+                    ? `${m.bg} text-white border ${m.border} shadow-lg shadow-black/20`
+                    : 'bg-white/[0.04] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 border border-transparent'
                 }`}
                 title={m.label}
               >
@@ -1173,7 +1281,7 @@ export default function Chat() {
             })}
           </div>
         )}
-        <div className="flex gap-2">
+        <div className="flex gap-2 rounded-3xl border border-white/10 bg-black/25 p-2 shadow-inner shadow-black/30 focus-within:border-cyan-300/35 focus-within:ring-2 focus-within:ring-cyan-400/10 transition-all">
           <input
             ref={fileInputRef}
             type="file"
@@ -1185,7 +1293,7 @@ export default function Chat() {
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             title="Lampirkan file (gambar, PDF, dokumen, kode)"
-            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-smara-500 rounded-lg transition-colors disabled:opacity-50"
+            className="px-3 py-2 bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 hover:border-smara-400/60 rounded-2xl transition-colors disabled:opacity-50"
           >
             <Paperclip className="w-4 h-4 text-gray-400" />
           </button>
@@ -1195,13 +1303,13 @@ export default function Chat() {
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={uploading ? 'Mengunggah...' : 'Ketik pesan... (Enter kirim · Ctrl+V paste · drop file untuk lampirkan)'}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-smara-500 min-h-[40px] max-h-[120px]"
+            className="flex-1 bg-transparent border border-transparent rounded-2xl px-3 py-2 text-sm resize-none focus:outline-none min-h-[42px] max-h-[140px] placeholder:text-gray-500"
             rows={1}
           />
           <button
             onClick={send}
             disabled={(!input.trim() && attachments.length === 0) || thinking || uploading}
-            className="px-3 py-2 bg-smara-600 hover:bg-smara-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+            className="px-4 py-2 bg-gradient-to-r from-smara-600 to-cyan-600 hover:from-smara-500 hover:to-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl transition-all shadow-lg shadow-cyan-950/30 border border-white/10"
           >
             <Send className="w-4 h-4" />
           </button>
