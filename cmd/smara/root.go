@@ -58,7 +58,11 @@ func init() {
 	rootCmd.AddCommand(categoryCmd)
 	rootCmd.AddCommand(sshCmd)
 	rootCmd.AddCommand(deployCmd)
+	rootCmd.AddCommand(magicPointerCmd)
+	rootCmd.AddCommand(desktopAgentCmd)
+	rootCmd.AddCommand(voiceCmd)
 }
+
 func initConfig() {
 	if err := config.Init(cfgFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error config: %v\n", err)

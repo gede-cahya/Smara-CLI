@@ -23,10 +23,13 @@ import (
 )
 
 var (
-	webPort   string
-	webHost   string
-	webNoOpen bool
-	webMode   string
+	webPort           string
+	webHost           string
+	webNoOpen         bool
+	webMode           string
+	webToken          string
+	desktopAgentAddr  string
+	desktopAgentToken string
 )
 
 var webCmd = &cobra.Command{
@@ -49,6 +52,9 @@ func init() {
 	webCmd.Flags().StringVar(&webHost, "host", "127.0.0.1", "host HTTP server (use 0.0.0.0 untuk akses dari network)")
 	webCmd.Flags().BoolVar(&webNoOpen, "no-open", false, "jangan buka browser otomatis")
 	webCmd.Flags().StringVar(&webMode, "mode", "ask", "mode agen default: ask, rush, plan")
+	webCmd.Flags().StringVar(&webToken, "auth-token", "", "token akses remote opsional (header Authorization: Bearer atau ?token=)")
+	webCmd.Flags().StringVar(&desktopAgentAddr, "desktop-agent", "", "URL desktop-agent untuk auto-pair remote desktop, contoh http://127.0.0.1:8765")
+	webCmd.Flags().StringVar(&desktopAgentToken, "desktop-token", "", "Token desktop-agent untuk auto-pair")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -273,18 +279,22 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 
 	// 6. Start web server
-	addr := fmt.Sprintf("%s:%s", webHost, webPort)
-	server := web.NewServer(addr, supervisor, memStore, collector, cfg)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	go func() {
-		if err := server.Start(ctx); err != nil {
-			ui.PrintError("Web server error: %v", err)
-			cancel()
+	addr := fmt.Sprintf("%s:%s", webHost, webPort)
+	server := web.NewServer(addr, supervisor, memStore, collector, cfg)
+	server.WebSessions = web.NewWebSessionManager(provider, providerCfg, memStore, activeWorkspaceName, cfg.ActiveWorkspaceID, cfg.AgentMaxIterations, filepath.Join(filepath.Dir(cfg.DBPath), "web-sessions.json"))
+	server.RemoteDesktop = web.NewRemoteDesktopManager(filepath.Join(filepath.Dir(cfg.DBPath), "remote-desktop-devices.json"))
+	if desktopAgentAddr != "" {
+		if _, err := server.RemoteDesktop.Upsert("local-desktop", desktopAgentAddr, desktopAgentToken); err != nil {
+			ui.PrintWarning("Gagal pair desktop-agent: %v", err)
+		} else {
+			ui.PrintSuccess("Desktop agent paired: %s", desktopAgentAddr)
 		}
-	}()
+	}
+	if webToken != "" {
+		server.AuthToken = webToken
+	}
 
 	elapsed := time.Since(startTime)
 	ui.PrintInfo("Startup: %s", elapsed.Round(time.Millisecond))
@@ -295,7 +305,13 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	ui.PrintInfo("Tekan Ctrl+C untuk berhenti")
 	fmt.Println()
 
-	// Handle shutdown
+	go func() {
+		if err := server.Start(ctx); err != nil {
+			ui.PrintError("Web server error: %v", err)
+			cancel()
+		}
+	}()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh

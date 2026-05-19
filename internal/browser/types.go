@@ -30,18 +30,26 @@ type StepResult struct {
 }
 
 type Result struct {
-	ID             string
-	Prompt         string
-	URL            string
-	ArtifactDir    string
-	ReportPath     string
-	ScreenshotPath string
-	Status         string
-	StartedAt      time.Time
-	FinishedAt     time.Time
-	Steps          []StepResult
-	ConsoleErrors  []string
-	NetworkErrors  []string
+	ID              string
+	Prompt          string
+	URL             string
+	ArtifactDir     string
+	ReportPath      string
+	RunJSONPath     string
+	ScreenshotPath  string
+	VisualCheckPath string
+	ErrorCheckPath  string
+	Status          string
+	Browser         string
+	Mode            string
+	Viewport        Viewport
+	StartedAt       time.Time
+	FinishedAt      time.Time
+	Steps           []StepResult
+	VisualChecks    []VisualCheck
+	ErrorChecks     []ErrorCheck
+	ConsoleErrors   []string
+	NetworkErrors   []string
 }
 
 type Options struct {

@@ -9,9 +9,21 @@ import {
   CheckCircle2, BrainCircuit, Copy, Check, X,
   Paperclip, FileText, FileCode, FileJson, File as FileIcon, Upload,
   Terminal, ChevronDown, ChevronRight, Loader2, AlertCircle, Wrench,
+  Archive, ArchiveRestore, StopCircle, Pencil, Server,
 } from 'lucide-react'
-import type { ChatMessage } from '../api'
-import { uploadClipboardImage, uploadAttachment } from '../api'
+import type { ChatMessage, WebSessionItem, WebSessionStatus } from '../api'
+import {
+  uploadClipboardImage,
+  uploadAttachment,
+  fetchWebSessions,
+  createWebSession,
+  getWebSession,
+  renameWebSession,
+  deleteWebSession,
+  archiveWebSession,
+  unarchiveWebSession,
+  cancelWebSession,
+} from '../api'
 type Attachment = {
   path: string
   size: number
@@ -400,6 +412,42 @@ interface ChatSession {
   name: string
   messages: ChatMessage[]
   updatedAt: string
+  mode?: string
+  status?: WebSessionStatus
+  archived?: boolean
+  error?: string
+}
+
+function historyToMessages(history: WebSessionItem['history']): ChatMessage[] {
+  return (history || []).map(h => ({
+    role: h.role === 'user' ? 'user' : h.role === 'error' ? 'error' : 'assistant',
+    content: h.content,
+    timestamp: new Date(h.timestamp),
+  } as ChatMessage))
+}
+
+function webToChatSession(s: WebSessionItem): ChatSession {
+  return {
+    id: s.id,
+    name: s.name,
+    messages: historyToMessages(s.history),
+    updatedAt: s.updated_at,
+    mode: s.mode,
+    status: s.status,
+    archived: s.archived,
+    error: s.error,
+  }
+}
+
+function statusBadgeClass(status?: WebSessionStatus) {
+  switch (status) {
+    case 'running': return 'border-cyan-400/30 bg-cyan-500/10 text-cyan-300'
+    case 'completed': return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-300'
+    case 'error': return 'border-red-400/25 bg-red-500/10 text-red-300'
+    case 'cancelled': return 'border-amber-400/25 bg-amber-500/10 text-amber-300'
+    case 'archived': return 'border-gray-500/25 bg-gray-700/20 text-gray-400'
+    default: return 'border-gray-500/20 bg-gray-700/10 text-gray-400'
+  }
 }
 
 function getAllSessions(): ChatSession[] {
@@ -413,7 +461,7 @@ function getAllSessions(): ChatSession[] {
 // Per-message size caps. Persisting raw data (image base64 previews, full
 // command output, multi-thousand-line logs) blows up the localStorage quota
 // and crashes the SPA on the next page load. We slim heavy fields here.
-const MAX_MESSAGES_PER_SESSION = 200
+// const MAX_MESSAGES_PER_SESSION = 200 // backend persistence now
 const MAX_SESSIONS = 20
 const MAX_OUTPUT_CHARS = 4000
 const MAX_LOG_LINES = 50
@@ -429,7 +477,7 @@ const MAX_SESSION_BYTES = 800 * 1024
 
 // slimMessage strips fields that don't need to survive a refresh.
 // The runtime versions in React state still hold the full data.
-function slimMessage(m: ChatMessage): ChatMessage {
+export function slimMessage(m: ChatMessage): ChatMessage {
   const out: ChatMessage = {
     ...m,
     timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
@@ -572,23 +620,11 @@ function loadCurrentSession(): ChatSession {
   return createSession()
 }
 
-function saveSession(id: string, messages: ChatMessage[]) {
-  const sessions = getAllSessions()
-  const idx = sessions.findIndex(s => s.id === id)
-  // Cap to the most recent N messages and slim each before persisting.
-  const slim = messages.slice(-MAX_MESSAGES_PER_SESSION).map(slimMessage)
-  const updated: ChatSession = {
-    id,
-    name: idx >= 0 ? sessions[idx].name : ('Chat ' + new Date().toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })),
-    messages: slim.map(m => ({
-      ...m,
-      timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
-    })),
-    updatedAt: new Date().toISOString(),
-  }
-  if (idx >= 0) sessions[idx] = updated
-  else sessions.unshift(updated)
-  saveAllSessions(sessions)
+export function saveSession(id: string, messages: ChatMessage[]) {
+  void id
+  void messages
+  // Riwayat chat sekarang disimpan oleh backend multi-session.
+  // Fungsi ini dipertahankan sebagai no-op untuk fallback kompatibilitas lama.
 }
 
 export default function Chat() {
@@ -618,55 +654,121 @@ export default function Chat() {
   const sessionIdRef = useRef(sessionId)
   sessionIdRef.current = sessionId
 
-  const setCurrent = (s: ChatSession) => {
-    // Save current session first
-    saveSession(sessionId, messages)
+  const refreshBackendSessions = useCallback(async () => {
+    try {
+      const res = await fetchWebSessions(true)
+      const backend = res.sessions.map(webToChatSession)
+      if (backend.length === 0) {
+        const created = webToChatSession(await createWebSession(undefined, mode))
+        setSessions([created])
+        setCurrentRaw(created)
+        setSessionId(created.id)
+        setMessages(capRuntimeMessages(created.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+        setItemSafe(CURRENT_SESSION_KEY, created.id)
+        return
+      }
+      setSessions(backend)
+      const currentBackend = backend.find(s => s.id === sessionIdRef.current)
+      if (currentBackend) {
+        setCurrentRaw(currentBackend)
+        setMessages(prev => currentBackend.status === 'running'
+          ? prev
+          : capRuntimeMessages(currentBackend.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+      } else {
+        const next = backend.find(s => !s.archived) || backend[0]
+        setCurrentRaw(next)
+        setSessionId(next.id)
+        setItemSafe(CURRENT_SESSION_KEY, next.id)
+        setMessages(capRuntimeMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+      }
+    } catch (err) {
+      console.warn('[smara] backend sessions unavailable, fallback localStorage:', err)
+    }
+  }, [mode])
+
+  const setCurrent = async (s: ChatSession) => {
     setCurrentRaw(s)
     setSessionId(s.id)
     setItemSafe(CURRENT_SESSION_KEY, s.id)
-    setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+    setActivePhases([])
+    try {
+      const fresh = webToChatSession(await getWebSession(s.id))
+      setCurrentRaw(fresh)
+      setMessages(capRuntimeMessages(fresh.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+    } catch {
+      setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+    }
+    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'session', payload: s.id, session_id: s.id }))
   }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, thinking])
 
-  // Persist messages to localStorage whenever they change.
-  // Wrap in try/catch so a stray quota error doesn't unmount the tree.
   useEffect(() => {
-    try {
-      saveSession(sessionId, messages)
-      setSessions(getAllSessions())
-    } catch (err) {
-      console.warn('[smara] persist session gagal:', err)
-    }
-  }, [messages, sessionId])
+    refreshBackendSessions()
+    const timer = window.setInterval(refreshBackendSessions, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshBackendSessions])
 
-  const newSession = () => {
-    saveSession(sessionId, messages)
-    const s = createSession()
-    setSessions(getAllSessions())
-    setCurrentRaw(s)
-    setSessionId(s.id)
-    setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+  const newSession = async () => {
+    try {
+      const s = webToChatSession(await createWebSession(undefined, mode))
+      setSessions(prev => [s, ...prev.filter(x => x.id !== s.id)])
+      setCurrentRaw(s)
+      setSessionId(s.id)
+      setItemSafe(CURRENT_SESSION_KEY, s.id)
+      setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'session', payload: s.id, session_id: s.id }))
+    } catch (err) {
+      showToast(`Gagal membuat sesi: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
   }
 
-  const deleteSession = (id: string) => {
-    if (id === sessionId) {
-      saveSession(id, messages)
-    }
-    const all = getAllSessions().filter(s => s.id !== id)
-    saveAllSessions(all)
-    setSessions(all)
-    if (current.id === id) {
-      if (all.length > 0) {
-        const next = all[0]
-        setCurrentRaw(next)
-        setSessionId(next.id)
-        setItemSafe(CURRENT_SESSION_KEY, next.id)
-        setMessages(capRuntimeMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+  const deleteSession = async (id: string) => {
+    try {
+      await deleteWebSession(id)
+      const remaining = sessions.filter(s => s.id !== id)
+      setSessions(remaining)
+      if (id === sessionId) {
+        if (remaining.length > 0) await setCurrent(remaining[0])
+        else await newSession()
       }
-      else newSession()
+    } catch (err) {
+      showToast(`Gagal hapus sesi: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
+  }
+
+  const renameSession = async (id: string) => {
+    const old = sessions.find(s => s.id === id)?.name || current.name
+    const name = window.prompt('Nama sesi baru', old)?.trim()
+    if (!name || name === old) return
+    try {
+      await renameWebSession(id, name)
+      await refreshBackendSessions()
+    } catch (err) {
+      showToast(`Gagal rename: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
+  }
+
+  const toggleArchiveSession = async (s: ChatSession) => {
+    try {
+      if (s.archived) await unarchiveWebSession(s.id)
+      else await archiveWebSession(s.id)
+      await refreshBackendSessions()
+    } catch (err) {
+      showToast(`Gagal archive: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
+  }
+
+  const cancelSession = async (id: string) => {
+    try {
+      await cancelWebSession(id)
+      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'cancel', session_id: id }))
+      setThinking(false)
+      await refreshBackendSessions()
+    } catch (err) {
+      showToast(`Gagal stop: ${err instanceof Error ? err.message : 'unknown'}`)
     }
   }
 
@@ -677,7 +779,7 @@ export default function Chat() {
 
     ws.onopen = () => {
       setConnected(true)
-      ws.send(JSON.stringify({ type: 'session', payload: sessionIdRef.current }))
+      ws.send(JSON.stringify({ type: 'session', payload: sessionIdRef.current, session_id: sessionIdRef.current }))
     }
     ws.onclose = () => {
       setConnected(false)
@@ -691,6 +793,7 @@ export default function Chat() {
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data)
+      if (msg.session_id && msg.session_id !== sessionIdRef.current && msg.type !== 'session_status') return
       switch (msg.type) {
         case 'connected':
           break
@@ -784,6 +887,10 @@ export default function Chat() {
             return capRuntimeMessages(next)
           })
           break
+        case 'session_status':
+          setSessions(prev => prev.map(s => s.id === msg.session_id ? { ...s, status: msg.payload as WebSessionStatus, updatedAt: new Date().toISOString() } : s))
+          if (msg.session_id === sessionIdRef.current) setCurrentRaw(c => ({ ...c, status: msg.payload as WebSessionStatus }))
+          break
         case 'mode':
           setMode(msg.mode || 'ask')
           break
@@ -846,7 +953,7 @@ export default function Chat() {
     }]))
     setInput('')
     setAttachments([])
-    wsRef.current.send(JSON.stringify({ type: 'chat', payload: messageText, mode }))
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: messageText, mode, session_id: sessionIdRef.current }))
     setThinking(true)
   }, [input, attachments, connectWs, mode])
 
@@ -1004,10 +1111,11 @@ export default function Chat() {
           >
             <MessageSquare className="w-4 h-4 text-gray-500 group-hover:text-smara-300 shrink-0" />
             <span className="font-medium truncate group-hover:text-smara-200">{current.name}</span>
+            <span className={`text-[10px] shrink-0 rounded-full border px-1.5 py-0.5 ${statusBadgeClass(current.status)}`}>{current.status || 'idle'}</span>
             <span className="text-[10px] text-gray-500 shrink-0">{sessions.length} sesi</span>
             <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform shrink-0 ${showSessions ? 'rotate-180 text-smara-300' : ''}`} />
           </button>
-          <span className="hidden md:inline text-[10px] text-gray-500 font-mono truncate max-w-[180px]">{sessionId}</span>
+          <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-gray-500 font-mono truncate max-w-[220px]"><Server className="w-3 h-3" />{sessionId}</span>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -1072,17 +1180,31 @@ export default function Chat() {
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="hidden sm:flex flex-col items-end text-[10px] text-gray-600">
                         <span>{s.messages.length} pesan</span>
+                        <span className={`inline-flex rounded-full border px-1.5 py-0.5 ${statusBadgeClass(s.status)}`}>{s.status || 'idle'}</span>
                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(s.updatedAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
-                      {sessions.length > 1 && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
-                          className="text-gray-600 hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-950/30"
-                          title="Hapus sesi"
-                        >
-                          <Trash2 className="w-4 h-4" />
+                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                        {s.status === 'running' && (
+                          <button onClick={(e) => { e.stopPropagation(); cancelSession(s.id); }} className="text-cyan-400 hover:text-amber-300 transition-colors p-1.5 rounded hover:bg-amber-950/30" title="Stop session">
+                            <StopCircle className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); renameSession(s.id); }} className="text-gray-600 hover:text-cyan-300 transition-colors p-1.5 rounded hover:bg-cyan-950/30" title="Rename sesi">
+                          <Pencil className="w-4 h-4" />
                         </button>
-                      )}
+                        <button onClick={(e) => { e.stopPropagation(); toggleArchiveSession(s); }} className="text-gray-600 hover:text-amber-300 transition-colors p-1.5 rounded hover:bg-amber-950/30" title={s.archived ? 'Unarchive sesi' : 'Archive sesi'}>
+                          {s.archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+                        </button>
+                        {sessions.length > 1 && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                            className="text-gray-600 hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-950/30"
+                            title="Hapus sesi"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )
@@ -1334,7 +1456,7 @@ export default function Chat() {
           />
           <button
             onClick={send}
-            disabled={(!input.trim() && attachments.length === 0) || thinking || uploading}
+            disabled={(!input.trim() && attachments.length === 0) || current.status === 'running' || uploading}
             className="px-4 py-2 bg-gradient-to-r from-smara-600 to-cyan-600 hover:from-smara-500 hover:to-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl transition-all shadow-lg shadow-cyan-950/30 border border-white/10"
           >
             <Send className="w-4 h-4" />

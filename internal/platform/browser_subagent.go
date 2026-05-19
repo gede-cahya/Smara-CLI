@@ -86,11 +86,22 @@ func browserDiscordSummary(res browser.Result, err error, prompt string) string 
 
 func browserResultAttachments(res browser.Result) []Attachment {
 	var atts []Attachment
-	if res.ScreenshotPath != "" {
-		atts = append(atts, Attachment{Type: "image", FilePath: res.ScreenshotPath, FileName: filepath.Base(res.ScreenshotPath), MimeType: "image/png"})
+	seen := map[string]bool{}
+	add := func(kind, path, mime string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		atts = append(atts, Attachment{Type: kind, FilePath: path, FileName: filepath.Base(path), MimeType: mime})
 	}
-	if res.ReportPath != "" {
-		atts = append(atts, Attachment{Type: "file", FilePath: res.ReportPath, FileName: filepath.Base(res.ReportPath), MimeType: "text/markdown"})
+	add("image", res.ScreenshotPath, "image/png")
+	for _, vc := range res.VisualChecks {
+		add("image", vc.ScreenshotPath, "image/png")
 	}
+	for _, ec := range res.ErrorChecks {
+		add("image", ec.ScreenshotPath, "image/png")
+	}
+	add("file", res.ReportPath, "text/markdown")
+	add("file", res.RunJSONPath, "application/json")
 	return atts
 }

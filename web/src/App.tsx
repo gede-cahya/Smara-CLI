@@ -1,16 +1,18 @@
 import { useState, useEffect, lazy, Suspense, Component } from 'react'
 import type { ReactNode } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, Wrench, GitBranch, TreePine, LineChart, Network, FolderTree, AlertTriangle } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor } from 'lucide-react'
 import Chat from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
 import Config from './pages/Config'
 import Dashboard from './pages/Dashboard'
-import Skills from './pages/Skills'
-import Workflow from './pages/Workflow'
 
+import Workflow from './pages/Workflow'
+import MagicPointer from './pages/MagicPointer'
+import VoiceAssistant from './pages/VoiceAssistant'
+import AvatarAssistant from './pages/AvatarAssistant'
+import RemoteDesktop from './pages/RemoteDesktop'
 class PageErrorBoundary extends Component<{ children: ReactNode; label: string }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null }
   static getDerivedStateFromError(error: Error) {
     return { error }
   }
@@ -66,8 +68,10 @@ const TAB_KEY = 'smara_active_tab'
 const navItems = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'workflow', label: 'Workflow', icon: GitBranch },
-  { id: 'custom-workflow', label: 'Custom Workflow', icon: FolderTree },
-  { id: 'skills', label: 'Skills', icon: Wrench },
+  { id: 'magic-pointer', label: 'Magic Pointer', icon: MousePointer2 },
+  { id: 'voice', label: 'Voice', icon: Mic },
+  { id: 'avatar', label: 'Avatar', icon: Bot },
+  { id: 'remote-desktop', label: 'Remote Desktop', icon: Monitor },
   { id: 'skilltree', label: 'Skill Tree', icon: TreePine },
   { id: 'skilldash', label: 'Analytics', icon: LineChart },
   { id: 'graphify', label: 'Graphify', icon: Network },
@@ -150,8 +154,11 @@ export default function App() {
         <div className="h-full overflow-hidden rounded-[2rem] border border-white/10 bg-black/30 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat /></PageErrorBoundary></div>
           <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
+          <div className={active === 'magic-pointer' ? 'h-full' : 'hidden'}><MagicPointer /></div>
+          <div className={active === 'voice' ? 'h-full' : 'hidden'}><VoiceAssistant /></div>
+          <div className={active === 'avatar' ? 'h-full' : 'hidden'}><AvatarAssistant /></div>
+          <div className={active === 'remote-desktop' ? 'h-full' : 'hidden'}><RemoteDesktop /></div>
           <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
-          <div className={active === 'skills' ? 'h-full' : 'hidden'}><Skills /></div>
           <div className={active === 'skilltree' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense></div>
           <div className={active === 'skilldash' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense></div>
           <div className={active === 'graphify' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense></div>

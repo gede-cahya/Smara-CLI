@@ -12,9 +12,11 @@ export class APIError extends Error {
 }
 
 export async function fetchJSON<T = unknown>(path: string, options?: RequestInit): Promise<T> {
+  const headers = new Headers(options?.headers || {})
+  if (!(options?.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers,
   })
   if (!res.ok) {
     const raw = await res.text()
@@ -86,6 +88,70 @@ export interface ChatMessage {
   status?: 'running' | 'done' | 'error'
   collapsed?: boolean
   attachments?: Array<{ path: string; size: number; kind: 'image' | 'file'; name?: string; preview?: string }>
+}
+
+
+export type WebSessionStatus = 'idle' | 'running' | 'cancelled' | 'error' | 'completed' | 'archived'
+
+export interface WebSessionHistoryItem {
+  role: string
+  content: string
+  timestamp: string
+}
+
+export interface WebSessionItem {
+  id: string
+  name: string
+  mode: string
+  workspace: string
+  status: WebSessionStatus
+  archived: boolean
+  history: WebSessionHistoryItem[]
+  created_at: string
+  updated_at: string
+  error?: string
+}
+
+export interface WebSessionListResponse {
+  sessions: WebSessionItem[]
+}
+
+export function fetchWebSessions(includeArchived = false): Promise<WebSessionListResponse> {
+  return fetchJSON<WebSessionListResponse>(`/api/web-sessions${includeArchived ? '?archived=1' : ''}`)
+}
+
+export function createWebSession(name?: string, mode?: string): Promise<WebSessionItem> {
+  return fetchJSON<WebSessionItem>('/api/web-sessions', {
+    method: 'POST',
+    body: JSON.stringify({ name, mode }),
+  })
+}
+
+export function getWebSession(id: string): Promise<WebSessionItem> {
+  return fetchJSON<WebSessionItem>(`/api/web-sessions/${encodeURIComponent(id)}`)
+}
+
+export function renameWebSession(id: string, name: string): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}/rename`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function deleteWebSession(id: string): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function archiveWebSession(id: string): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}/archive`, { method: 'POST' })
+}
+
+export function unarchiveWebSession(id: string): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}/unarchive`, { method: 'POST' })
+}
+
+export function cancelWebSession(id: string): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
 }
 
 export interface UploadResponse {

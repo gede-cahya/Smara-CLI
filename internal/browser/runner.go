@@ -25,11 +25,16 @@ func Run(ctx context.Context, task Task, opt Options) (Result, error) {
 	if err := os.MkdirAll(artifactDir, 0755); err != nil {
 		return Result{}, err
 	}
-	res := Result{ID: id, Prompt: task.Prompt, URL: task.URL, ArtifactDir: artifactDir, ReportPath: filepath.Join(artifactDir, "report.md"), Status: "pass", StartedAt: time.Now()}
+	mode := "headless"
+	if opt.Headful {
+		mode = "headful"
+	}
+	res := Result{ID: id, Prompt: task.Prompt, URL: task.URL, ArtifactDir: artifactDir, ReportPath: filepath.Join(artifactDir, "report.md"), RunJSONPath: filepath.Join(artifactDir, "run.json"), Status: "pass", Browser: "Chromium via go-rod", Mode: mode, Viewport: task.Viewport, StartedAt: time.Now()}
 
 	if err := CheckServer(ctx, task.URL, 5*time.Second); err != nil {
 		res.Status = "fail"
 		res.FinishedAt = time.Now()
+		_ = WriteRunJSON(res)
 		_ = WriteReport(res)
 		return res, err
 	}
@@ -38,6 +43,7 @@ func Run(ctx context.Context, task Task, opt Options) (Result, error) {
 	if err != nil {
 		res.Status = "fail"
 		res.FinishedAt = time.Now()
+		_ = WriteRunJSON(res)
 		_ = WriteReport(res)
 		return res, err
 	}
@@ -69,6 +75,7 @@ func Run(ctx context.Context, task Task, opt Options) (Result, error) {
 			res.ScreenshotPath = path
 		}
 	}
+	_ = WriteRunJSON(res)
 	return res, WriteReport(res)
 }
 
@@ -119,11 +126,15 @@ func runStep(page *rod.Page, step Step, dir string, res *Result) error {
 		}
 		res.ScreenshotPath = path
 		return nil
+	case "visual-check":
+		return runResponsiveVisualCheck(page, step, dir, res)
+	case "error-check":
+		return runErrorCheck(page, step, dir, res)
 	default:
 		return fmt.Errorf("aksi tidak dikenal: %s", step.Action)
 	}
+	return fmt.Errorf("aksi tidak dikenal: %s", step.Action)
 }
-
 func attachDiagnostics(page *rod.Page, res *Result) {
 	go page.EachEvent(func(e *proto.RuntimeConsoleAPICalled) {
 		if e.Type == proto.RuntimeConsoleAPICalledTypeError || e.Type == proto.RuntimeConsoleAPICalledTypeAssert {
@@ -137,14 +148,7 @@ func attachDiagnostics(page *rod.Page, res *Result) {
 }
 
 func screenshotForTarget(page *rod.Page, target string) ([]byte, error) {
-	t := strings.ToLower(strings.TrimSpace(target))
-	var selectors []string
-	switch t {
-	case "navbar", "nav", "navigation":
-		selectors = []string{`nav`, `[role="navigation"]`, `[class*="navbar" i]`, `[id*="navbar" i]`, `header`}
-	case "error", "errors", "pesan error":
-		selectors = []string{`[role="alert"]`, `[aria-live]`, `.error`, `.errors`, `.invalid-feedback`, `[class*="error" i]`, `[class*="danger" i]`, `[class*="red" i]`}
-	}
+	selectors := selectorsForTarget(target)
 	for _, sel := range selectors {
 		if el, err := page.Element(sel); err == nil {
 			if b, err := el.Screenshot(proto.PageCaptureScreenshotFormatPng, 90); err == nil {

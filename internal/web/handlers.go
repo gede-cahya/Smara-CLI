@@ -310,6 +310,7 @@ func (s *Server) formatBrowserTestResponse(task browser.Task, res browser.Result
 type wsMessage struct {
 	Type        string                 `json:"type"`
 	Payload     string                 `json:"payload"`
+	SessionID   string                 `json:"session_id,omitempty"`
 	Mode        string                 `json:"mode,omitempty"`
 	Phase       string                 `json:"phase,omitempty"`
 	Description string                 `json:"description,omitempty"`
@@ -357,26 +358,35 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
-	// Send welcome / connection ack
 	_ = conn.WriteJSON(wsMessage{Type: "connected", Payload: sessionID})
 
 	for {
 		var msg wsMessage
 		if err := conn.ReadJSON(&msg); err != nil {
-			if _, ok := err.(interface{ Close() bool }); !ok {
-				return
-			}
 			return
 		}
 
 		switch msg.Type {
 		case "chat":
-			go s.handleWSChat(session, msg)
+			if s.WebSessions != nil && msg.SessionID != "" {
+				go s.handleWSWebSessionChat(conn, msg)
+			} else {
+				go s.handleWSChat(session, msg)
+			}
+		case "session":
+			if msg.Payload != "" {
+				session.ID = msg.Payload
+			}
 		case "mode_change":
 			if agent.ValidMode(msg.Mode) {
 				s.Supervisor.SetMode(agent.Mode(msg.Mode))
 				mi := agent.GetModeInfo(agent.Mode(msg.Mode))
 				_ = conn.WriteJSON(wsMessage{Type: "mode", Mode: msg.Mode, Payload: mi.Label, Description: mi.Description})
+			}
+		case "cancel":
+			if s.WebSessions != nil && msg.SessionID != "" {
+				_ = s.WebSessions.Cancel(msg.SessionID)
+				_ = conn.WriteJSON(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "cancelled"})
 			}
 		case "ping":
 			_ = conn.WriteJSON(wsMessage{Type: "pong"})
@@ -385,10 +395,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
-	// Send thinking indicator
 	_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "true"})
 
-	// Wire real-time callbacks for this request
 	s.Supervisor.SetCallback(agent.AgenticCallback{
 		OnPhaseChange: func(phase, description string) {
 			_ = session.WriteJSON(wsMessage{Type: "phase", Phase: phase, Description: description})
@@ -404,16 +412,13 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		},
 	})
 
-	// Wall-clock cap for the whole agentic turn. Configurable via
-	// agent_request_timeout_sec; default in config is 1800s (30 min) so
-	// long roadmap chains aren't killed mid-task. Falls back to 30 min if
-	// the config field is missing or zero.
 	timeoutSec := 1800
 	if s.Cfg != nil && s.Cfg.AgentRequestTimeoutSec > 0 {
 		timeoutSec = s.Cfg.AgentRequestTimeoutSec
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+
 	prompt := injectAttachmentSteer(msg.Payload)
 	if response, handled, err := s.tryRunCustomWorkflowPrompt(msg.Payload); handled {
 		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
@@ -433,6 +438,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response})
 		return
 	}
+
 	activeMode := msg.Mode
 	if activeMode == "" {
 		activeMode = string(s.Supervisor.GetMode())
@@ -449,21 +455,16 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: output})
 		return
 	}
+
 	result, err := s.Supervisor.ProcessPrompt(ctx, prompt)
-
-	// Clear callbacks
 	s.Supervisor.SetCallback(agent.AgenticCallback{})
-
 	_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
-
 	if err != nil {
 		_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
 		return
 	}
-
 	_ = session.WriteJSON(wsMessage{Type: "chat", Payload: s.rewriteGeneratedImageLinks(result.Response)})
 
-	// Send stats
 	stats := s.Supervisor.GetStats()
 	var durStr string
 	if stats.LastDuration > 0 {

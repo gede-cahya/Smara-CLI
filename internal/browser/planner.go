@@ -48,7 +48,7 @@ func Plan(prompt string) (Task, error) {
 	customSteps := extractInteractionSteps(prompt)
 	if len(customSteps) > 0 {
 		t.Steps = append(t.Steps, customSteps...)
-		if wantsScreenshot(p) || !hasStepAction(customSteps, "screenshot") {
+		if wantsScreenshot(p) && !hasStepAction(customSteps, "screenshot") && !hasStepAction(customSteps, "error-check") {
 			t.Steps = append(t.Steps, Step{Action: "screenshot", Name: "screenshot"})
 		}
 		return t, nil
@@ -67,11 +67,14 @@ func Plan(prompt string) (Task, error) {
 		t.Steps = append(t.Steps, Step{Action: "wait", Target: "dashboard"})
 		t.Steps = append(t.Steps, Step{Action: "screenshot", Name: "dashboard"})
 	} else if strings.Contains(p, "navbar") {
-		t.Steps = append(t.Steps, Step{Action: "screenshot", Target: "navbar", Name: "navbar-" + t.Viewport.Name})
+		if wantsResponsiveCheck(p) {
+			t.Steps = append(t.Steps, Step{Action: "visual-check", Target: "navbar", Name: "navbar-responsive"})
+		} else {
+			t.Steps = append(t.Steps, Step{Action: "screenshot", Target: "navbar", Name: "navbar-" + t.Viewport.Name})
+		}
 	} else if strings.Contains(p, "bayar") || strings.Contains(p, "checkout") {
 		t.Steps = append(t.Steps, Step{Action: "click", Target: "Bayar"})
-		t.Steps = append(t.Steps, Step{Action: "wait", Target: "error"})
-		t.Steps = append(t.Steps, Step{Action: "screenshot", Target: "error", Name: "checkout-error"})
+		t.Steps = append(t.Steps, Step{Action: "error-check", Target: "checkout-error", Name: "checkout-error"})
 	} else {
 		t.Steps = append(t.Steps, Step{Action: "screenshot", Name: "screenshot"})
 	}
@@ -83,6 +86,11 @@ func extractInteractionSteps(prompt string) []Step {
 	p := strings.ToLower(prompt)
 	if strings.Contains(p, "salah satu video") || strings.Contains(p, "video pertama") || strings.Contains(p, "first video") {
 		steps = append(steps, Step{Action: "click", Target: "youtube:first-video"})
+	}
+	if strings.Contains(p, "bayar") || strings.Contains(p, "checkout") {
+		steps = append(steps, Step{Action: "click", Target: "Bayar"})
+		steps = append(steps, Step{Action: "error-check", Target: "checkout-error", Name: "checkout-error"})
+		return steps
 	}
 	for _, target := range extractCommandTargets(prompt, []string{"klik tombol", "klik", "click button", "click"}) {
 		steps = append(steps, Step{Action: "click", Target: target})
@@ -130,6 +138,10 @@ func extractCommandTargets(prompt string, commands []string) []string {
 
 func wantsScreenshot(p string) bool {
 	return strings.Contains(p, "screenshot") || strings.Contains(p, "tangkapan layar") || strings.Contains(p, "ambil gambar")
+}
+
+func wantsResponsiveCheck(p string) bool {
+	return strings.Contains(p, "responsif") || strings.Contains(p, "responsive") || strings.Contains(p, "mobile") || strings.Contains(p, "tablet") || strings.Contains(p, "desktop")
 }
 
 func hasStepAction(steps []Step, action string) bool {

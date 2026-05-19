@@ -27,15 +27,18 @@ var upgrader = websocket.Upgrader{
 
 // Server runs the Smara web interface.
 type Server struct {
-	Addr         string
-	Supervisor   *agent.Supervisor
-	MemStore     memory.MemoryStore
-	Metrics      *metrics.MetricsCollector
-	Cfg          *config.SmaraConfig
-	mcpClients   map[string]*mcp.Client
-	SkillTracker *skill.ExecutionTracker
-	mu           sync.RWMutex
-	sessions     map[string]*ChatSession
+	Addr          string
+	Supervisor    *agent.Supervisor
+	MemStore      memory.MemoryStore
+	Metrics       *metrics.MetricsCollector
+	Cfg           *config.SmaraConfig
+	WebSessions   *WebSessionManager
+	AuthToken     string
+	RemoteDesktop *RemoteDesktopManager
+	mcpClients    map[string]*mcp.Client
+	SkillTracker  *skill.ExecutionTracker
+	mu            sync.RWMutex
+	sessions      map[string]*ChatSession
 }
 
 // ChatSession tracks a single WebSocket conversation.
@@ -133,15 +136,23 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/generated-image", s.handleGeneratedImage)
 	mux.HandleFunc("/api/local-image", s.handleLocalImage)
 	mux.HandleFunc("/api/browser-artifact", s.handleBrowserArtifact)
+	mux.HandleFunc("/api/web-sessions", s.handleWebSessions)
+	mux.HandleFunc("/api/web-sessions/", s.handleWebSessionByID)
+	mux.HandleFunc("/api/voice/settings", s.handleVoiceSettings)
+	mux.HandleFunc("/api/voice/command", s.handleVoiceCommand)
+	mux.HandleFunc("/api/voice/speak", s.handleVoiceSpeak)
+	mux.HandleFunc("/api/avatar/state", s.handleAvatarState)
+	mux.HandleFunc("/api/avatar/event", s.handleAvatarEvent)
+	mux.HandleFunc("/api/remote-desktop/devices", s.handleRemoteDesktopDevices)
+	mux.HandleFunc("/api/remote-desktop/devices/", s.handleRemoteDesktopDeviceByID)
+	mux.HandleFunc("/api/remote-desktop/proxy", s.handleRemoteDesktopProxy)
+	mux.HandleFunc("/api/remote-desktop/screenshot", s.handleRemoteDesktopScreenshot)
 	mux.HandleFunc("/ws", s.handleWebSocket)
-	// Static SPA (fallback to index.html for client-side routing)
-	mux.HandleFunc("/", s.handleStatic)
 
 	srv := &http.Server{
 		Addr:    s.Addr,
-		Handler: cors(mux),
+		Handler: s.withAuth(cors(mux)),
 	}
-
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
