@@ -100,13 +100,17 @@ func (c *Client) initialize() error {
 		return fmt.Errorf("gagal parse server info: %w", err)
 	}
 
-	// Send initialized notification
+	// Send initialized notification. Per MCP spec notifications do not have an id.
 	notif := &Request{
 		JSONRPC: "2.0",
-		ID:      c.getNextID(),
 		Method:  "notifications/initialized",
+		Params:  map[string]interface{}{},
 	}
-	return c.transport.Send(notif)
+	if err := c.transport.Send(notif); err != nil {
+		return err
+	}
+	// Notifications are fire-and-forget; do not wait for a response.
+	return nil
 }
 
 // ListTools retrieves the list of available tools from the MCP server.
@@ -115,8 +119,8 @@ func (c *Client) ListTools() ([]Tool, error) {
 		JSONRPC: "2.0",
 		ID:      c.getNextID(),
 		Method:  "tools/list",
+		Params:  map[string]interface{}{},
 	}
-
 	if err := c.transport.Send(req); err != nil {
 		return nil, err
 	}

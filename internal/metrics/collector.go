@@ -374,6 +374,18 @@ func EstimateCost(provider, model string, inputTokens, outputTokens int64) float
 		return cost(3.0, 15.0)
 	case "openai":
 		switch {
+		case strings.Contains(model, "gpt-5.5"):
+			return cost(5.0, 30.0)
+		case strings.Contains(model, "gpt-5.4-mini"):
+			return cost(0.75, 4.50)
+		case strings.Contains(model, "gpt-5.4"):
+			return cost(2.50, 15.0)
+		case strings.Contains(model, "gpt-5-mini"):
+			return cost(0.25, 2.0)
+		case strings.Contains(model, "gpt-5-nano"):
+			return cost(0.05, 0.40)
+		case strings.Contains(model, "gpt-5-chat-latest") || strings.Contains(model, "gpt-5-codex") || strings.Contains(model, "gpt-5.2") || strings.Contains(model, "gpt-5.1") || strings.Contains(model, "gpt-5"):
+			return cost(1.25, 10.0)
 		case strings.Contains(model, "gpt-4o-mini"):
 			return cost(0.15, 0.60)
 		case strings.Contains(model, "gpt-4o"):
@@ -395,6 +407,18 @@ func EstimateCost(provider, model string, inputTokens, outputTokens int64) float
 			return cost(3.0, 15.0)
 		case strings.Contains(model, "haiku"):
 			return cost(0.25, 1.25)
+		case strings.Contains(model, "gpt-5.5"):
+			return cost(5.0, 30.0)
+		case strings.Contains(model, "gpt-5.4-mini"):
+			return cost(0.75, 4.50)
+		case strings.Contains(model, "gpt-5.4"):
+			return cost(2.50, 15.0)
+		case strings.Contains(model, "gpt-5-mini"):
+			return cost(0.25, 2.0)
+		case strings.Contains(model, "gpt-5-nano"):
+			return cost(0.05, 0.40)
+		case strings.Contains(model, "gpt-5"):
+			return cost(1.25, 10.0)
 		case strings.Contains(model, "gpt-4o-mini"):
 			return cost(0.15, 0.60)
 		case strings.Contains(model, "gpt-4o"):
@@ -414,6 +438,18 @@ func EstimateCost(provider, model string, inputTokens, outputTokens int64) float
 			return cost(0.25, 1.25)
 		case strings.Contains(model, "sonnet") || strings.Contains(model, "claude"):
 			return cost(3.0, 15.0)
+		case strings.Contains(model, "gpt-5.5"):
+			return cost(5.0, 30.0)
+		case strings.Contains(model, "gpt-5.4-mini"):
+			return cost(0.75, 4.50)
+		case strings.Contains(model, "gpt-5.4"):
+			return cost(2.50, 15.0)
+		case strings.Contains(model, "gpt-5-mini"):
+			return cost(0.25, 2.0)
+		case strings.Contains(model, "gpt-5-nano"):
+			return cost(0.05, 0.40)
+		case strings.Contains(model, "gpt-5"):
+			return cost(1.25, 10.0)
 		case strings.Contains(model, "gpt-4o-mini"):
 			return cost(0.15, 0.60)
 		case strings.Contains(model, "gpt-4o"):

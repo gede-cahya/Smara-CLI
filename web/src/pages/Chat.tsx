@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import mermaid from 'mermaid'
@@ -49,6 +49,13 @@ function generatedImageUrls(text?: string): string[] {
   let match: RegExpExecArray | null
   while ((match = re.exec(text)) !== null) urls.add(match[1])
   return [...urls]
+}
+
+function formatCostUSD(cost?: number): string {
+  if (cost === undefined || cost === null || Number.isNaN(cost)) return 'n/a'
+  if (cost === 0) return '$0.00'
+  if (cost < 0.000001) return '<$0.000001'
+  return `$${cost.toFixed(6)}`
 }
 
 const CHART_COLORS = ['#22d3ee', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#60a5fa']
@@ -506,6 +513,41 @@ function capRuntimeMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.slice(-MAX_RUNTIME_MESSAGES)
 }
 
+function hasResponseStats(m: ChatMessage): boolean {
+  return m.inputTokens !== undefined ||
+    m.outputTokens !== undefined ||
+    m.totalTokens !== undefined ||
+    m.duration !== undefined ||
+    m.durationMs !== undefined ||
+    m.estimatedCostUSD !== undefined ||
+    m.provider !== undefined ||
+    m.model !== undefined ||
+    m.requestPrompt !== undefined
+}
+
+function preserveResponseStats(fresh: ChatMessage[], previous: ChatMessage[]): ChatMessage[] {
+  const used = new Set<number>()
+  return fresh.map(msg => {
+    if (msg.role === 'user' || msg.role === 'error' || hasResponseStats(msg)) return msg
+    const idx = previous.findIndex((prev, i) => !used.has(i) && prev.role === msg.role && prev.content === msg.content && hasResponseStats(prev))
+    if (idx < 0) return msg
+    used.add(idx)
+    const prev = previous[idx]
+    return {
+      ...msg,
+      requestPrompt: prev.requestPrompt,
+      inputTokens: prev.inputTokens,
+      outputTokens: prev.outputTokens,
+      totalTokens: prev.totalTokens,
+      duration: prev.duration,
+      durationMs: prev.durationMs,
+      estimatedCostUSD: prev.estimatedCostUSD,
+      provider: prev.provider,
+      model: prev.model,
+    }
+  })
+}
+
 function capRuntimeOutput(output?: string): string | undefined {
   if (!output || output.length <= MAX_RUNTIME_OUTPUT_CHARS) return output
   return output.slice(-MAX_RUNTIME_OUTPUT_CHARS)
@@ -627,7 +669,9 @@ export function saveSession(id: string, messages: ChatMessage[]) {
   // Fungsi ini dipertahankan sebagai no-op untuk fallback kompatibilitas lama.
 }
 
-export default function Chat() {
+export type ChatHandle = { openSessions: () => void }
+
+function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const [sessions, setSessions] = useState<ChatSession[]>(getAllSessions)
   const [current, setCurrentRaw] = useState<ChatSession>(loadCurrentSession)
   const [messages, setMessages] = useState<ChatMessage[]>(current.messages)
@@ -654,6 +698,14 @@ export default function Chat() {
   const sessionIdRef = useRef(sessionId)
   sessionIdRef.current = sessionId
 
+  useImperativeHandle(ref, () => ({
+    openSessions: () => setShowSessions(true),
+  }), [])
+
+  useImperativeHandle(ref, () => ({
+    openSessions: () => setShowSessions(true),
+  }), [])
+
   const refreshBackendSessions = useCallback(async () => {
     try {
       const res = await fetchWebSessions(true)
@@ -673,7 +725,7 @@ export default function Chat() {
         setCurrentRaw(currentBackend)
         setMessages(prev => currentBackend.status === 'running'
           ? prev
-          : capRuntimeMessages(currentBackend.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+          : capRuntimeMessages(preserveResponseStats(currentBackend.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })), prev)))
       } else {
         const next = backend.find(s => !s.archived) || backend[0]
         setCurrentRaw(next)
@@ -685,7 +737,6 @@ export default function Chat() {
       console.warn('[smara] backend sessions unavailable, fallback localStorage:', err)
     }
   }, [mode])
-
   const setCurrent = async (s: ChatSession) => {
     setCurrentRaw(s)
     setSessionId(s.id)
@@ -814,7 +865,20 @@ export default function Chat() {
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
-          setMessages(prev => capRuntimeMessages([...prev, { role: 'assistant', content: msg.payload, timestamp: new Date() }]))
+          setMessages(prev => capRuntimeMessages([...prev, {
+            role: 'assistant',
+            content: msg.payload,
+            timestamp: new Date(),
+            requestPrompt: msg.request_prompt,
+            provider: msg.provider,
+            model: msg.model,
+            inputTokens: msg.stats?.input_tokens,
+            outputTokens: msg.stats?.output_tokens,
+            totalTokens: msg.stats?.total_tokens,
+            duration: msg.stats?.duration,
+            durationMs: msg.stats?.duration_ms,
+            estimatedCostUSD: msg.stats?.estimated_cost_usd ?? msg.stats?.cost,
+          }]))
           break
         case 'error':
           setThinking(false)
@@ -1300,11 +1364,33 @@ export default function Chat() {
                 ) : msg.role === 'error' ? (
                   <div className="whitespace-pre-wrap leading-6">{msg.content}</div>
                 ) : (
-                  <SmaraMarkdown content={msg.content} />
+                  <>
+                    <SmaraMarkdown content={msg.content} />
+                    {msg.requestPrompt && (
+                      <details className="mt-3 rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-[10px] text-gray-400">
+                        <summary className="cursor-pointer select-none text-cyan-200">Request prompt</summary>
+                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-gray-300">{msg.requestPrompt}</pre>
+                      </details>
+                    )}
+                  </>
                 )}
-                <div className="mt-2 flex justify-end border-t border-white/5 pt-1.5 text-[10px] text-gray-500">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
-                </div>
+                {(msg.role !== 'user' && msg.role !== 'error' && (msg.inputTokens !== undefined || msg.outputTokens !== undefined || msg.totalTokens !== undefined || msg.duration || msg.estimatedCostUSD !== undefined || msg.model || msg.provider)) ? (
+                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/5 pt-1.5 text-[10px] text-gray-500">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      {(msg.provider || msg.model) && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">{msg.provider ? `${msg.provider}/` : ''}{msg.model || 'unknown'}</span>}
+                      {msg.inputTokens !== undefined && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">in {msg.inputTokens}</span>}
+                      {msg.outputTokens !== undefined && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">out {msg.outputTokens}</span>}
+                      {msg.totalTokens !== undefined && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">total {msg.totalTokens}</span>}
+                      {msg.duration && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">{msg.duration}</span>}
+                      {msg.estimatedCostUSD !== undefined && <span className="rounded-full border border-emerald-400/20 bg-emerald-500/5 px-2 py-0.5 text-emerald-200">~{formatCostUSD(msg.estimatedCostUSD)}</span>}
+                    </div>
+                    <div className="shrink-0 text-right">{new Date(msg.timestamp).toLocaleTimeString()}</div>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex justify-end border-t border-white/5 pt-1.5 text-[10px] text-gray-500">
+                    {new Date(msg.timestamp).toLocaleTimeString()}
+                  </div>
+                )}
                 <button
                   onClick={() => copyMessage(i, msg.content)}
                   title="Salin pesan"
@@ -1482,3 +1568,5 @@ export default function Chat() {
     </div>
   )
 }
+
+export default forwardRef(Chat)

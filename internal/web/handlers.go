@@ -33,14 +33,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	mode := s.Supervisor.GetMode()
 	modeInfo := agent.GetModeInfo(mode)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":     "running",
-		"mode":       string(mode),
-		"mode_label": modeInfo.Label,
-		"mode_desc":  modeInfo.Description,
-		"mode_emoji": modeInfo.Emoji,
-		"provider":   s.Supervisor.GetProvider().Name(),
-		"workspace":  s.Cfg.ActiveWorkspace,
-		"version":    "1.0.0",
+		"status":       "running",
+		"mode":         string(mode),
+		"mode_label":   modeInfo.Label,
+		"mode_desc":    modeInfo.Description,
+		"mode_emoji":   modeInfo.Emoji,
+		"provider":     s.Supervisor.GetProvider().Name(),
+		"workspace":    s.Cfg.ActiveWorkspace,
+		"version":      "1.0.0",
+		"web_sessions": s.WebSessions != nil,
 	})
 }
 
@@ -308,28 +309,79 @@ func (s *Server) formatBrowserTestResponse(task browser.Task, res browser.Result
 // --- WebSocket ---
 
 type wsMessage struct {
-	Type        string                 `json:"type"`
-	Payload     string                 `json:"payload"`
-	SessionID   string                 `json:"session_id,omitempty"`
-	Mode        string                 `json:"mode,omitempty"`
-	Phase       string                 `json:"phase,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	Tool        string                 `json:"tool,omitempty"`
-	Server      string                 `json:"server,omitempty"`
-	Output      string                 `json:"output,omitempty"`
-	Args        map[string]interface{} `json:"args,omitempty"`
-	Role        string                 `json:"role,omitempty"`
-	Stats       *wsStats               `json:"stats,omitempty"`
+	Type          string                 `json:"type"`
+	Payload       string                 `json:"payload"`
+	SessionID     string                 `json:"session_id,omitempty"`
+	Mode          string                 `json:"mode,omitempty"`
+	Phase         string                 `json:"phase,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	Tool          string                 `json:"tool,omitempty"`
+	Server        string                 `json:"server,omitempty"`
+	Output        string                 `json:"output,omitempty"`
+	Args          map[string]interface{} `json:"args,omitempty"`
+	Role          string                 `json:"role,omitempty"`
+	Stats         *wsStats               `json:"stats,omitempty"`
+	RequestPrompt string                 `json:"request_prompt,omitempty"`
+	Provider      string                 `json:"provider,omitempty"`
+	Model         string                 `json:"model,omitempty"`
 }
 
 type wsStats struct {
-	PromptCount  int     `json:"prompt_count"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	TotalTokens  int     `json:"total_tokens"`
-	AvgTokens    int     `json:"avg_tokens"`
-	Duration     string  `json:"duration"`
-	Cost         float64 `json:"cost"`
+	PromptCount      int     `json:"prompt_count"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	AvgTokens        int     `json:"avg_tokens"`
+	Duration         string  `json:"duration"`
+	DurationMs       int64   `json:"duration_ms,omitempty"`
+	Cost             float64 `json:"cost"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd,omitempty"`
+}
+
+func (s *Server) currentProviderModel() (string, string) {
+	provider := "unknown"
+	model := ""
+	if s.Supervisor != nil {
+		provider = s.Supervisor.GetProviderName()
+		model = s.Supervisor.GetModel()
+	}
+	if model == "" && s.Cfg != nil {
+		model = s.Cfg.Model
+	}
+	return provider, model
+}
+
+func promptResultWSStats(result *agent.PromptResult, provider, model string) *wsStats {
+	if result == nil {
+		return nil
+	}
+	duration := ""
+	if result.Duration > 0 {
+		duration = result.Duration.Round(time.Millisecond).String()
+	}
+	cost := metrics.EstimateCost(provider, model, int64(result.InputTokens), int64(result.OutputTokens))
+	return &wsStats{
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		TotalTokens:      result.TotalTokens,
+		Duration:         duration,
+		DurationMs:       result.Duration.Milliseconds(),
+		Cost:             cost,
+		EstimatedCostUSD: cost,
+	}
+}
+
+func (s *Server) chatWSMessage(sessionID, payload, requestPrompt string, result *agent.PromptResult) wsMessage {
+	provider, model := s.currentProviderModel()
+	return wsMessage{
+		Type:          "chat",
+		SessionID:     sessionID,
+		Payload:       payload,
+		RequestPrompt: requestPrompt,
+		Provider:      provider,
+		Model:         model,
+		Stats:         promptResultWSStats(result, provider, model),
+	}
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +457,8 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: server, Tool: tool, Args: args})
 		},
 		OnToolResult: func(output string) {
-			_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: s.rewriteGeneratedImageLinks(output)})
+			preview := formatToolResultPreview(s.rewriteGeneratedImageLinks(output))
+			_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: preview})
 		},
 		OnLog: func(role, content string) {
 			_ = session.WriteJSON(wsMessage{Type: "log", Payload: content, Role: role})
@@ -426,7 +479,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
 			return
 		}
-		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response})
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
 		return
 	}
 	if response, handled, err := s.tryCreateCustomWorkflowPrompt(msg.Payload); handled {
@@ -435,7 +488,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
 			return
 		}
-		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response})
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
 		return
 	}
 
@@ -452,7 +505,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			return
 		}
 		_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: output})
-		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: output})
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: output, RequestPrompt: msg.Payload})
 		return
 	}
 
@@ -463,7 +516,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
 		return
 	}
-	_ = session.WriteJSON(wsMessage{Type: "chat", Payload: s.rewriteGeneratedImageLinks(result.Response)})
+	_ = session.WriteJSON(s.chatWSMessage("", s.rewriteGeneratedImageLinks(result.Response), msg.Payload, result))
 
 	stats := s.Supervisor.GetStats()
 	var durStr string
@@ -471,22 +524,20 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		durStr = stats.LastDuration.Round(time.Millisecond).String()
 	}
 	_ = session.WriteJSON(wsMessage{Type: "stats", Stats: &wsStats{
-		PromptCount:  stats.PromptCount,
-		InputTokens:  stats.InputTokens,
-		OutputTokens: stats.OutputTokens,
-		TotalTokens:  stats.TotalTokens,
-		AvgTokens:    stats.AvgTokensPerReq,
-		Duration:     durStr,
-		Cost:         stats.TotalCost,
+		PromptCount:      stats.PromptCount,
+		InputTokens:      stats.InputTokens,
+		OutputTokens:     stats.OutputTokens,
+		TotalTokens:      stats.TotalTokens,
+		AvgTokens:        stats.AvgTokensPerReq,
+		Duration:         durStr,
+		DurationMs:       stats.LastDuration.Milliseconds(),
+		Cost:             stats.TotalCost,
+		EstimatedCostUSD: stats.TotalCost,
 	}})
 
 	if s.Cfg != nil {
 		path := metrics.DefaultAnalyticsPath(s.Cfg.DBPath)
-		provider := s.Supervisor.GetProviderName()
-		model := s.Supervisor.GetModel()
-		if model == "" {
-			model = s.Cfg.Model
-		}
+		provider, model := s.currentProviderModel()
 		_ = metrics.AppendUsageEvent(path, metrics.UsageEvent{
 			Timestamp:    time.Now(),
 			Provider:     provider,

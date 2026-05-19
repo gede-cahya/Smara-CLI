@@ -143,11 +143,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/voice/speak", s.handleVoiceSpeak)
 	mux.HandleFunc("/api/avatar/state", s.handleAvatarState)
 	mux.HandleFunc("/api/avatar/event", s.handleAvatarEvent)
+	mux.HandleFunc("/api/avatar/model", s.handleAvatarModel)
 	mux.HandleFunc("/api/remote-desktop/devices", s.handleRemoteDesktopDevices)
 	mux.HandleFunc("/api/remote-desktop/devices/", s.handleRemoteDesktopDeviceByID)
 	mux.HandleFunc("/api/remote-desktop/proxy", s.handleRemoteDesktopProxy)
 	mux.HandleFunc("/api/remote-desktop/screenshot", s.handleRemoteDesktopScreenshot)
 	mux.HandleFunc("/ws", s.handleWebSocket)
+	mux.HandleFunc("/", s.handleStatic)
 
 	srv := &http.Server{
 		Addr:    s.Addr,

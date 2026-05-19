@@ -12,6 +12,7 @@ import (
 func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	if s.WebSessions == nil {
 		_ = conn.WriteJSON(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: "web session manager belum aktif"})
+		_ = conn.WriteJSON(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 		return
 	}
 	write := func(v interface{}) { _ = conn.WriteJSON(v) }
@@ -33,7 +34,8 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 			write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: server, Tool: tool, Args: args})
 		},
 		OnToolResult: func(output string) {
-			write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: s.rewriteGeneratedImageLinks(output)})
+			preview := formatToolResultPreview(s.rewriteGeneratedImageLinks(output))
+			write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: preview})
 		},
 		OnLog: func(role, content string) {
 			write(wsMessage{Type: "log", SessionID: msg.SessionID, Payload: content, Role: role})
@@ -44,9 +46,11 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		if err != nil {
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
+			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: response})
+		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
 	}
 	activeMode := msg.Mode
@@ -59,18 +63,21 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		if err != nil {
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
+			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
 		write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: output})
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: output})
+		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
 	}
 	result, err := s.WebSessions.Run(ctx, msg.SessionID, prompt, activeMode, cb)
 	write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 	if err != nil {
 		write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
+		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 		return
 	}
-	write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: s.rewriteGeneratedImageLinks(result.Response)})
+	write(s.chatWSMessage(msg.SessionID, s.rewriteGeneratedImageLinks(result.Response), msg.Payload, result))
 	write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -428,7 +429,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		OnToolResult: func(output string) {
 			p := ui.GetGlobalProgram()
 			if p != nil {
-				content := fmt.Sprintf("◂ result: %s\n", components.HyperlinkURLs(truncateStr(output, 300)))
+				content := fmt.Sprintf("◂ result: %s\n", components.HyperlinkURLs(formatToolResultPreview(output)))
 				p.Send(ui.StreamMsg{Chunk: content, IsThinking: false, Phase: "Exploring"})
 			}
 		},
@@ -592,6 +593,176 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// formatToolResultPreview keeps live CLI tool previews readable. Raw HTTP
+// responses and verbose build logs can be very noisy, so show compact
+// structured summaries instead of dumping the whole output in chat.
+func formatToolResultPreview(output string) string {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(output, "▶", ""))
+	if trimmed == "" {
+		return "(kosong)"
+	}
+	if summary, ok := compactHTTPResponsePreview(trimmed); ok {
+		return summary
+	}
+	if summary, ok := compactBuildLogPreview(trimmed); ok {
+		return summary
+	}
+	return truncateStr(singleLine(trimmed), 300)
+}
+
+func compactHTTPResponsePreview(output string) (string, bool) {
+	firstLine := firstNonEmptyLine(output)
+	if !strings.HasPrefix(firstLine, "HTTP/") {
+		return "", false
+	}
+
+	status := firstLine
+	contentType := ""
+	server := ""
+	cache := ""
+	matchedPath := ""
+	body := ""
+
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "▶"))
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "content-type:"):
+			contentType = strings.TrimSpace(line[len("content-type:"):])
+		case strings.HasPrefix(lower, "server:"):
+			server = strings.TrimSpace(line[len("server:"):])
+		case strings.HasPrefix(lower, "x-vercel-cache:"):
+			cache = strings.TrimSpace(line[len("x-vercel-cache:"):])
+		case strings.HasPrefix(lower, "cf-cache-status:") && cache == "":
+			cache = strings.TrimSpace(line[len("cf-cache-status:"):])
+		case strings.HasPrefix(lower, "x-matched-path:"):
+			matchedPath = strings.TrimSpace(line[len("x-matched-path:"):])
+		case strings.HasPrefix(line, "{") || strings.HasPrefix(line, "["):
+			body = line
+		}
+	}
+
+	parts := []string{"🌐 HTTP", "status " + status}
+	if body != "" {
+		parts = append(parts, "body "+truncateStr(body, 120))
+	}
+	if contentType != "" {
+		parts = append(parts, "type "+contentType)
+	}
+	if matchedPath != "" {
+		parts = append(parts, "path "+matchedPath)
+	}
+	if cache != "" {
+		parts = append(parts, "cache "+cache)
+	}
+	if server != "" {
+		parts = append(parts, "server "+server)
+	}
+	return strings.Join(parts, " · "), true
+}
+
+func compactBuildLogPreview(output string) (string, bool) {
+	lines := normalizedNonEmptyLines(output)
+	if len(lines) == 0 {
+		return "", false
+	}
+
+	buildLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Building:") {
+			buildLines = append(buildLines, strings.TrimSpace(strings.TrimPrefix(line, "Building:")))
+		}
+	}
+	if len(buildLines) == 0 {
+		return "", false
+	}
+
+	var status string
+	var runtime string
+	var framework string
+	var command string
+	var warning string
+	var current string
+
+	for _, line := range buildLines {
+		lower := strings.ToLower(line)
+		switch {
+		case strings.Contains(lower, "installing dependencies"):
+			status = "installing dependencies"
+		case strings.Contains(lower, "checked ") && strings.Contains(lower, "packages"):
+			status = line
+		case strings.Contains(lower, "detected next.js version"):
+			framework = strings.TrimSpace(strings.TrimPrefix(line, "Detected "))
+		case strings.HasPrefix(lower, "bun install"):
+			runtime = line
+		case strings.Contains(lower, "running "):
+			command = strings.Trim(line[strings.Index(lower, "running ")+len("running "):], " \\\" ")
+		case strings.HasPrefix(line, "$"):
+			command = strings.TrimSpace(strings.TrimPrefix(line, "$"))
+		case strings.HasPrefix(line, "⚠") || strings.Contains(lower, "warning") || strings.Contains(lower, "deprecated"):
+			warning = strings.TrimSpace(line)
+		case strings.Contains(lower, "creating an optimized production build"):
+			current = "creating optimized production build"
+		case strings.Contains(lower, "compiled successfully") || strings.Contains(lower, "build completed") || strings.Contains(lower, "success"):
+			current = "build completed"
+		}
+	}
+
+	if current == "" {
+		current = status
+	}
+	if current == "" {
+		current = buildLines[len(buildLines)-1]
+	}
+
+	parts := []string{"🏗️ Build", "status " + current}
+	if framework != "" {
+		parts = append(parts, framework)
+	}
+	if runtime != "" {
+		parts = append(parts, runtime)
+	}
+	if command != "" {
+		parts = append(parts, "cmd "+command)
+	}
+	if warning != "" {
+		parts = append(parts, "warning "+truncateStr(warning, 100))
+	}
+	return strings.Join(parts, " · "), true
+}
+
+func normalizedNonEmptyLines(s string) []string {
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	for scanner.Scan() {
+		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "▶"))
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func firstNonEmptyLine(s string) string {
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	for scanner.Scan() {
+		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "▶"))
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func singleLine(s string) string {
+	fields := strings.Fields(s)
+	return strings.Join(fields, " ")
 }
 
 func handleSessionCommand(args []string, supervisor *agent.Supervisor) {

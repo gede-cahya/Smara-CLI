@@ -59,6 +59,8 @@ func TestModePlan_SystemPromptStructure(t *testing.T) {
 	assert.Contains(t, info.SystemPrompt, "Risks / rollback")
 	assert.Contains(t, info.SystemPrompt, "planning-agile-minsky")
 	assert.Contains(t, info.SystemPrompt, "Lanjutkan eksekusi? (ya/tidak)")
+	assert.Contains(t, info.SystemPrompt, "SMARA_PLAN_QUEST")
+	assert.Contains(t, info.SystemPrompt, "allow_custom")
 }
 
 func TestValidMode(t *testing.T) {

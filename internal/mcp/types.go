@@ -8,7 +8,7 @@ import "encoding/json"
 // Request represents a JSON-RPC 2.0 request.
 type Request struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
+	ID      int         `json:"id,omitempty"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params,omitempty"`
 }
@@ -72,10 +72,13 @@ type ToolCallResult struct {
 
 // InitializeParams are sent during MCP handshake.
 type InitializeParams struct {
-	ProtocolVersion string     `json:"protocolVersion"`
-	ClientInfo      ClientInfo `json:"clientInfo"`
-	Capabilities    struct{}   `json:"capabilities"`
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    ClientCapabilities `json:"capabilities"`
+	ClientInfo      ClientInfo         `json:"clientInfo"`
 }
+
+// ClientCapabilities describes optional capabilities supported by this MCP client.
+type ClientCapabilities struct{}
 
 // ClientInfo identifies this MCP client.
 type ClientInfo struct {

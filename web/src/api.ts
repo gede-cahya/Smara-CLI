@@ -87,6 +87,15 @@ export interface ChatMessage {
   logs?: string[]
   status?: 'running' | 'done' | 'error'
   collapsed?: boolean
+  requestPrompt?: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  duration?: string
+  durationMs?: number
+  estimatedCostUSD?: number
+  provider?: string
+  model?: string
   attachments?: Array<{ path: string; size: number; kind: 'image' | 'file'; name?: string; preview?: string }>
 }
 

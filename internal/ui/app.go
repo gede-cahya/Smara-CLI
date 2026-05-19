@@ -161,6 +161,11 @@ type AppModel struct {
 	confirmResponseCh    chan bool
 	confirmSelection     int // 0: Ya, 1: Tidak
 
+	// Plan quest state
+	awaitingPlanQuest  bool
+	planQuest          *PlanQuest
+	planQuestSelection int
+
 	// Interactive TUI state
 	spinner    spinner.Model
 	statusText string
@@ -599,22 +604,62 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				m.awaitingConfirmation = false
-				m.confirmResponseCh <- (m.confirmSelection == 0)
+				if m.confirmResponseCh != nil {
+					m.confirmResponseCh <- (m.confirmSelection == 0)
+				}
 
 				answer := "ya"
 				if m.confirmSelection == 1 {
 					answer = "tidak"
 				}
 				m.addMessage("User", answer)
-				return m, nil
+				return m, m.submitPrompt(answer)
 			case "esc", "ctrl+c":
 				m.awaitingConfirmation = false
-				m.confirmResponseCh <- false
+				if m.confirmResponseCh != nil {
+					m.confirmResponseCh <- false
+				}
 				m.addMessage("User", "tidak")
-				return m, nil
+				return m, m.submitPrompt("tidak")
 			}
 			// Block other keys while confirming
 			return m, nil
+		}
+
+		if m.awaitingPlanQuest {
+			switch msg.String() {
+			case "up", "left":
+				if m.planQuest != nil && len(m.planQuest.Options) > 0 {
+					m.planQuestSelection = (m.planQuestSelection - 1 + len(m.planQuest.Options)) % len(m.planQuest.Options)
+				}
+				return m, nil
+			case "down", "right", "tab":
+				if m.planQuest != nil && len(m.planQuest.Options) > 0 {
+					m.planQuestSelection = (m.planQuestSelection + 1) % len(m.planQuest.Options)
+				}
+				return m, nil
+			case "enter":
+				custom := strings.TrimSpace(m.textarea.Value())
+				answer := ""
+				if custom != "" {
+					answer = "Jawaban custom: " + custom
+				} else if m.planQuest != nil && len(m.planQuest.Options) > 0 {
+					answer = "Saya pilih: " + m.planQuest.Options[m.planQuestSelection]
+				}
+				if answer == "" {
+					return m, nil
+				}
+				m.awaitingPlanQuest = false
+				m.planQuest = nil
+				m.textarea.Reset()
+				m.addMessage("User", answer)
+				return m, m.submitPrompt(answer)
+			case "esc", "ctrl+c":
+				m.awaitingPlanQuest = false
+				m.planQuest = nil
+				m.textarea.Reset()
+				return m, nil
+			}
 		}
 
 		// Selection mode: copy from chat history
@@ -1088,12 +1133,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.addMessage("System", fmt.Sprintf("Error: %v", msg.Err))
 			}
-		} else {
+		} else if msg.Result != nil {
 			_, modelName := m.supervisor.GetModelInfo()
 
-			// Intercept the "Lanjutkan eksekusi? (ya/tidak)" message
 			if strings.Contains(msg.Result.Response, "Lanjutkan eksekusi? (ya/tidak)") {
-				// Extract everything before the prompt, if any
 				cleanResp := strings.ReplaceAll(msg.Result.Response, "Lanjutkan eksekusi? (ya/tidak)", "")
 				cleanResp = strings.TrimSpace(cleanResp)
 
@@ -1104,16 +1147,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.awaitingConfirmation = true
-				m.confirmSelection = 0 // Default "Ya"
+				m.confirmSelection = 0
+			} else if cleanResp, quest := ParsePlanQuest(msg.Result.Response); quest != nil && m.supervisor.GetMode() == agent.ModePlan {
+				if cleanResp != "" || msg.Result.Thinking != "" {
+					m.addMessageFull("Agent", cleanResp, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration, modelName)
+				}
+				m.awaitingPlanQuest = true
+				m.planQuest = quest
+				m.planQuestSelection = 0
+				m.textarea.SetValue("")
 			} else {
 				m.addMessageFull("Agent", msg.Result.Response, msg.Result.Thinking, msg.Result.Thoughts, msg.Result.ToolsExecuted, msg.Result.InputTokens, msg.Result.OutputTokens, msg.Result.Duration, modelName)
 			}
 		}
-
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.updateLayout()
 
 	case LogMsg:
 		m.messages = append(m.messages, msg.Message)
@@ -1645,12 +1691,27 @@ func (m AppModel) View() string {
 			confirmPrompt,
 			yaStyle.Render("[ Ya ]"),
 			tidakStyle.Render("[ Tidak ]"),
-			dimStyle.Render("(Gunakan panah Kiri/Kanan dan tekan Enter)"),
+			dimStyle.Render("(Gunakan panah Kiri/Kanan dan tekan Enter — seperti button di terminal)"),
+		)
+	} else if m.awaitingPlanQuest && m.planQuest != nil {
+		var opts []string
+		for i, opt := range m.planQuest.Options {
+			style := lipgloss.NewStyle().Padding(0, 1).Foreground(lipgloss.Color("#a1a1aa"))
+			if i == m.planQuestSelection {
+				style = style.Background(lipgloss.Color("#67e8f9")).Foreground(lipgloss.Color("#08111f")).Bold(true)
+			}
+			opts = append(opts, style.Render(fmt.Sprintf("[ %s ]", opt)))
+		}
+		help := "(Panah pilih opsi, Enter kirim. Atau ketik jawaban custom di textarea lalu Enter)"
+		inputArea = fmt.Sprintf("\n  %s\n  %s\n  %s\n%s",
+			warnStyle.Render("➤ "+m.planQuest.Title),
+			strings.Join(opts, "  "),
+			dimStyle.Render(help),
+			m.textarea.View(),
 		)
 	} else {
 		inputArea = m.textarea.View()
 	}
-
 	// ─── Status Bar ────────────────────────────────────────────
 	totalTokens := 0
 	inputTokens := 0

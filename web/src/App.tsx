@@ -1,7 +1,7 @@
-import { useState, useEffect, lazy, Suspense, Component } from 'react'
+import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor } from 'lucide-react'
-import Chat from './pages/Chat'
+import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
 import Config from './pages/Config'
@@ -13,6 +13,8 @@ import VoiceAssistant from './pages/VoiceAssistant'
 import AvatarAssistant from './pages/AvatarAssistant'
 import RemoteDesktop from './pages/RemoteDesktop'
 class PageErrorBoundary extends Component<{ children: ReactNode; label: string }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null }
+
   static getDerivedStateFromError(error: Error) {
     return { error }
   }
@@ -68,6 +70,7 @@ const TAB_KEY = 'smara_active_tab'
 const navItems = [
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'workflow', label: 'Workflow', icon: GitBranch },
+  { id: 'custom-workflow', label: 'Custom Workflow', icon: GitBranch },
   { id: 'magic-pointer', label: 'Magic Pointer', icon: MousePointer2 },
   { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'avatar', label: 'Avatar', icon: Bot },
@@ -91,6 +94,7 @@ function loadTab(): string {
 
 export default function App() {
   const [active, setActiveRaw] = useState(loadTab)
+  const chatRef = useRef<ChatHandle>(null)
 
   const setActive = (id: string) => {
     setActiveRaw(id)
@@ -130,7 +134,10 @@ export default function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setActive(item.id)}
+                onClick={() => {
+                  setActive(item.id)
+                  if (item.id === 'chat') chatRef.current?.openSessions()
+                }}
                 className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm transition-all border ${
                   isActive
                     ? 'bg-gradient-to-r from-cyan-500/20 via-smara-500/20 to-fuchsia-500/20 border-cyan-300/25 text-white shadow-lg shadow-cyan-950/30'
@@ -139,6 +146,11 @@ export default function App() {
               >
                 <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-200' : ''}`} />
                 <span className="truncate">{item.label}</span>
+                {item.id === 'chat' && (
+                  <span className="ml-auto rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200">
+                    Sesi ▼
+                  </span>
+                )}
               </button>
             )
           })}
@@ -152,7 +164,7 @@ export default function App() {
 
       <main className="relative z-10 flex-1 overflow-hidden p-4">
         <div className="h-full overflow-hidden rounded-[2rem] border border-white/10 bg-black/30 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat /></PageErrorBoundary></div>
+          <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat ref={chatRef} /></PageErrorBoundary></div>
           <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
           <div className={active === 'magic-pointer' ? 'h-full' : 'hidden'}><MagicPointer /></div>
           <div className={active === 'voice' ? 'h-full' : 'hidden'}><VoiceAssistant /></div>

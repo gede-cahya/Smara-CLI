@@ -47,7 +47,7 @@ type Event struct {
 }
 
 func DefaultConfig() Config {
-	return Config{Enabled: true, Model: "smara-cyber-neko-placeholder", Style: "anime-3d-cyber-companion", State: StateIdle, Expression: "soft-smile", SpeechBubble: "Halo, saya Smara. Siap membantu.", LipSync: true, Gesture: "idle-float", VoiceReactive: true, Intensity: 0.35}
+	return Config{Enabled: true, Model: "/api/avatar/model", Style: "custom-vrm-smara-avatar", State: StateIdle, Expression: "soft-smile", SpeechBubble: "Halo, saya Smara. Siap membantu.", LipSync: true, Gesture: "idle-float", VoiceReactive: true, Intensity: 0.35}
 }
 
 func ValidState(s State) bool {

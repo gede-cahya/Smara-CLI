@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/gede-cahya/Smara-CLI/internal/avatar"
@@ -12,6 +14,8 @@ var avatarState = struct {
 	sync.RWMutex
 	cfg avatar.Config
 }{cfg: avatar.DefaultConfig()}
+
+const smaraAvatarModelPath = "/home/cahya/.local/share/Steam/steamapps/common/VRoid Studio/smaraAva.vrm"
 
 func (s *Server) handleAvatarState(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -54,4 +58,20 @@ func (s *Server) handleAvatarEvent(w http.ResponseWriter, r *http.Request) {
 	avatarState.cfg = cfg
 	avatarState.Unlock()
 	jsonResponse(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleAvatarModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	info, err := os.Stat(smaraAvatarModelPath)
+	if err != nil || info.IsDir() {
+		errorResponse(w, http.StatusNotFound, "avatar model not found")
+		return
+	}
+	w.Header().Set("Content-Type", "model/gltf-binary")
+	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(smaraAvatarModelPath)+`"`)
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeFile(w, r, smaraAvatarModelPath)
 }
