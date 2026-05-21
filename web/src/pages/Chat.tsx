@@ -414,6 +414,65 @@ const MODES: Array<{ id: string; label: string; emoji: string; icon: typeof Mess
 const SESSION_META_KEY = 'smara_chat_sessions'
 const CURRENT_SESSION_KEY = 'smara_current_session'
 
+
+interface PlanQuest {
+  title: string
+  options: string[]
+  allowCustom: boolean
+}
+
+function parsePlanQuest(content: string): { cleanContent: string; quest: PlanQuest | null } {
+  const startToken = '[[SMARA_PLAN_QUEST]]'
+  const endToken = '[[/SMARA_PLAN_QUEST]]'
+  const start = content.indexOf(startToken)
+  if (start < 0) return { cleanContent: content, quest: null }
+  const afterStart = start + startToken.length
+  const end = content.indexOf(endToken, afterStart)
+  const rawBlock = end >= 0 ? content.slice(afterStart, end) : content.slice(afterStart)
+  const blockWithNewlines = rawBlock
+    .replace(/\s+(title:)/i, '\n$1')
+    .replace(/\s+(options:)/i, '\n$1')
+    .replace(/\s+(allow_custom:)/i, '\n$1')
+    .replace(/\s+(-\s+)/g, '\n$1')
+
+  const lines = blockWithNewlines.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  let title = 'Pilih salah satu opsi'
+  const options: string[] = []
+  let allowCustom = false
+  let inOptions = false
+
+  for (const line of lines) {
+    const titleMatch = line.match(/^title\s*:\s*(.+)$/i)
+    if (titleMatch) {
+      title = titleMatch[1].trim()
+      inOptions = false
+      continue
+    }
+    if (/^options\s*:/i.test(line)) {
+      inOptions = true
+      const inline = line.replace(/^options\s*:\s*/i, '').trim()
+      if (inline) {
+        inline.split(/\s+-\s+/).map(x => x.replace(/^-\s*/, '').trim()).filter(Boolean).forEach(x => options.push(x))
+      }
+      continue
+    }
+    const allowMatch = line.match(/^allow_custom\s*:\s*(true|false|yes|no|1|0)$/i)
+    if (allowMatch) {
+      allowCustom = /^(true|yes|1)$/i.test(allowMatch[1])
+      inOptions = false
+      continue
+    }
+    if (inOptions) {
+      const opt = line.replace(/^-\s*/, '').trim()
+      if (opt && !/^[a-z_]+\s*:/i.test(opt)) options.push(opt)
+    }
+  }
+
+  const rawFull = end >= 0 ? content.slice(start, end + endToken.length) : content.slice(start)
+  const cleanContent = content.replace(rawFull, '').replace(/\n{3,}/g, '\n\n').trim()
+  return { cleanContent, quest: options.length > 0 || title ? { title, options, allowCustom } : null }
+}
+
 interface ChatSession {
   id: string
   name: string
@@ -423,8 +482,9 @@ interface ChatSession {
   status?: WebSessionStatus
   archived?: boolean
   error?: string
+  totalHistory?: number
+  historyLimit?: number
 }
-
 function historyToMessages(history: WebSessionItem['history']): ChatMessage[] {
   return (history || []).map(h => ({
     role: h.role === 'user' ? 'user' : h.role === 'error' ? 'error' : 'assistant',
@@ -443,6 +503,18 @@ function webToChatSession(s: WebSessionItem): ChatSession {
     status: s.status,
     archived: s.archived,
     error: s.error,
+    totalHistory: s.total_history ?? s.history?.length ?? 0,
+    historyLimit: s.history_limit,
+  }
+}
+
+function mergeSessionPreview(prev: ChatSession | undefined, incoming: ChatSession): ChatSession {
+  const keepMessages = (prev?.messages?.length || 0) > incoming.messages.length
+  return {
+    ...incoming,
+    messages: keepMessages ? prev!.messages : incoming.messages,
+    totalHistory: incoming.totalHistory ?? prev?.totalHistory,
+    historyLimit: incoming.historyLimit ?? prev?.historyLimit,
   }
 }
 
@@ -475,11 +547,12 @@ const MAX_LOG_LINES = 50
 // Runtime caps keep the live React tree from growing forever during long
 // terminal/tool streams. Persistence caps alone are not enough because the
 // lag happens before data is written to localStorage.
-const MAX_RUNTIME_MESSAGES = 120
-const MAX_RUNTIME_OUTPUT_CHARS = 50_000
-const MAX_RUNTIME_LOG_LINES = 300
-// Hard ceiling on a single serialized session. If a session would exceed
-// this, we keep only the most recent messages until it fits.
+const MAX_RUNTIME_MESSAGES = 60
+const SESSION_LIST_HISTORY_LIMIT = 1
+const SESSION_VIEW_HISTORY_LIMIT = 60
+const MAX_RUNTIME_OUTPUT_CHARS = 20_000
+const MAX_RUNTIME_LOG_LINES = 120
+
 const MAX_SESSION_BYTES = 800 * 1024
 
 // slimMessage strips fields that don't need to survive a refresh.
@@ -511,41 +584,6 @@ export function slimMessage(m: ChatMessage): ChatMessage {
 function capRuntimeMessages(messages: ChatMessage[]): ChatMessage[] {
   if (messages.length <= MAX_RUNTIME_MESSAGES) return messages
   return messages.slice(-MAX_RUNTIME_MESSAGES)
-}
-
-function hasResponseStats(m: ChatMessage): boolean {
-  return m.inputTokens !== undefined ||
-    m.outputTokens !== undefined ||
-    m.totalTokens !== undefined ||
-    m.duration !== undefined ||
-    m.durationMs !== undefined ||
-    m.estimatedCostUSD !== undefined ||
-    m.provider !== undefined ||
-    m.model !== undefined ||
-    m.requestPrompt !== undefined
-}
-
-function preserveResponseStats(fresh: ChatMessage[], previous: ChatMessage[]): ChatMessage[] {
-  const used = new Set<number>()
-  return fresh.map(msg => {
-    if (msg.role === 'user' || msg.role === 'error' || hasResponseStats(msg)) return msg
-    const idx = previous.findIndex((prev, i) => !used.has(i) && prev.role === msg.role && prev.content === msg.content && hasResponseStats(prev))
-    if (idx < 0) return msg
-    used.add(idx)
-    const prev = previous[idx]
-    return {
-      ...msg,
-      requestPrompt: prev.requestPrompt,
-      inputTokens: prev.inputTokens,
-      outputTokens: prev.outputTokens,
-      totalTokens: prev.totalTokens,
-      duration: prev.duration,
-      durationMs: prev.durationMs,
-      estimatedCostUSD: prev.estimatedCostUSD,
-      provider: prev.provider,
-      model: prev.model,
-    }
-  })
 }
 
 function capRuntimeOutput(output?: string): string | undefined {
@@ -688,11 +726,14 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const [uploading, setUploading] = useState(false)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [activePlanQuest, setActivePlanQuest] = useState<PlanQuest | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragCounterRef = useRef(0)
   const wsRef = useRef<WebSocket | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
+  const shouldAutoScrollRef = useRef(true)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const spinnerTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const sessionIdRef = useRef(sessionId)
@@ -702,13 +743,9 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     openSessions: () => setShowSessions(true),
   }), [])
 
-  useImperativeHandle(ref, () => ({
-    openSessions: () => setShowSessions(true),
-  }), [])
-
   const refreshBackendSessions = useCallback(async () => {
     try {
-      const res = await fetchWebSessions(true)
+      const res = await fetchWebSessions(true, SESSION_LIST_HISTORY_LIMIT)
       const backend = res.sessions.map(webToChatSession)
       if (backend.length === 0) {
         const created = webToChatSession(await createWebSession(undefined, mode))
@@ -719,31 +756,38 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
         setItemSafe(CURRENT_SESSION_KEY, created.id)
         return
       }
-      setSessions(backend)
+      setSessions(prev => backend.map(incoming => mergeSessionPreview(prev.find(p => p.id === incoming.id), incoming)))
       const currentBackend = backend.find(s => s.id === sessionIdRef.current)
       if (currentBackend) {
-        setCurrentRaw(currentBackend)
-        setMessages(prev => currentBackend.status === 'running'
-          ? prev
-          : capRuntimeMessages(preserveResponseStats(currentBackend.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })), prev)))
+        setCurrentRaw(prev => mergeSessionPreview(prev.id === currentBackend.id ? prev : undefined, currentBackend))
+        // Jangan replace message list aktif dari polling session-list.
+        // List endpoint sekarang hanya membawa preview supaya dropdown ringan.
       } else {
         const next = backend.find(s => !s.archived) || backend[0]
         setCurrentRaw(next)
         setSessionId(next.id)
         setItemSafe(CURRENT_SESSION_KEY, next.id)
-        setMessages(capRuntimeMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+        try {
+          const fresh = webToChatSession(await getWebSession(next.id, SESSION_VIEW_HISTORY_LIMIT))
+          setCurrentRaw(fresh)
+          setMessages(capRuntimeMessages(fresh.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+        } catch {
+          setMessages(capRuntimeMessages(next.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+        }
       }
     } catch (err) {
       console.warn('[smara] backend sessions unavailable, fallback localStorage:', err)
     }
   }, [mode])
+
   const setCurrent = async (s: ChatSession) => {
     setCurrentRaw(s)
     setSessionId(s.id)
     setItemSafe(CURRENT_SESSION_KEY, s.id)
     setActivePhases([])
+    setActivePlanQuest(null)
     try {
-      const fresh = webToChatSession(await getWebSession(s.id))
+      const fresh = webToChatSession(await getWebSession(s.id, SESSION_VIEW_HISTORY_LIMIT))
       setCurrentRaw(fresh)
       setMessages(capRuntimeMessages(fresh.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
     } catch {
@@ -752,15 +796,26 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'session', payload: s.id, session_id: s.id }))
   }
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, thinking])
+  const isNearBottom = useCallback(() => {
+    const el = messagesScrollRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }, [])
+
+  const markAutoScrollIfNearBottom = useCallback(() => {
+    shouldAutoScrollRef.current = isNearBottom()
+  }, [isNearBottom])
 
   useEffect(() => {
     refreshBackendSessions()
     const timer = window.setInterval(refreshBackendSessions, 5000)
     return () => window.clearInterval(timer)
   }, [refreshBackendSessions])
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, thinking, activePhases, activePlanQuest])
 
   const newSession = async () => {
     try {
@@ -769,7 +824,9 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       setCurrentRaw(s)
       setSessionId(s.id)
       setItemSafe(CURRENT_SESSION_KEY, s.id)
+      shouldAutoScrollRef.current = true
       setMessages(capRuntimeMessages(s.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+      setActivePlanQuest(null)
       if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'session', payload: s.id, session_id: s.id }))
     } catch (err) {
       showToast(`Gagal membuat sesi: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -861,29 +918,37 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             spinnerTimer.current = null
           }
           break
-        case 'chat':
+        case 'chat': {
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
-          setMessages(prev => capRuntimeMessages([...prev, {
-            role: 'assistant',
-            content: msg.payload,
-            timestamp: new Date(),
-            requestPrompt: msg.request_prompt,
-            provider: msg.provider,
-            model: msg.model,
-            inputTokens: msg.stats?.input_tokens,
-            outputTokens: msg.stats?.output_tokens,
-            totalTokens: msg.stats?.total_tokens,
-            duration: msg.stats?.duration,
-            durationMs: msg.stats?.duration_ms,
-            estimatedCostUSD: msg.stats?.estimated_cost_usd ?? msg.stats?.cost,
-          }]))
+          const parsed = parsePlanQuest(String(msg.payload || ''))
+          setActivePlanQuest(parsed.quest)
+          const content = parsed.cleanContent || (parsed.quest ? '' : msg.payload)
+          if (content.trim()) {
+            markAutoScrollIfNearBottom()
+            setMessages(prev => capRuntimeMessages([...prev, {
+              role: 'assistant',
+              content,
+              timestamp: new Date(),
+              requestPrompt: msg.request_prompt,
+              provider: msg.provider,
+              model: msg.model,
+              inputTokens: msg.stats?.input_tokens,
+              outputTokens: msg.stats?.output_tokens,
+              totalTokens: msg.stats?.total_tokens,
+              duration: msg.stats?.duration,
+              durationMs: msg.stats?.duration_ms,
+              estimatedCostUSD: msg.stats?.estimated_cost_usd ?? msg.stats?.cost,
+            }]))
+          }
           break
+        }
         case 'error':
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
+          markAutoScrollIfNearBottom()
           setMessages(prev => capRuntimeMessages([...prev, { role: 'error', content: msg.payload, timestamp: new Date() }]))
           break
         case 'phase':
@@ -899,6 +964,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           })
           break
         case 'tool_call':
+          markAutoScrollIfNearBottom()
           setMessages(prev => capRuntimeMessages([...prev, {
             role: 'tool_call',
             content: msg.tool || 'tool',
@@ -912,8 +978,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           }]))
           break
         case 'tool_result':
+          markAutoScrollIfNearBottom()
           setMessages(prev => {
-            // Attach result to the most recent running tool_call card.
             const next = [...prev]
             for (let i = next.length - 1; i >= 0; i--) {
               if (next[i].role === 'tool_call' && next[i].status === 'running') {
@@ -933,6 +999,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           })
           break
         case 'log':
+          markAutoScrollIfNearBottom()
           setMessages(prev => {
             const next = [...prev]
             // Terminal logs from run_command stream into the most recent
@@ -995,31 +1062,41 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       .map(a => `[${a.kind}:${a.path}]`)
       .join(' ')
     const messageText = [refs, text].filter(Boolean).join(' ')
-
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setMessages(prev => capRuntimeMessages([...prev, {
-        role: 'user',
-        content: messageText,
-        timestamp: new Date(),
-        attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
-      }]))
-      setInput('')
-      setAttachments([])
-      connectWs()
-      return
-    }
-
-    setMessages(prev => capRuntimeMessages([...prev, {
+    const userMessage: ChatMessage = {
       role: 'user',
       content: messageText,
       timestamp: new Date(),
       attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
-    }]))
+    }
+
+    shouldAutoScrollRef.current = true
+    setMessages(prev => capRuntimeMessages([...prev, userMessage]))
     setInput('')
     setAttachments([])
+    setActivePlanQuest(null)
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWs()
+      return
+    }
+
     wsRef.current.send(JSON.stringify({ type: 'chat', payload: messageText, mode, session_id: sessionIdRef.current }))
     setThinking(true)
   }, [input, attachments, connectWs, mode])
+
+  const sendPlanQuestAnswer = useCallback((answer: string) => {
+    const text = `Saya pilih: ${answer}`
+    setInput('')
+    setActivePlanQuest(null)
+    shouldAutoScrollRef.current = true
+    setMessages(prev => capRuntimeMessages([...prev, { role: 'user', content: text, timestamp: new Date() }]))
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWs()
+      return
+    }
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode, session_id: sessionIdRef.current }))
+    setThinking(true)
+  }, [connectWs, mode])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1243,7 +1320,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="hidden sm:flex flex-col items-end text-[10px] text-gray-600">
-                        <span>{s.messages.length} pesan</span>
+                        <span>{s.totalHistory ?? s.messages.length} pesan</span>
                         <span className={`inline-flex rounded-full border px-1.5 py-0.5 ${statusBadgeClass(s.status)}`}>{s.status || 'idle'}</span>
                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(s.updatedAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
@@ -1279,7 +1356,16 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-5 md:px-7 md:py-6 space-y-4 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]">
+      <div
+        ref={messagesScrollRef}
+        onScroll={markAutoScrollIfNearBottom}
+        className="flex-1 overflow-y-auto px-4 py-5 md:px-7 md:py-6 space-y-4 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]"
+      >
+        {(current.totalHistory ?? messages.length) > messages.length && (
+          <div className="mx-auto max-w-3xl rounded-2xl border border-cyan-400/20 bg-cyan-950/20 px-4 py-3 text-center text-xs text-cyan-100 shadow-lg shadow-black/20">
+            Menampilkan {messages.length} pesan terakhir dari {current.totalHistory} pesan. Riwayat lama disimpan di backend tapi tidak dirender agar sesi tetap ringan.
+          </div>
+        )}
         {messages.map((msg, i) => {
           if (msg.role === 'tool_call') {
             return (
@@ -1486,6 +1572,29 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             )
           })}
         </div>
+        {activePlanQuest && (
+          <div className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-950/20 p-3 shadow-lg shadow-fuchsia-950/20">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-fuchsia-200">
+              <ClipboardList className="h-3.5 w-3.5" /> Open question
+            </div>
+            <div className="mb-3 text-sm font-medium text-gray-100">{activePlanQuest.title}</div>
+            <div className="flex flex-wrap gap-2">
+              {activePlanQuest.options.map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => sendPlanQuestAnswer(opt)}
+                  disabled={thinking}
+                  className="rounded-xl border border-fuchsia-300/25 bg-white/[0.06] px-3 py-2 text-xs text-gray-100 transition-colors hover:border-fuchsia-300/60 hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {opt}
+                </button>
+              ))}
+              {activePlanQuest.allowCustom && (
+                <span className="rounded-xl border border-gray-700/70 bg-black/20 px-3 py-2 text-xs text-gray-400">Custom: ketik jawaban di input</span>
+              )}
+            </div>
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {attachments.map((att, i) => {

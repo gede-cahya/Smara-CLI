@@ -27,9 +27,11 @@ export async function fetchJSON<T = unknown>(path: string, options?: RequestInit
     } catch { /* ignore */ }
     throw new APIError(message, res.status, raw)
   }
-  return res.json() as Promise<T>
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  if (!text) return undefined as T
+  return JSON.parse(text) as T
 }
-
 export interface Status {
   status: string
   mode: string
@@ -116,6 +118,8 @@ export interface WebSessionItem {
   status: WebSessionStatus
   archived: boolean
   history: WebSessionHistoryItem[]
+  total_history?: number
+  history_limit?: number
   created_at: string
   updated_at: string
   error?: string
@@ -125,8 +129,12 @@ export interface WebSessionListResponse {
   sessions: WebSessionItem[]
 }
 
-export function fetchWebSessions(includeArchived = false): Promise<WebSessionListResponse> {
-  return fetchJSON<WebSessionListResponse>(`/api/web-sessions${includeArchived ? '?archived=1' : ''}`)
+export function fetchWebSessions(includeArchived = false, limit?: number): Promise<WebSessionListResponse> {
+  const params = new URLSearchParams()
+  if (includeArchived) params.set('archived', '1')
+  if (limit !== undefined) params.set('limit', String(limit))
+  const query = params.toString()
+  return fetchJSON<WebSessionListResponse>(`/api/web-sessions${query ? `?${query}` : ''}`)
 }
 
 export function createWebSession(name?: string, mode?: string): Promise<WebSessionItem> {
@@ -136,16 +144,19 @@ export function createWebSession(name?: string, mode?: string): Promise<WebSessi
   })
 }
 
-export function getWebSession(id: string): Promise<WebSessionItem> {
-  return fetchJSON<WebSessionItem>(`/api/web-sessions/${encodeURIComponent(id)}`)
+export function getWebSession(id: string, limit?: number): Promise<WebSessionItem> {
+  const params = new URLSearchParams()
+  if (limit !== undefined) params.set('limit', String(limit))
+  const query = params.toString()
+  return fetchJSON<WebSessionItem>(`/api/web-sessions/${encodeURIComponent(id)}${query ? `?${query}` : ''}`)
 }
-
 export function renameWebSession(id: string, name: string): Promise<{ status: string }> {
   return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}/rename`, {
     method: 'POST',
     body: JSON.stringify({ name }),
   })
 }
+
 
 export function deleteWebSession(id: string): Promise<{ status: string }> {
   return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })

@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -22,7 +23,8 @@ func (s *Server) handleWebSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		includeArchived := r.URL.Query().Get("archived") == "1" || r.URL.Query().Get("archived") == "true"
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"sessions": s.WebSessions.List(includeArchived)})
+		limit := parseSessionHistoryLimit(r)
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"sessions": s.WebSessions.ListCompact(includeArchived, limit)})
 	case http.MethodPost:
 		var req sessionCreateRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
@@ -45,7 +47,7 @@ func (s *Server) handleWebSessionByID(w http.ResponseWriter, r *http.Request) {
 	if action == "" {
 		switch r.Method {
 		case http.MethodGet:
-			if sess, ok := s.WebSessions.Get(id); ok {
+			if sess, ok := s.WebSessions.GetCompact(id, parseSessionHistoryLimit(r)); ok {
 				jsonResponse(w, http.StatusOK, sess)
 				return
 			}
@@ -98,6 +100,15 @@ func (s *Server) handleWebSessionByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		errorResponse(w, http.StatusNotFound, "unknown session action")
 	}
+}
+
+func parseSessionHistoryLimit(r *http.Request) int {
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if n, err := strconv.Atoi(rawLimit); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func splitSessionPath(p string) (id, action string) {

@@ -17,7 +17,7 @@ func (s *Server) asSQLiteStore() *memory.SQLiteStore {
 	return nil
 }
 
-// GET /api/memories/graph?limit=N&workspace=NAME
+// GET /api/memories/graph?limit=N&edge_limit=N&mode=overview|neighborhood|search
 // Returns nodes + edges for the memory graph.
 func (s *Server) handleMemoryGraph(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -29,9 +29,35 @@ func (s *Server) handleMemoryGraph(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusNotImplemented, "memory store tidak mendukung graph")
 		return
 	}
-	limit := 0
-	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+	limit := 300
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v >= 0 {
 		limit = v
+	}
+	edgeLimit := 1000
+	if v, err := strconv.Atoi(r.URL.Query().Get("edge_limit")); err == nil && v >= 0 {
+		edgeLimit = v
+	}
+	minWeight := 0.0
+	if v, err := strconv.ParseFloat(r.URL.Query().Get("min_weight"), 64); err == nil && v >= 0 {
+		minWeight = v
+	}
+	focusID := int64(0)
+	if v, err := strconv.ParseInt(r.URL.Query().Get("focus_id"), 10, 64); err == nil && v > 0 {
+		focusID = v
+	}
+	depth := 1
+	if v, err := strconv.Atoi(r.URL.Query().Get("depth")); err == nil && v > 0 {
+		depth = v
+	}
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = "overview"
+	}
+	includeAuto := r.URL.Query().Get("auto") != "0"
+	includeManual := r.URL.Query().Get("manual") != "0"
+	searchQuery := r.URL.Query().Get("q")
+	if searchQuery != "" && mode == "overview" {
+		mode = "search"
 	}
 	wsID := s.resolveWorkspaceID()
 	if name := r.URL.Query().Get("workspace"); name != "" {
@@ -40,7 +66,11 @@ func (s *Server) handleMemoryGraph(w http.ResponseWriter, r *http.Request) {
 			wsID = ws.ID
 		}
 	}
-	data, err := store.BuildGraph(wsID, limit)
+	data, err := store.BuildGraphWithOptions(wsID, memory.GraphBuildOptions{
+		Mode: mode, NodeLimit: limit, EdgeLimit: edgeLimit, MinWeight: minWeight,
+		FocusID: focusID, Depth: depth, SearchQuery: searchQuery,
+		IncludeAutoLinks: includeAuto, IncludeManualLinks: includeManual,
+	})
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return

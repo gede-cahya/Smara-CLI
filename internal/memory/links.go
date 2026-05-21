@@ -39,10 +39,38 @@ type GraphEdge struct {
 	Auto     bool    `json:"auto"`
 }
 
+// GraphMeta carries server-side slicing information for large graph UIs.
+type GraphMeta struct {
+	Mode           string  `json:"mode,omitempty"`
+	NodeLimit      int     `json:"node_limit,omitempty"`
+	EdgeLimit      int     `json:"edge_limit,omitempty"`
+	MinWeight      float64 `json:"min_weight,omitempty"`
+	FocusID        int64   `json:"focus_id,omitempty"`
+	Depth          int     `json:"depth,omitempty"`
+	TotalNodes     int     `json:"total_nodes,omitempty"`
+	TotalEdges     int     `json:"total_edges,omitempty"`
+	TruncatedNodes bool    `json:"truncated_nodes,omitempty"`
+	TruncatedEdges bool    `json:"truncated_edges,omitempty"`
+}
+
 // GraphData wraps nodes + edges for the memory graph.
 type GraphData struct {
 	Nodes []GraphNode `json:"nodes"`
 	Edges []GraphEdge `json:"edges"`
+	Meta  GraphMeta   `json:"meta,omitempty"`
+}
+
+// GraphBuildOptions controls server-side graph slicing for scalable rendering.
+type GraphBuildOptions struct {
+	Mode               string
+	NodeLimit          int
+	EdgeLimit          int
+	MinWeight          float64
+	FocusID            int64
+	Depth              int
+	SearchQuery        string
+	IncludeAutoLinks   bool
+	IncludeManualLinks bool
 }
 
 // EnsureLinksSchema creates the memory_links table if missing.
@@ -66,8 +94,8 @@ func EnsureLinksSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_memory_links_relation ON memory_links(relation)`,
 	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
+	for _, st := range stmts {
+		if _, err := db.Exec(st); err != nil {
 			return fmt.Errorf("ensure memory_links: %w", err)
 		}
 	}
@@ -314,19 +342,78 @@ func (s *SQLiteStore) AutoLink(opts AutoLinkOptions) (int, error) {
 // BuildGraph returns nodes and edges for visualization within a workspace.
 // limit caps the number of nodes returned (most recent first). 0 = no limit.
 func (s *SQLiteStore) BuildGraph(workspaceID int64, limit int) (*GraphData, error) {
+	return s.BuildGraphWithOptions(workspaceID, GraphBuildOptions{Mode: "overview", NodeLimit: limit, IncludeAutoLinks: true, IncludeManualLinks: true})
+}
+
+// BuildGraphWithOptions returns a server-side sliced graph for scalable UIs.
+func (s *SQLiteStore) BuildGraphWithOptions(workspaceID int64, opts GraphBuildOptions) (*GraphData, error) {
 	if err := EnsureLinksSchema(s.db); err != nil {
 		return nil, err
 	}
+	if opts.Mode == "" {
+		opts.Mode = "overview"
+	}
+	if !opts.IncludeAutoLinks && !opts.IncludeManualLinks {
+		opts.IncludeAutoLinks = true
+		opts.IncludeManualLinks = true
+	}
+	if opts.Depth <= 0 {
+		opts.Depth = 1
+	}
 
-	// Pull memories.
+	meta := GraphMeta{Mode: opts.Mode, NodeLimit: opts.NodeLimit, EdgeLimit: opts.EdgeLimit, MinWeight: opts.MinWeight, FocusID: opts.FocusID, Depth: opts.Depth}
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE (workspace_id = ? OR workspace_id IS NULL OR ? = 0)`, workspaceID, workspaceID).Scan(&meta.TotalNodes)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM memory_links WHERE weight >= ?`, opts.MinWeight).Scan(&meta.TotalEdges)
+
+	var ids map[int64]bool
+	if opts.Mode == "neighborhood" && opts.FocusID > 0 {
+		ids = map[int64]bool{opts.FocusID: true}
+		frontier := map[int64]bool{opts.FocusID: true}
+		for d := 0; d < opts.Depth; d++ {
+			next := map[int64]bool{}
+			for id := range frontier {
+				rows, err := s.db.Query(`SELECT source_id, target_id FROM memory_links WHERE (source_id=? OR target_id=?) AND weight >= ?`, id, id, opts.MinWeight)
+				if err != nil {
+					return nil, err
+				}
+				for rows.Next() {
+					var a, b int64
+					if err := rows.Scan(&a, &b); err != nil {
+						rows.Close()
+						return nil, err
+					}
+					if !ids[a] {
+						next[a] = true
+					}
+					if !ids[b] {
+						next[b] = true
+					}
+					ids[a] = true
+					ids[b] = true
+				}
+				rows.Close()
+			}
+			frontier = next
+			if opts.NodeLimit > 0 && len(ids) >= opts.NodeLimit {
+				break
+			}
+		}
+	}
+
 	q := `SELECT id, content, tags, source, category_id
 		  FROM memories
-		  WHERE (workspace_id = ? OR workspace_id IS NULL OR ? = 0)
-		  ORDER BY created_at DESC`
-	if limit > 0 {
-		q += fmt.Sprintf(" LIMIT %d", limit)
+		  WHERE (workspace_id = ? OR workspace_id IS NULL OR ? = 0)`
+	args := []interface{}{workspaceID, workspaceID}
+	if opts.SearchQuery != "" {
+		q += ` AND (lower(content) LIKE ? OR lower(tags) LIKE ? OR lower(source) LIKE ?)`
+		like := "%" + opts.SearchQuery + "%"
+		args = append(args, like, like, like)
 	}
-	rows, err := s.db.Query(q, workspaceID, workspaceID)
+	q += ` ORDER BY created_at DESC`
+	if opts.NodeLimit > 0 && ids == nil {
+		q += fmt.Sprintf(" LIMIT %d", opts.NodeLimit)
+	}
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -341,26 +428,31 @@ func (s *SQLiteStore) BuildGraph(workspaceID int64, limit int) (*GraphData, erro
 			rows.Close()
 			return nil, err
 		}
+		if ids != nil && !ids[n.ID] {
+			continue
+		}
 		n.Tags = parseTagsFromJSON(tagsJSON.String)
 		if catID.Valid {
 			v := catID.Int64
 			n.CategoryID = &v
 		}
-		// Build a short label from content.
 		n.Label = shortLabel(n.Content, 48)
 		idSet[n.ID] = true
 		nodes = append(nodes, n)
+		if ids != nil && opts.NodeLimit > 0 && len(nodes) >= opts.NodeLimit {
+			break
+		}
 	}
 	rows.Close()
-
-	if len(nodes) == 0 {
-		return &GraphData{Nodes: []GraphNode{}, Edges: []GraphEdge{}}, nil
+	if opts.NodeLimit > 0 && meta.TotalNodes > len(nodes) {
+		meta.TruncatedNodes = true
 	}
 
-	// Pull edges that touch our nodes only.
-	erows, err := s.db.Query(
-		`SELECT source_id, target_id, relation, weight, auto_linked FROM memory_links`,
-	)
+	if len(nodes) == 0 {
+		return &GraphData{Nodes: []GraphNode{}, Edges: []GraphEdge{}, Meta: meta}, nil
+	}
+
+	erows, err := s.db.Query(`SELECT source_id, target_id, relation, weight, auto_linked FROM memory_links WHERE weight >= ? ORDER BY auto_linked ASC, weight DESC, created_at DESC`, opts.MinWeight)
 	if err != nil {
 		return nil, err
 	}
@@ -368,26 +460,39 @@ func (s *SQLiteStore) BuildGraph(workspaceID int64, limit int) (*GraphData, erro
 
 	degree := make(map[int64]int)
 	edges := make([]GraphEdge, 0, 64)
+	seenBeyondLimit := false
 	for erows.Next() {
 		var e GraphEdge
 		var auto int
 		if err := erows.Scan(&e.From, &e.To, &e.Relation, &e.Weight, &auto); err != nil {
 			return nil, err
 		}
+		e.Auto = auto == 1
+		if e.Auto && !opts.IncludeAutoLinks {
+			continue
+		}
+		if !e.Auto && !opts.IncludeManualLinks {
+			continue
+		}
 		if !idSet[e.From] || !idSet[e.To] {
 			continue
 		}
-		e.Auto = auto == 1
+		if opts.EdgeLimit > 0 && len(edges) >= opts.EdgeLimit {
+			seenBeyondLimit = true
+			continue
+		}
 		edges = append(edges, e)
 		degree[e.From]++
 		degree[e.To]++
+	}
+	if seenBeyondLimit || (opts.EdgeLimit > 0 && meta.TotalEdges > len(edges)) {
+		meta.TruncatedEdges = true
 	}
 
 	for i := range nodes {
 		nodes[i].Degree = degree[nodes[i].ID]
 	}
-
-	return &GraphData{Nodes: nodes, Edges: edges}, nil
+	return &GraphData{Nodes: nodes, Edges: edges, Meta: meta}, nil
 }
 
 // shortLabel returns a single-line preview of content for use as a graph label.

@@ -33,6 +33,34 @@ type WebChatMessage struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+type webAgentSessionSnapshot struct {
+	ID        string           `json:"id"`
+	Name      string           `json:"name"`
+	Mode      string           `json:"mode"`
+	Workspace string           `json:"workspace"`
+	Status    WebSessionStatus `json:"status"`
+	Archived  bool             `json:"archived"`
+	History   []WebChatMessage `json:"history"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
+	Error     string           `json:"error,omitempty"`
+}
+
+type WebAgentSessionDTO struct {
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Mode         string           `json:"mode"`
+	Workspace    string           `json:"workspace"`
+	Status       WebSessionStatus `json:"status"`
+	Archived     bool             `json:"archived"`
+	History      []WebChatMessage `json:"history"`
+	TotalHistory int              `json:"total_history"`
+	HistoryLimit int              `json:"history_limit,omitempty"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+	Error        string           `json:"error,omitempty"`
+}
+
 type WebAgentSession struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
@@ -98,11 +126,28 @@ func (m *WebSessionManager) Load() error {
 
 func (s *WebAgentSession) sessionsResetRuntime() { s.supervisor = nil; s.cancel = nil }
 
+func snapshotSession(s *WebAgentSession) webAgentSessionSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return webAgentSessionSnapshot{
+		ID:        s.ID,
+		Name:      s.Name,
+		Mode:      s.Mode,
+		Workspace: s.Workspace,
+		Status:    s.Status,
+		Archived:  s.Archived,
+		History:   append([]WebChatMessage(nil), s.History...),
+		CreatedAt: s.CreatedAt,
+		UpdatedAt: s.UpdatedAt,
+		Error:     s.Error,
+	}
+}
+
 func (m *WebSessionManager) Save() error {
 	m.mu.RLock()
-	list := make([]*WebAgentSession, 0, len(m.sessions))
+	list := make([]webAgentSessionSnapshot, 0, len(m.sessions))
 	for _, s := range m.sessions {
-		list = append(list, s)
+		list = append(list, snapshotSession(s))
 	}
 	m.mu.RUnlock()
 	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt.After(list[j].UpdatedAt) })
@@ -158,6 +203,58 @@ func (m *WebSessionManager) List(includeArchived bool) []*WebAgentSession {
 	return out
 }
 
+func compactHistory(history []WebChatMessage, limit int) []WebChatMessage {
+	if limit <= 0 || len(history) <= limit {
+		return append([]WebChatMessage(nil), history...)
+	}
+	return append([]WebChatMessage(nil), history[len(history)-limit:]...)
+}
+
+func sessionDTO(s *WebAgentSession, historyLimit int) *WebAgentSessionDTO {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &WebAgentSessionDTO{
+		ID:           s.ID,
+		Name:         s.Name,
+		Mode:         s.Mode,
+		Workspace:    s.Workspace,
+		Status:       s.Status,
+		Archived:     s.Archived,
+		History:      compactHistory(s.History, historyLimit),
+		TotalHistory: len(s.History),
+		HistoryLimit: historyLimit,
+		CreatedAt:    s.CreatedAt,
+		UpdatedAt:    s.UpdatedAt,
+		Error:        s.Error,
+	}
+}
+
+func (m *WebSessionManager) ListCompact(includeArchived bool, historyLimit int) []*WebAgentSessionDTO {
+	m.mu.RLock()
+	list := make([]*WebAgentSession, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if !includeArchived && s.Archived {
+			continue
+		}
+		list = append(list, s)
+	}
+	m.mu.RUnlock()
+	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt.After(list[j].UpdatedAt) })
+	out := make([]*WebAgentSessionDTO, 0, len(list))
+	for _, s := range list {
+		out = append(out, sessionDTO(s, historyLimit))
+	}
+	return out
+}
+
+func (m *WebSessionManager) GetCompact(id string, historyLimit int) (*WebAgentSessionDTO, bool) {
+	s, ok := m.Get(id)
+	if !ok {
+		return nil, false
+	}
+	return sessionDTO(s, historyLimit), true
+}
+
 func (m *WebSessionManager) Get(id string) (*WebAgentSession, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -187,17 +284,22 @@ func (m *WebSessionManager) Rename(id, name string) error {
 		return fmt.Errorf("session tidak ditemukan")
 	}
 	s.mu.Lock()
-	s.Name = name
+	s.Name = strings.TrimSpace(name)
 	s.UpdatedAt = time.Now()
 	s.mu.Unlock()
 	return m.Save()
 }
+
 func (m *WebSessionManager) Archive(id string, archived bool) error {
 	s, ok := m.Get(id)
 	if !ok {
 		return fmt.Errorf("session tidak ditemukan")
 	}
 	s.mu.Lock()
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 	s.Archived = archived
 	if archived {
 		s.Status = WebSessionArchived
@@ -208,11 +310,17 @@ func (m *WebSessionManager) Archive(id string, archived bool) error {
 	s.mu.Unlock()
 	return m.Save()
 }
+
 func (m *WebSessionManager) Delete(id string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
-	if ok && s.cancel != nil {
-		s.cancel()
+	if ok {
+		s.mu.Lock()
+		if s.cancel != nil {
+			s.cancel()
+			s.cancel = nil
+		}
+		s.mu.Unlock()
 	}
 	delete(m.sessions, id)
 	m.mu.Unlock()
@@ -221,6 +329,7 @@ func (m *WebSessionManager) Delete(id string) error {
 	}
 	return m.Save()
 }
+
 func (m *WebSessionManager) Cancel(id string) error {
 	s, ok := m.Get(id)
 	if !ok {
@@ -248,6 +357,11 @@ func (m *WebSessionManager) Run(ctx context.Context, id, prompt, mode string, cb
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
+	if s.Status == WebSessionRunning {
+		s.mu.Unlock()
+		cancel()
+		return nil, fmt.Errorf("session sedang berjalan")
+	}
 	s.Status = WebSessionRunning
 	s.Error = ""
 	s.cancel = cancel
@@ -266,18 +380,24 @@ func (m *WebSessionManager) Run(ctx context.Context, id, prompt, mode string, cb
 	res, err := sup.ProcessPrompt(runCtx, prompt)
 	sup.SetCallback(agent.AgenticCallback{})
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.cancel = nil
 	if err != nil {
-		s.Status = WebSessionError
-		s.Error = err.Error()
+		if runCtx.Err() != nil || ctx.Err() != nil {
+			s.Status = WebSessionCancelled
+			s.Error = ""
+		} else {
+			s.Status = WebSessionError
+			s.Error = err.Error()
+		}
 		s.UpdatedAt = time.Now()
+		s.mu.Unlock()
 		_ = m.Save()
 		return nil, err
 	}
 	s.Status = WebSessionCompleted
 	s.History = append(s.History, WebChatMessage{Role: "assistant", Content: res.Response, Timestamp: time.Now()})
 	s.UpdatedAt = time.Now()
+	s.mu.Unlock()
 	_ = m.Save()
 	return res, nil
 }
