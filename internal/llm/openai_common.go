@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Shared OpenAI types (moved from openai.go)
@@ -348,28 +349,64 @@ func generateOpenAIImage(client *http.Client, host, apiKey, defaultModel string,
 		return nil, fmt.Errorf("image response kosong")
 	}
 
-	b64 := imageResp.Data[0].B64JSON
+	item := imageResp.Data[0]
+	b64 := item.B64JSON
 	if strings.HasPrefix(b64, "data:") {
 		if _, data, ok := strings.Cut(b64, ","); ok {
 			b64 = data
 		}
 	}
-	if b64 == "" {
-		return nil, fmt.Errorf("image provider tidak mengembalikan b64_json")
-	}
-	decoded, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return nil, fmt.Errorf("gagal decode b64_json: %w", err)
+
+	var decoded []byte
+	if b64 != "" {
+		decoded, err = base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil, fmt.Errorf("gagal decode b64_json: %w", err)
+		}
+	} else if item.URL != "" {
+		decoded, err = downloadGeneratedImage(client, item.URL)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("image provider tidak mengembalikan b64_json atau url")
 	}
 
 	mime := http.DetectContentType(decoded)
 	return &ImageGenerationResult{
 		Data:          decoded,
 		Model:         model,
-		RevisedPrompt: imageResp.Data[0].RevisedPrompt,
+		RevisedPrompt: item.RevisedPrompt,
 		MIME:          mime,
 		Extension:     imageExtension(mime),
 	}, nil
+}
+
+func downloadGeneratedImage(client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Minute}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengunduh image url: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("gagal mengunduh image url (status %d): %s", resp.StatusCode, string(body))
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("gagal membaca image url: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("image url mengembalikan data kosong")
+	}
+	return data, nil
 }
 
 func imageExtension(mime string) string {

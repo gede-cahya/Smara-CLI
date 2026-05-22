@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/browser"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
 )
 
@@ -208,6 +210,8 @@ Selamat datang! Saya adalah agen AI yang siap membantu Anda.
 /mode <ask|rush|plan> — Ganti mode agen
 /prd [idea] — Buat PRD interaktif dengan button dan file Markdown
 /mcp — Lihat MCP tools
+/memory_autolink [aggressive|smart] — Bangun auto-link memory graph
+/autolink [aggressive|smart] — Alias memory autolink
 /clear — Reset percakapan
 /help — Bantuan
 /help — Bantuan
@@ -222,6 +226,8 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 /mode <ask|rush|plan> — Ganti mode
 /prd [idea] — Buat PRD interaktif dengan button dan file Markdown
 /mcp — Daftar MCP tools
+/memory_autolink [aggressive|smart] — Bangun auto-link memory graph
+/autolink [aggressive|smart] — Alias memory autolink
 /clear — Reset history percakapan
 /help — Tampilkan pesan ini
 
@@ -288,9 +294,75 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		g.supervisor.ClearHistory()
 		return g.sendReply(ctx, msg, "🗑️ Percakapan direset.")
 
+	case "memory_autolink", "autolink":
+		return g.handleMemoryAutolinkCommand(ctx, msg)
+
 	default:
 		return g.sendReply(ctx, msg, fmt.Sprintf("❓ Perintah tidak dikenal: /%s\nKetik /help untuk bantuan.", msg.Command))
 	}
+}
+
+func (g *Gateway) handleMemoryAutolinkCommand(ctx context.Context, msg IncomingMessage) error {
+	store, ok := g.supervisor.GetMemoryStore().(*memory.SQLiteStore)
+	if !ok || store == nil {
+		return g.sendReply(ctx, msg, "❌ Memory store tidak mendukung autolink graph.")
+	}
+
+	strategy := "aggressive"
+	threshold := 0.28
+	topK := 10
+	for i := 0; i < len(msg.CommandArgs); i++ {
+		arg := strings.TrimSpace(msg.CommandArgs[i])
+		switch strings.ToLower(arg) {
+		case "aggressive", "smart", "semantic", "lexical":
+			strategy = strings.ToLower(arg)
+		case "--strategy":
+			if i+1 < len(msg.CommandArgs) {
+				strategy = strings.ToLower(msg.CommandArgs[i+1])
+				i++
+			}
+		case "--threshold":
+			if i+1 < len(msg.CommandArgs) {
+				if v, err := strconv.ParseFloat(msg.CommandArgs[i+1], 64); err == nil {
+					threshold = v
+				}
+				i++
+			}
+		case "--top-k", "--top_k":
+			if i+1 < len(msg.CommandArgs) {
+				if v, err := strconv.Atoi(msg.CommandArgs[i+1]); err == nil {
+					topK = v
+				}
+				i++
+			}
+		}
+	}
+	if strategy != "aggressive" {
+		if threshold == 0.28 {
+			threshold = 0.78
+		}
+		if topK == 10 {
+			topK = 5
+		}
+	}
+
+	report, err := store.AutoLinkSmart(memory.AutoLinkOptions{
+		WorkspaceID:    g.supervisor.GetWorkspaceID(),
+		Threshold:      threshold,
+		MaxPerNode:     topK,
+		Replace:        true,
+		Strategy:       strategy,
+		HubLinks:       strategy == "aggressive",
+		AttachIsolated: strategy == "aggressive",
+		HubThreshold:   0.18,
+	})
+	if err != nil {
+		return g.sendReply(ctx, msg, "❌ Memory autolink gagal: "+err.Error())
+	}
+
+	reply := fmt.Sprintf("✅ Memory autolink selesai\n\nMode: %s\nCreated: %d\nScanned: %d\nThreshold: %.2f\nTop-K: %d\nAttached isolated: %d",
+		report.Mode, report.Created, report.MemoriesScanned, report.Threshold, report.TopK, report.AttachedIsolated)
+	return g.sendReply(ctx, msg, reply)
 }
 
 // processPrompt sends a user prompt to the supervisor and relays the response.

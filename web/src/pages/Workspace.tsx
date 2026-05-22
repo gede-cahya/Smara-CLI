@@ -68,11 +68,11 @@ export default function Workspace() {
             onChange={e => setNewName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && create()}
             placeholder="Nama workspace baru..."
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+            className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-smara-300/25"
           />
           <button
             onClick={create}
-            className="px-3 py-2 bg-smara-700 hover:bg-smara-600 rounded-lg transition-colors flex items-center gap-1"
+            className="px-3 py-2 bg-smara-500 hover:bg-smara-400 text-black rounded-lg transition-colors flex items-center gap-1"
           >
             <Plus className="w-4 h-4" /> Buat
           </button>
@@ -83,7 +83,7 @@ export default function Workspace() {
             onChange={e => setNewPath(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && create()}
             placeholder="Path folder (opsional, default: .)"
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+            className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-smara-300/25"
           />
           <button
             onClick={() => setFolderPickerOpen(true)}
@@ -103,8 +103,8 @@ export default function Workspace() {
             key={ws.id}
             className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
               ws.name === active
-                ? 'bg-smara-900/30 border-smara-700/50'
-                : 'bg-gray-900/50 border-gray-800 hover:border-gray-700'
+                ? 'bg-smara-900/30 ring-1 ring-smara-300/18 border-transparent'
+                : 'bg-[#0f1a0f]/60 border-transparent hover:border-transparent'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -121,7 +121,7 @@ export default function Workspace() {
             ) : (
               <button
                 onClick={() => switchWs(ws.name)}
-                className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+                className="text-xs px-2 py-1 bg-neutral-950/55 hover:bg-gray-700 rounded transition-colors"
               >
                 Pilih
               </button>

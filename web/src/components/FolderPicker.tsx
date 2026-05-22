@@ -46,13 +46,13 @@ export default function FolderPicker({ open, onClose, onSelect, title = 'Pilih F
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-[480px] max-w-[90vw] shadow-2xl flex flex-col max-h-[70vh]" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-3 border-b border-gray-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-gray-900 border border-smara-300/16 rounded-xl w-[480px] max-w-[90vw] shadow-2xl flex flex-col max-h-[70vh]" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-3 border-b border-smara-300/12">
           <h3 className="text-sm font-medium text-gray-200">{title}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300"><X className="w-4 h-4" /></button>
         </div>
-        <div className="flex items-center gap-2 p-2 border-b border-gray-800 bg-gray-900/80">
+        <div className="flex items-center gap-2 p-2 border-b border-smara-300/12 bg-gray-900/80">
           <button onClick={() => loadPath('')} className="p-1 text-gray-400 hover:text-gray-200" title="Home"><Home className="w-3.5 h-3.5" /></button>
           <button onClick={goUp} className="p-1 text-gray-400 hover:text-gray-200" title="Up"><ChevronLeft className="w-3.5 h-3.5" /></button>
           <span className="text-xs text-gray-300 truncate flex-1 font-mono">{path}</span>
@@ -73,9 +73,9 @@ export default function FolderPicker({ open, onClose, onSelect, title = 'Pilih F
             ))
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 p-3 border-t border-gray-800">
+        <div className="flex items-center justify-end gap-2 p-3 border-t border-smara-300/12">
           <button onClick={onClose} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-md transition-colors">Batal</button>
-          <button onClick={() => { onSelect(path); onClose() }} className="px-3 py-1.5 text-xs bg-smara-700 hover:bg-smara-600 rounded-md transition-colors">Pilih Folder Ini</button>
+          <button onClick={() => { onSelect(path); onClose() }} className="px-3 py-1.5 text-xs bg-smara-500 hover:bg-smara-400 text-black rounded-md transition-colors">Pilih Folder Ini</button>
         </div>
       </div>
     </div>

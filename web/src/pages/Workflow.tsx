@@ -249,12 +249,12 @@ export default function Workflow() {
           onChange={e => setPrompt(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && generate()}
           placeholder="Deskripsikan proyek yang ingin dikerjakan... (contoh: buatkan web portfolio dengan React)"
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+          className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-smara-300/25"
         />
         <button
           onClick={generate}
           disabled={generating || !prompt.trim()}
-          className="px-3 py-2 bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-1 text-xs"
+          className="px-3 py-2 bg-lime-600 hover:bg-lime-500 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-1 text-xs"
         >
           <Sparkles className="w-3.5 h-3.5" />
           {generating ? 'Generate...' : 'Generate'}
@@ -289,21 +289,21 @@ export default function Workflow() {
       <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
         {/* Sidebar: Workflow History */}
         {history.length > 0 && (
-          <div className="w-56 shrink-0 bg-gray-900/50 border border-gray-800 rounded-lg overflow-y-auto">
-            <div className="p-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800">
+          <div className="w-56 shrink-0 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg overflow-y-auto">
+            <div className="p-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-transparent">
               Workflow History ({history.length})
             </div>
             {history.map(item => (
               <button
                 key={item.id}
                 onClick={() => setActiveId(item.id)}
-                className={`w-full text-left p-2 text-xs border-b border-gray-800/50 transition-colors ${
-                  activeId === item.id ? 'bg-gray-800/80 text-gray-200' : 'text-gray-400 hover:bg-gray-800/40'
+                className={`w-full text-left p-2 text-xs border-b border-transparent transition-colors ${
+                  activeId === item.id ? 'bg-neutral-950/55/80 text-gray-200' : 'text-gray-400 hover:bg-neutral-950/55/40'
                 }`}
               >
                 <div className="font-medium truncate">{item.blueprint.project_name}</div>
                 <div className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
-                  <span className="uppercase px-1 bg-gray-800 rounded">{item.blueprint.domain}</span>
+                  <span className="uppercase px-1 bg-neutral-950/55 rounded">{item.blueprint.domain}</span>
                   <span>{new Date(item.timestamp).toLocaleTimeString()}</span>
                   {item.result && <span className="text-green-400">✓</span>}
                 </div>
@@ -315,7 +315,7 @@ export default function Workflow() {
         {/* Main Content */}
         <div className="flex-1 overflow-y-auto">
       {(phases.length > 0 || generating || executing) && (
-        <div className="mb-4 bg-gray-900/80 border border-gray-700/60 rounded-lg p-3 space-y-1.5">
+        <div className="mb-4 bg-[#0c1009]/82 ring-1 ring-black/40 rounded-lg p-3 space-y-1.5">
           <div className="flex items-center gap-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-1">
             <BrainCircuit className="w-3 h-3" />
             Proses Berjalan
@@ -346,10 +346,10 @@ export default function Workflow() {
       )}
 
       {(lastRequest || lastResponse) && (
-        <div className="mb-4 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="mb-4 ring-1 ring-black/35 rounded-lg overflow-hidden">
           <button
             onClick={() => setShowDebug(v => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 bg-gray-800/60 hover:bg-gray-800 text-xs text-gray-400 transition-colors"
+            className="w-full flex items-center justify-between px-3 py-2 bg-neutral-950/55/60 hover:bg-neutral-950/55 text-xs text-gray-400 transition-colors"
           >
             <div className="flex items-center gap-2">
               <Terminal className="w-3.5 h-3.5" />
@@ -358,7 +358,7 @@ export default function Workflow() {
             {showDebug ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
           {showDebug && (
-            <div className="p-3 bg-gray-900/80 space-y-2">
+            <div className="p-3 bg-[#0c1009]/82 space-y-2">
               {lastRequest && (
                 <div>
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-1">Request</div>
@@ -377,7 +377,7 @@ export default function Workflow() {
       )}
 
       {thoughts.length > 0 && (
-        <div className="mb-4 bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+        <div className="mb-4 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg p-3">
           <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-2">Thinking</div>
           <div className="space-y-1">
             {thoughts.map((t, i) => (
@@ -390,21 +390,21 @@ export default function Workflow() {
       {blueprint && (
         <div className="space-y-4">
           {/* Blueprint card */}
-          <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4">
+          <div className="bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-medium text-gray-200">{blueprint.project_name}</h3>
-              <span className="text-[10px] px-2 py-0.5 bg-gray-800 rounded text-gray-400 uppercase">{blueprint.domain}</span>
+              <span className="text-[10px] px-2 py-0.5 bg-neutral-950/55 rounded text-gray-400 uppercase">{blueprint.domain}</span>
             </div>
             <p className="text-xs text-gray-400 mb-3">{blueprint.description}</p>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
-              <div className="bg-gray-800/40 border border-gray-700/50 rounded-lg p-3">
+              <div className="bg-neutral-950/55/40 ring-1 ring-black/35 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2 text-xs text-gray-400">
                   <FileText className="w-3 h-3" /> PRD
                 </div>
                 <pre className="text-xs text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto font-mono">{blueprint.prd}</pre>
               </div>
-              <div className="bg-gray-800/40 border border-gray-700/50 rounded-lg p-3">
+              <div className="bg-neutral-950/55/40 ring-1 ring-black/35 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2 text-xs text-gray-400">
                   <Layers className="w-3 h-3" /> Architecture
                 </div>
@@ -415,7 +415,7 @@ export default function Workflow() {
             <div className="space-y-2">
               <div className="text-xs text-gray-400 font-medium">Agents ({blueprint.agents.length})</div>
               {blueprint.agents.map((agent, i) => (
-                <div key={i} className="flex items-start gap-2 p-2 bg-gray-800/30 rounded border border-gray-700/40">
+                <div key={i} className="flex items-start gap-2 p-2 bg-neutral-950/55/30 rounded ring-1 ring-black/35">
                   <CheckCircle className="w-3 h-3 text-green-400 mt-0.5 shrink-0" />
                   <div>
                     <div className="text-xs font-medium text-gray-300">{agent.role}</div>
@@ -434,7 +434,7 @@ export default function Workflow() {
               <button
                 onClick={execute}
                 disabled={executing}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-1 text-sm"
+                className="px-4 py-2 bg-smara-600 hover:bg-smara-500 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-1 text-sm"
               >
                 <Play className="w-4 h-4" />
                 {executing ? 'Menjalankan...' : 'Jalankan Workflow'}
@@ -445,7 +445,7 @@ export default function Workflow() {
       )}
 
       {result && (
-        <div className="mt-4 p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+        <div className="mt-4 p-3 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg">
           <div className="text-xs font-medium text-gray-400 mb-2">Workflow Result</div>
           <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap max-h-96 overflow-y-auto">{result}</pre>
         </div>

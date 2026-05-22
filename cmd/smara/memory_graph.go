@@ -130,6 +130,22 @@ cosine similarity. Hanya berjalan untuk memori yang punya embedding.`,
 		threshold, _ := cmd.Flags().GetFloat64("threshold")
 		topK, _ := cmd.Flags().GetInt("top-k")
 		replace, _ := cmd.Flags().GetBool("replace")
+		strategy, _ := cmd.Flags().GetString("strategy")
+		aggressive, _ := cmd.Flags().GetBool("aggressive")
+		hubLinks, _ := cmd.Flags().GetBool("hub-links")
+		attachIsolated, _ := cmd.Flags().GetBool("attach-isolated")
+		hubThreshold, _ := cmd.Flags().GetFloat64("hub-threshold")
+		if aggressive {
+			strategy = string(memory.AutoLinkModeAggressive)
+		}
+		if strategy == string(memory.AutoLinkModeAggressive) {
+			if threshold == 0 {
+				threshold = 0.28
+			}
+			if topK == 0 {
+				topK = 10
+			}
+		}
 
 		cfg := config.Get()
 		store, err := memory.NewSQLiteStore(cfg.DBPath)
@@ -140,24 +156,28 @@ cosine similarity. Hanya berjalan untuk memori yang punya embedding.`,
 
 		fmt.Println("  Menjalankan auto-link…")
 		report, err := store.AutoLinkSmart(memory.AutoLinkOptions{
-			WorkspaceID: cfg.ActiveWorkspaceID,
-			Threshold:   threshold,
-			MaxPerNode:  topK,
-			Replace:     replace,
+			WorkspaceID:    cfg.ActiveWorkspaceID,
+			Threshold:      threshold,
+			MaxPerNode:     topK,
+			Replace:        replace,
+			Strategy:       strategy,
+			HubLinks:       hubLinks,
+			AttachIsolated: attachIsolated,
+			HubThreshold:   hubThreshold,
 		})
 		if err != nil {
 			return err
 		}
 
 		modeLabel := map[memory.AutoLinkMode]string{
-			memory.AutoLinkModeSemantic: "🧠 semantic (embedding)",
-			memory.AutoLinkModeLexical:  "📝 lexical (Jaccard token overlap)",
-			memory.AutoLinkModeNone:     "—",
+			memory.AutoLinkModeSemantic:   "🧠 semantic (embedding)",
+			memory.AutoLinkModeLexical:    "📝 lexical (Jaccard token overlap)",
+			memory.AutoLinkModeAggressive: "🕸️ aggressive (multi-signal + hub/topic)",
+			memory.AutoLinkModeNone:       "—",
 		}[report.Mode]
-
 		ui.PrintSuccess("  ✓ %d link otomatis dibuat — mode: %s", report.Created, modeLabel)
-		fmt.Printf("    Memori: %d total, %d punya embedding (%.0f%%)\n",
-			report.MemoriesScanned, report.WithEmbedding, report.EmbeddingRatio*100)
+		fmt.Printf("    Memori: %d total, %d punya embedding (%.0f%%) · threshold %.2f · top-k %d\n",
+			report.MemoriesScanned, report.WithEmbedding, report.EmbeddingRatio*100, report.Threshold, report.TopK)
 		if report.FellBackToLexical {
 			fmt.Println("    Catatan: provider tidak menyediakan embeddings,")
 			fmt.Println("    fallback ke lexical similarity (Jaccard token overlap).")
@@ -325,9 +345,14 @@ func init() {
 	memoryLinkCmd.Flags().Float64("weight", 0.5, "kekuatan link 0..1")
 	memoryLinkCmd.Flags().String("note", "", "catatan opsional")
 
-	memoryAutolinkCmd.Flags().Float64("threshold", 0.78, "minimum cosine similarity 0..1")
-	memoryAutolinkCmd.Flags().Int("top-k", 5, "jumlah link maksimum per memori")
+	memoryAutolinkCmd.Flags().Float64("threshold", 0, "minimum similarity/score 0..1 (default smart=0.78, aggressive=0.28)")
+	memoryAutolinkCmd.Flags().Int("top-k", 0, "jumlah link maksimum per memori (default smart=5, aggressive=10)")
 	memoryAutolinkCmd.Flags().Bool("replace", true, "hapus auto-link sebelumnya sebelum menjalankan")
+	memoryAutolinkCmd.Flags().String("strategy", "smart", "engine: smart, aggressive")
+	memoryAutolinkCmd.Flags().Bool("aggressive", false, "shortcut untuk --strategy aggressive --threshold 0.28 --top-k 10")
+	memoryAutolinkCmd.Flags().Bool("hub-links", true, "aktifkan topic/hub grouping untuk aggressive autolink")
+	memoryAutolinkCmd.Flags().Bool("attach-isolated", true, "hubungkan memory isolated ke neighbor/topic terbaik")
+	memoryAutolinkCmd.Flags().Float64("hub-threshold", 0.18, "minimum score untuk attach isolated node")
 
 	memoryGraphCmd.Flags().Int("port", 7878, "port HTTP server lokal")
 	memoryGraphCmd.Flags().Int("limit", 0, "batasi jumlah node (0 = semua)")

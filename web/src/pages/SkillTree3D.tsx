@@ -1,22 +1,72 @@
 import { useMemo, useRef, useState, useEffect, Suspense } from 'react'
-import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Stars, Html, Line } from '@react-three/drei'
 import * as THREE from 'three'
-import { type SkillItem } from '../api'
-import { X, Zap, Tag, GitBranch, Layers, History, RefreshCw } from 'lucide-react'
-import { getSkillIcon, getCategoryIcon } from './skillIcons'
+import { fetchJSON, type SkillItem } from '../api'
+import { X, Zap, Tag, GitBranch, Layers, History, RefreshCw, Search, Play, Network, Maximize2 } from 'lucide-react'
+import { getSkillIcon } from './skillIcons'
 
 // ---- Color palette ---------------------------------------------------------
 
 const PALETTE = [
-  '#818cf8', '#f472b6', '#34d399', '#fbbf24', '#60a5fa',
-  '#a78bfa', '#fb923c', '#2dd4bf', '#f87171', '#38bdf8',
+  '#bef264', '#84cc16', '#34d399', '#fbbf24', '#d9f99d',
+  '#65a30d', '#fb923c', '#2dd4bf', '#f87171', '#a3e635',
 ]
 
 function hashColor(str: string): string {
   let h = 0
   for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0
   return PALETTE[Math.abs(h) % PALETTE.length]
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b))
+}
+
+function matchesSkillQuery(skill: SkillItem, q: string): boolean {
+  if (!q.trim()) return true
+  const needle = q.toLowerCase()
+  const haystack = [
+    skill.name,
+    skill.description,
+    ...(skill.tags || []),
+    ...(skill.category_path || []),
+    ...(skill.dependencies || []),
+  ].join(' ').toLowerCase()
+  return haystack.includes(needle)
+}
+
+function relatedSkillNames(skills: SkillItem[], center: SkillItem | null, depth: number): Set<string> {
+  const result = new Set<string>()
+  if (!center) return result
+  const byName = new Map(skills.map(s => [s.name, s]))
+  const neighbors = (name: string): string[] => {
+    const sk = byName.get(name)
+    const out = new Set<string>()
+    if (sk?.parent_id && byName.has(sk.parent_id)) out.add(sk.parent_id)
+    for (const d of sk?.dependencies || []) if (byName.has(d)) out.add(d)
+    for (const other of skills) {
+      if (other.parent_id === name) out.add(other.name)
+      if ((other.dependencies || []).includes(name)) out.add(other.name)
+    }
+    return [...out]
+  }
+
+  let frontier = [center.name]
+  result.add(center.name)
+  for (let i = 0; i < depth; i++) {
+    const next: string[] = []
+    for (const name of frontier) {
+      for (const n of neighbors(name)) {
+        if (!result.has(n)) {
+          result.add(n)
+          next.push(n)
+        }
+      }
+    }
+    frontier = next
+  }
+  return result
 }
 
 // ---- Tree construction (mirrors 2D views) ----------------------------------
@@ -162,12 +212,6 @@ function buildFractal3D(skills: SkillItem[]): FractalNode3D {
 }
 
 // ---- Fractal 3D layout -----------------------------------------------------
-//
-// Each node distributes its children around a sphere using a Fibonacci
-// lattice (golden-angle distribution). The orbit radius scales by depth
-// and is also bumped up when a parent has many children so they don't
-// collide. This produces a recursive 3D fractal where every subtree gets
-// its own little spherical cluster.
 
 function layoutFractal3D(root: FractalNode3D, baseOrbit: number) {
   const radiusFor = (n: FractalNode3D) => {
@@ -184,16 +228,11 @@ function layoutFractal3D(root: FractalNode3D, baseOrbit: number) {
     return parentOrbit * 0.6
   }
 
-  // Minimum orbit so children don't intersect when distributed on a sphere.
-  // Surface area scales with R²; we want each child to get an area roughly
-  // (kid_radius + gap)² wide.
   const minOrbitForKids = (kids: FractalNode3D[], gap: number) => {
     if (kids.length === 0) return 0
     const maxR = Math.max(...kids.map(radiusFor))
     const slot = 2 * maxR + gap
-    // Sphere surface area per child: 4πR² / N >= slot²
-    const requiredR = Math.sqrt((kids.length * slot * slot) / (4 * Math.PI))
-    return requiredR
+    return Math.sqrt((kids.length * slot * slot) / (4 * Math.PI))
   }
 
   const gapForDepth = (depth: number) => {
@@ -211,17 +250,15 @@ function layoutFractal3D(root: FractalNode3D, baseOrbit: number) {
 
     const gap = gapForDepth(depth)
     const orbit = Math.max(orbitDefault(depth, parentOrbit), minOrbitForKids(kids, gap))
-    // Fibonacci sphere distribution gives well-separated points on a sphere.
     const N = kids.length
-    const phi = Math.PI * (3 - Math.sqrt(5)) // golden angle
+    const phi = Math.PI * (3 - Math.sqrt(5))
     kids.forEach((kid, i) => {
-      // y in [-1..1], slightly compressed so children don't pile on poles.
       const y = 1 - (i / Math.max(N - 1, 1)) * 1.6
       const radiusAtY = Math.sqrt(Math.max(0.001, 1 - y * y))
       const theta = phi * i
       const dir = new THREE.Vector3(
         Math.cos(theta) * radiusAtY,
-        y * 0.85, // slightly compressed vertically so the visual reads as a "tree"
+        y * 0.85,
         Math.sin(theta) * radiusAtY,
       )
       const childCenter = center.clone().addScaledVector(dir, orbit)
@@ -255,17 +292,19 @@ interface NodeProps {
   node: FractalNode3D
   hovered: boolean
   selected: boolean
+  active: boolean
+  dimmed: boolean
   onPointerOver: (e: ThreeEvent<PointerEvent>) => void
   onPointerOut: () => void
   onClick: () => void
 }
 
-function StarMesh({ node, hovered, selected, onPointerOver, onPointerOut, onClick }: NodeProps) {
+function StarMesh({ node, hovered, selected, active, dimmed, onPointerOver, onPointerOut, onClick }: NodeProps) {
   const meshRef = useRef<THREE.Mesh>(null)
   const color = useMemo(() => new THREE.Color(hashColor(node.colorKey)), [node.colorKey])
   const emphasized = hovered || selected
+  const visibleOpacity = dimmed ? 0.18 : 1
 
-  // Slow rotation for ambient liveliness.
   useFrame((_, delta) => {
     if (meshRef.current) {
       meshRef.current.rotation.y += delta * (emphasized ? 0.6 : 0.15)
@@ -273,21 +312,15 @@ function StarMesh({ node, hovered, selected, onPointerOver, onPointerOut, onClic
     }
   })
 
-  // Build star geometry: a torusKnot or sphere look — we use icosahedron
-  // for a faceted "crystal star" look that reads well in 3D.
-  const geo = useMemo(() => {
-    return new THREE.IcosahedronGeometry(node.radius, 1)
-  }, [node.radius])
-
-  const scale = emphasized ? 1.25 : 1.0
+  const geo = useMemo(() => new THREE.IcosahedronGeometry(node.radius, 1), [node.radius])
+  const scale = emphasized ? 1.28 : active ? 1.12 : 1.0
 
   return (
     <group position={node.position}>
-      {/* Outer halo (glow) */}
-      {emphasized && (
+      {(emphasized || active) && (
         <mesh>
-          <sphereGeometry args={[node.radius * 2.2, 16, 16]} />
-          <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} />
+          <sphereGeometry args={[node.radius * (emphasized ? 2.4 : 1.8), 16, 16]} />
+          <meshBasicMaterial color={color} transparent opacity={emphasized ? 0.1 : 0.045} depthWrite={false} />
         </mesh>
       )}
 
@@ -302,53 +335,53 @@ function StarMesh({ node, hovered, selected, onPointerOver, onPointerOut, onClic
         <meshStandardMaterial
           color={color}
           emissive={color}
-          emissiveIntensity={emphasized ? 0.9 : 0.5}
+          emissiveIntensity={dimmed ? 0.08 : emphasized ? 0.95 : active ? 0.7 : 0.5}
           metalness={0.3}
           roughness={0.4}
+          transparent
+          opacity={visibleOpacity}
         />
       </mesh>
 
-      {/* Inner bright core */}
       <mesh>
         <sphereGeometry args={[node.radius * 0.4, 12, 12]} />
-        <meshBasicMaterial color="#ffffff" />
+        <meshBasicMaterial color="#ffffff" transparent opacity={dimmed ? 0.2 : 1} />
       </mesh>
 
-      {/* Lineage aureole as wireframe icosahedron */}
       {node.skill?.lineage && node.skill.lineage.length > 0 && (
         <mesh>
           <icosahedronGeometry args={[node.radius * 1.4, 0]} />
-          <meshBasicMaterial color="#fbbf24" wireframe transparent opacity={emphasized ? 0.7 : 0.35} />
+          <meshBasicMaterial color="#fbbf24" wireframe transparent opacity={dimmed ? 0.08 : emphasized ? 0.7 : 0.35} />
         </mesh>
       )}
 
-      {/* Floating label always faces camera */}
-      <Html
-        center
-        position={[0, node.radius + 0.6, 0]}
-        style={{
-          pointerEvents: 'none',
-          fontFamily: 'Inter, sans-serif',
-          fontSize: emphasized ? '11px' : '10px',
-          fontWeight: emphasized ? 600 : 400,
-          color: emphasized ? '#f3f4f6' : '#9ca3af',
-          textShadow: '0 1px 4px rgba(0,0,0,0.9)',
-          whiteSpace: 'nowrap',
-          userSelect: 'none',
-        }}
-      >
-        {node.skill ? getSkillIcon(node.skill) : getCategoryIcon(node.label)}{' '}
-        {node.label.length > 20 ? node.label.slice(0, 19) + '…' : node.label}
-        {node.skill && node.skill.version > 1 && (
-          <span style={{ color: '#fbbf24', marginLeft: 4 }}>v{node.skill.version}</span>
-        )}
-      </Html>
+      {selected && node.skill && (
+        <Html
+          center
+          position={[0, node.radius + 0.6, 0]}
+          style={{
+            pointerEvents: 'none',
+            fontFamily: 'Inter, sans-serif',
+            fontSize: '11px',
+            fontWeight: 600,
+            color: '#f3f4f6',
+            textShadow: '0 1px 4px rgba(0,0,0,0.9)',
+            whiteSpace: 'nowrap',
+            userSelect: 'none',
+          }}
+        >
+          {getSkillIcon(node.skill)}{' '}
+          {node.label.length > 20 ? node.label.slice(0, 19) + '…' : node.label}
+          {node.skill.version > 1 && (
+            <span style={{ color: '#fbbf24', marginLeft: 4 }}>v{node.skill.version}</span>
+          )}
+        </Html>
+      )}
     </group>
   )
 }
 
-// Root sphere is bigger and pulses.
-function RootStar({ node }: { node: FractalNode3D }) {
+function RootStar({ node, dimmed }: { node: FractalNode3D; dimmed: boolean }) {
   const meshRef = useRef<THREE.Mesh>(null)
   useFrame((state, delta) => {
     if (meshRef.current) {
@@ -359,64 +392,43 @@ function RootStar({ node }: { node: FractalNode3D }) {
   })
   return (
     <group position={node.position}>
-      <pointLight color="#818cf8" intensity={3} distance={30} />
+      <pointLight color="#bef264" intensity={dimmed ? 1.2 : 3} distance={30} />
       <mesh>
         <sphereGeometry args={[node.radius * 1.8, 24, 24]} />
-        <meshBasicMaterial color="#6366f1" transparent opacity={0.08} depthWrite={false} />
+        <meshBasicMaterial color="#6366f1" transparent opacity={dimmed ? 0.025 : 0.08} depthWrite={false} />
       </mesh>
       <mesh ref={meshRef}>
         <icosahedronGeometry args={[node.radius, 2]} />
         <meshStandardMaterial
           color="#6366f1"
-          emissive="#818cf8"
-          emissiveIntensity={1.2}
+          emissive="#bef264"
+          emissiveIntensity={dimmed ? 0.25 : 1.2}
           metalness={0.5}
           roughness={0.2}
+          transparent
+          opacity={dimmed ? 0.22 : 1}
         />
       </mesh>
       <mesh>
         <sphereGeometry args={[node.radius * 0.5, 16, 16]} />
-        <meshBasicMaterial color="#ffffff" />
+        <meshBasicMaterial color="#ffffff" transparent opacity={dimmed ? 0.25 : 1} />
       </mesh>
-      <Html
-        center
-        position={[0, node.radius + 1.5, 0]}
-        style={{
-          pointerEvents: 'none',
-          fontFamily: 'Inter, sans-serif',
-          fontSize: '12px',
-          fontWeight: 700,
-          letterSpacing: '1px',
-          textTransform: 'uppercase',
-          color: '#c7d2fe',
-          textShadow: '0 0 8px #818cf8',
-        }}
-      >
-        ✦ Skills
-      </Html>
     </group>
   )
 }
 
 // ---- Edge as bezier line ---------------------------------------------------
 
-function Edge({ from, to, active }: { from: FractalNode3D; to: FractalNode3D; active: boolean }) {
+function Edge({ from, to, active, dimmed }: { from: FractalNode3D; to: FractalNode3D; active: boolean; dimmed: boolean }) {
   const points = useMemo(() => {
-    // Build a slightly curved line between parent and child by adding a
-    // midpoint pulled toward the origin direction so links arc inward.
     const start = from.position
     const end = to.position
-    const mid = new THREE.Vector3()
-      .addVectors(start, end)
-      .multiplyScalar(0.5)
-    // Pull mid toward origin for curve effect (smaller for short edges)
+    const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5)
     const dist = start.distanceTo(end)
     const curve = Math.min(dist * 0.15, 1.5)
     const dirToCenter = new THREE.Vector3().subVectors(new THREE.Vector3(0, 0, 0), mid).normalize()
     mid.addScaledVector(dirToCenter, curve)
-
-    const curveLine = new THREE.QuadraticBezierCurve3(start, mid, end)
-    return curveLine.getPoints(20)
+    return new THREE.QuadraticBezierCurve3(start, mid, end).getPoints(20)
   }, [from.position, to.position])
 
   const color = useMemo(() => hashColor(from.colorKey), [from.colorKey])
@@ -424,12 +436,23 @@ function Edge({ from, to, active }: { from: FractalNode3D; to: FractalNode3D; ac
   return (
     <Line
       points={points}
-      color={active ? '#818cf8' : color}
-      lineWidth={active ? 1.6 : 0.6}
-      opacity={active ? 0.95 : (from.depth === 0 ? 0.5 : 0.25)}
+      color={active ? '#a5b4fc' : color}
+      lineWidth={active ? 2 : 0.55}
+      opacity={active ? 0.98 : dimmed ? 0.035 : (from.depth === 0 ? 0.42 : 0.2)}
       transparent
     />
   )
+}
+
+function CameraFocus({ target }: { target: THREE.Vector3 | null }) {
+  const { camera } = useThree()
+  useFrame(() => {
+    if (!target) return
+    const desired = target.clone().add(new THREE.Vector3(0, 4, 14))
+    camera.position.lerp(desired, 0.045)
+    camera.lookAt(target)
+  })
+  return null
 }
 
 // ---- Scene -----------------------------------------------------------------
@@ -440,56 +463,69 @@ interface SceneProps {
   setSelected: (s: SkillItem | null) => void
   hovered: string | null
   setHovered: (n: string | null) => void
+  focusToken: number
 }
 
-function Scene({ skills, selected, setSelected, hovered, setHovered }: SceneProps) {
+function Scene({ skills, selected, setSelected, hovered, setHovered, focusToken }: SceneProps) {
   const { nodes, edges } = useMemo(() => {
     const root = buildFractal3D(skills)
     layoutFractal3D(root, 14)
-    const flat = flattenTree(root)
-    return flat
+    return flattenTree(root)
   }, [skills])
+
+  const selectedNode = useMemo(
+    () => selected ? nodes.find(n => n.skill?.name === selected.name) || null : null,
+    [nodes, selected],
+  )
+  const hoverNodeName = hovered
+  const activeNames = useMemo(() => {
+    const active = new Set<string>()
+    const center = selectedNode?.name || hoverNodeName
+    if (!center) return active
+    active.add(center)
+    for (const e of edges) {
+      if (e.from.name === center || e.to.name === center) {
+        active.add(e.from.name)
+        active.add(e.to.name)
+      }
+    }
+    return active
+  }, [edges, selectedNode, hoverNodeName])
+  const hasFocus = activeNames.size > 0
 
   return (
     <>
       <ambientLight intensity={0.25} />
       <pointLight position={[20, 20, 20]} intensity={0.8} />
-      <pointLight position={[-20, -10, -20]} intensity={0.4} color="#a78bfa" />
+      <pointLight position={[-20, -10, -20]} intensity={0.4} color="#84cc16" />
 
-      <Stars
-        radius={120}
-        depth={60}
-        count={3000}
-        factor={4}
-        saturation={0}
-        fade
-        speed={0.3}
-      />
+      <Stars radius={120} depth={60} count={3000} factor={4} saturation={0} fade speed={0.3} />
 
-      {edges.map((e, i) => (
-        <Edge
-          key={`e-${i}`}
-          from={e.from}
-          to={e.to}
-          active={
-            hovered === e.from.name ||
-            hovered === e.to.name ||
-            selected?.name === e.from.name ||
-            selected?.name === e.to.name
-          }
-        />
-      ))}
+      {edges.map((e, i) => {
+        const active = activeNames.has(e.from.name) && activeNames.has(e.to.name)
+        return (
+          <Edge
+            key={`e-${i}`}
+            from={e.from}
+            to={e.to}
+            active={active}
+            dimmed={hasFocus && !active}
+          />
+        )
+      })}
 
       {nodes.map(n => {
-        if (n.name === '__root') {
-          return <RootStar key={n.name} node={n} />
-        }
+        const active = activeNames.has(n.name)
+        const dimmed = hasFocus && !active
+        if (n.name === '__root') return <RootStar key={n.name} node={n} dimmed={dimmed} />
         return (
           <StarMesh
             key={n.name}
             node={n}
             hovered={hovered === n.name}
             selected={selected?.name === n.name}
+            active={active}
+            dimmed={dimmed}
             onPointerOver={(e) => {
               e.stopPropagation()
               setHovered(n.name)
@@ -506,6 +542,7 @@ function Scene({ skills, selected, setSelected, hovered, setHovered }: SceneProp
         )
       })}
 
+      <CameraFocus target={focusToken > 0 ? selectedNode?.position || null : null} />
       <OrbitControls
         enablePan
         enableZoom
@@ -521,17 +558,15 @@ function Scene({ skills, selected, setSelected, hovered, setHovered }: SceneProp
 
 // ---- Detail panel ----------------------------------------------------------
 
-function DetailPanel({ skill, onClose }: { skill: SkillItem; onClose: () => void }) {
+function DetailPanel({ skill, onClose, onRun, running }: { skill: SkillItem; onClose: () => void; onRun: (skill: SkillItem) => void; running: boolean }) {
   return (
-    <div className="absolute bottom-4 right-4 w-80 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-20">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+    <div className="absolute bottom-4 right-4 w-80 bg-gray-900/95 backdrop-blur ring-1 ring-black/35 rounded-xl shadow-2xl overflow-hidden z-20">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-smara-300/12">
         <div className="flex items-center gap-2 min-w-0">
           <Zap className="w-4 h-4 text-smara-400 shrink-0" />
           <span className="text-sm font-semibold text-gray-100 truncate">{skill.name}</span>
           {skill.version > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 shrink-0">
-              v{skill.version}
-            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 shrink-0">v{skill.version}</span>
           )}
         </div>
         <button onClick={onClose} className="text-gray-500 hover:text-gray-300 shrink-0 ml-2">
@@ -539,9 +574,39 @@ function DetailPanel({ skill, onClose }: { skill: SkillItem; onClose: () => void
         </button>
       </div>
 
-      <div className="p-4 space-y-3 max-h-64 overflow-y-auto">
-        {skill.description && (
-          <p className="text-xs text-gray-400 leading-relaxed">{skill.description}</p>
+      <div className="p-4 space-y-3 max-h-72 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onRun(skill)}
+            disabled={running}
+            className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-smara-500 hover:bg-smara-400 text-black disabled:opacity-50 text-xs text-white transition-colors"
+          >
+            <Play className="w-3 h-3" /> {running ? 'Running...' : 'Run Skill'}
+          </button>
+          <button
+            onClick={() => navigator.clipboard?.writeText(skill.name)}
+            className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-200 transition-colors"
+          >
+            Copy Name
+          </button>
+        </div>
+
+        {skill.description && <p className="text-xs text-gray-400 leading-relaxed">{skill.description}</p>}
+
+        {skill.params && skill.params.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1 text-[10px] text-gray-500 mb-1.5">
+              <Zap className="w-3 h-3" /><span>Params</span>
+            </div>
+            <div className="space-y-1">
+              {skill.params.map(p => (
+                <div key={p.name} className="flex items-center justify-between gap-2 rounded bg-gray-800/50 ring-1 ring-black/30 px-2 py-1 text-[10px]">
+                  <span className="text-gray-200 font-mono truncate">{p.name}</span>
+                  <span className="text-gray-500 shrink-0">{p.required ? 'required' : p.type || 'string'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {skill.tags && skill.tags.length > 0 && (
@@ -551,9 +616,7 @@ function DetailPanel({ skill, onClose }: { skill: SkillItem; onClose: () => void
             </div>
             <div className="flex flex-wrap gap-1">
               {skill.tags.map(t => (
-                <span key={t} className="px-2 py-0.5 rounded-full text-[10px] font-medium" style={{ background: hashColor(t) + '22', color: hashColor(t), border: `1px solid ${hashColor(t)}44` }}>
-                  {t}
-                </span>
+                <span key={t} className="px-2 py-0.5 rounded-full text-[10px] font-medium" style={{ background: hashColor(t) + '22', color: hashColor(t), border: `1px solid ${hashColor(t)}44` }}>{t}</span>
               ))}
             </div>
           </div>
@@ -588,12 +651,12 @@ function DetailPanel({ skill, onClose }: { skill: SkillItem; onClose: () => void
             </div>
             <ol className="space-y-1 mt-1">
               <li className="flex items-center gap-2 text-[11px] bg-amber-900/20 border border-amber-800/40 rounded px-2 py-1">
-                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600/90 text-[10px] font-bold text-gray-900">v{skill.version}</span>
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-400/90 text-[10px] font-bold text-amber-950">v{skill.version}</span>
                 <span className="text-amber-200 truncate flex-1">sekarang</span>
                 <RefreshCw className="w-3 h-3 text-amber-400" />
               </li>
               {[...skill.lineage].reverse().map((l, idx) => (
-                <li key={`${l.version}-${idx}`} className="flex items-center gap-2 text-[11px] bg-gray-800/40 border border-gray-700/60 rounded px-2 py-1">
+                <li key={`${l.version}-${idx}`} className="flex items-center gap-2 text-[11px] bg-gray-800/40 ring-1 ring-black/30 rounded px-2 py-1">
                   <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-[10px] font-bold text-gray-300">v{l.version}</span>
                   <span className="text-gray-400 truncate flex-1" title={l.description}>
                     {l.refined_from && <span className="text-gray-500">{l.refined_from}</span>}
@@ -616,50 +679,185 @@ export default function SkillTree3D({ skills }: { skills: SkillItem[] }) {
   const [selected, setSelected] = useState<SkillItem | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [autoRotate, setAutoRotate] = useState(true)
+  const [query, setQuery] = useState('')
+  const [tagFilter, setTagFilter] = useState('all')
+  const [localGraph, setLocalGraph] = useState(false)
+  const [focusToken, setFocusToken] = useState(0)
+  const [runningSkill, setRunningSkill] = useState<string | null>(null)
+  const [runResult, setRunResult] = useState<string | null>(null)
 
-  // Suppress autoRotate when user is interacting.
+  const tags = useMemo(() => uniqueSorted(skills.flatMap(s => [...(s.tags || []), ...(s.category_path || []).slice(0, 1)])), [skills])
+
+  const visibleSkills = useMemo(() => {
+    let out = skills.filter(sk => matchesSkillQuery(sk, query))
+    if (tagFilter !== 'all') {
+      out = out.filter(sk => (sk.tags || []).includes(tagFilter) || (sk.category_path || []).includes(tagFilter))
+    }
+    if (localGraph && selected) {
+      const keep = relatedSkillNames(skills, selected, 2)
+      out = out.filter(sk => keep.has(sk.name))
+    }
+    if (selected && !out.some(sk => sk.name === selected.name)) {
+      setSelected(null)
+    }
+    return out
+  }, [skills, query, tagFilter, localGraph, selected])
+
+  const searchMatches = useMemo(() => {
+    if (!query.trim()) return []
+    return skills.filter(sk => matchesSkillQuery(sk, query)).slice(0, 6)
+  }, [skills, query])
+
   useEffect(() => {
     if (selected !== null || hovered !== null) setAutoRotate(false)
   }, [selected, hovered])
 
+  const selectAndFocus = (skill: SkillItem) => {
+    setSelected(skill)
+    setFocusToken(t => t + 1)
+    setAutoRotate(false)
+  }
+
+  const resetView = () => {
+    setSelected(null)
+    setHovered(null)
+    setQuery('')
+    setTagFilter('all')
+    setLocalGraph(false)
+    setAutoRotate(true)
+    setFocusToken(0)
+  }
+
+  const runSkill = async (skill: SkillItem) => {
+    if (skill.params && skill.params.some(p => p.required && !p.default)) {
+      setRunResult(`Skill "${skill.name}" butuh parameter. Jalankan dari halaman Skills untuk mengisi param.`)
+      return
+    }
+    setRunningSkill(skill.name)
+    setRunResult(null)
+    try {
+      const args: Record<string, string> = {}
+      for (const p of skill.params || []) {
+        if (p.default !== undefined) args[p.name] = String(p.default)
+      }
+      const payload: Record<string, unknown> = { name: skill.name }
+      if (Object.keys(args).length > 0) payload.args = args
+      const res = await fetchJSON('/api/skills/run', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      })
+      setRunResult(JSON.stringify(res, null, 2))
+    } catch (e: any) {
+      setRunResult('Error: ' + (e.message || e))
+    } finally {
+      setRunningSkill(null)
+    }
+  }
+
   return (
     <div className="relative w-full h-full bg-gray-950">
-      <Canvas
-        camera={{ position: [0, 8, 28], fov: 60 }}
-        gl={{ antialias: true, alpha: false }}
-        style={{ background: '#030712' }}
-      >
+      <Canvas camera={{ position: [0, 8, 28], fov: 60 }} gl={{ antialias: true, alpha: false }} style={{ background: '#030712' }}>
         <Suspense fallback={null}>
           <Scene
-            skills={skills}
+            skills={visibleSkills}
             selected={selected}
-            setSelected={setSelected}
+            setSelected={(s) => {
+              if (s) selectAndFocus(s)
+            }}
             hovered={hovered}
             setHovered={setHovered}
+            focusToken={focusToken}
           />
         </Suspense>
       </Canvas>
 
+      {/* Obsidian-like command bar */}
+      <div className="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 pointer-events-none">
+        <div className="relative pointer-events-auto w-72 max-w-[calc(100vw-2rem)]">
+          <div className="flex items-center gap-2 rounded-xl ring-1 ring-black/30 bg-gray-900/90 px-3 py-2 shadow-xl backdrop-blur">
+            <Search className="w-4 h-4 text-gray-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search skill..."
+              className="w-full bg-transparent text-xs text-gray-100 placeholder:text-gray-500 outline-none"
+            />
+            {query && <button onClick={() => setQuery('')} className="text-gray-500 hover:text-gray-300"><X className="w-3.5 h-3.5" /></button>}
+          </div>
+          {searchMatches.length > 0 && (
+            <div className="mt-1 overflow-hidden rounded-xl ring-1 ring-black/30 bg-gray-900/95 shadow-2xl backdrop-blur">
+              {searchMatches.map(sk => (
+                <button key={sk.name} onClick={() => selectAndFocus(sk)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-800/80">
+                  <span>{getSkillIcon(sk)}</span>
+                  <span className="truncate">{sk.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <select
+          value={tagFilter}
+          onChange={(e) => setTagFilter(e.target.value)}
+          className="pointer-events-auto rounded-xl ring-1 ring-black/30 bg-gray-900/90 px-3 py-2 text-xs text-gray-300 outline-none backdrop-blur"
+        >
+          <option value="all">All tags/categories</option>
+          {tags.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+
+        <button
+          onClick={() => setLocalGraph(v => !v)}
+          disabled={!selected}
+          className={`pointer-events-auto inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs backdrop-blur transition-colors ${localGraph ? 'border-smara-500/60 bg-smara-600/20 text-smara-200' : 'border-smara-300/12 bg-gray-900/90 text-gray-300 hover:bg-gray-800'} disabled:opacity-40`}
+        >
+          <Network className="w-3.5 h-3.5" /> Local graph
+        </button>
+
+        <button
+          onClick={() => selected && setFocusToken(t => t + 1)}
+          disabled={!selected}
+          className="pointer-events-auto inline-flex items-center gap-1.5 rounded-xl ring-1 ring-black/30 bg-gray-900/90 px-3 py-2 text-xs text-gray-300 backdrop-blur hover:bg-gray-800 disabled:opacity-40"
+        >
+          <Maximize2 className="w-3.5 h-3.5" /> Focus
+        </button>
+
+        <button onClick={resetView} className="pointer-events-auto rounded-xl ring-1 ring-black/30 bg-gray-900/90 px-3 py-2 text-xs text-gray-300 backdrop-blur hover:bg-gray-800">
+          Reset
+        </button>
+      </div>
+
       {/* Hint overlay */}
-      <div className="absolute bottom-3 left-3 bg-gray-900/80 border border-gray-800 rounded px-3 py-2 text-[10px] text-gray-400 pointer-events-none space-y-0.5">
+      <div className="absolute bottom-3 left-3 bg-gray-900/80 ring-1 ring-black/30 rounded px-3 py-2 text-[10px] text-gray-400 pointer-events-none space-y-0.5">
         <div>🖱 Drag = rotate · Wheel = zoom · Right drag = pan</div>
-        <div>✨ Klik node untuk detail · Auto-rotate aktif saat idle</div>
+        <div>✨ Klik node untuk detail · search/focus/local graph seperti Obsidian</div>
       </div>
 
       {/* Stats badge */}
-      <div className="absolute top-3 left-3 bg-gray-900/80 border border-gray-800 rounded px-2.5 py-1.5 text-[10px] text-gray-400 pointer-events-none">
-        🌌 3D Fractal — {skills.length} skills
-        {autoRotate && <span className="ml-2 text-indigo-400">⟳</span>}
+      <div className="absolute top-[4.25rem] left-3 bg-gray-900/80 ring-1 ring-black/30 rounded px-2.5 py-1.5 text-[10px] text-gray-400 pointer-events-none">
+        🌌 3D Fractal — {visibleSkills.length}/{skills.length} skills
+        {localGraph && selected && <span className="ml-2 text-smara-300">local</span>}
+        {autoRotate && <span className="ml-2 text-smara-400">⟳</span>}
       </div>
 
-      {selected && <DetailPanel skill={selected} onClose={() => setSelected(null)} />}
+      {selected && <DetailPanel skill={selected} onClose={() => setSelected(null)} onRun={runSkill} running={runningSkill === selected.name} />}
 
-      {skills.length === 0 && (
+      {runResult && (
+        <div className="absolute bottom-4 left-4 z-30 w-96 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl ring-1 ring-black/35 bg-gray-900/95 shadow-2xl backdrop-blur">
+          <div className="flex items-center justify-between border-b border-smara-300/12 px-3 py-2 text-xs text-gray-300">
+            <span>Skill run result</span>
+            <button onClick={() => setRunResult(null)} className="text-gray-500 hover:text-gray-300"><X className="w-4 h-4" /></button>
+          </div>
+          <pre className="max-h-56 overflow-auto p-3 text-[10px] text-gray-400 whitespace-pre-wrap">{runResult}</pre>
+        </div>
+      )}
+
+      {visibleSkills.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center text-gray-500">
             <Zap className="w-10 h-10 mx-auto mb-3 text-gray-600" />
             <p className="text-sm font-medium mb-1">No skills found</p>
-            <p className="text-xs">Skills will appear as 3D stars in space.</p>
+            <p className="text-xs">Coba reset search/filter atau matikan local graph.</p>
           </div>
         </div>
       )}

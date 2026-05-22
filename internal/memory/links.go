@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -41,16 +42,18 @@ type GraphEdge struct {
 
 // GraphMeta carries server-side slicing information for large graph UIs.
 type GraphMeta struct {
-	Mode           string  `json:"mode,omitempty"`
-	NodeLimit      int     `json:"node_limit,omitempty"`
-	EdgeLimit      int     `json:"edge_limit,omitempty"`
-	MinWeight      float64 `json:"min_weight,omitempty"`
-	FocusID        int64   `json:"focus_id,omitempty"`
-	Depth          int     `json:"depth,omitempty"`
-	TotalNodes     int     `json:"total_nodes,omitempty"`
-	TotalEdges     int     `json:"total_edges,omitempty"`
-	TruncatedNodes bool    `json:"truncated_nodes,omitempty"`
-	TruncatedEdges bool    `json:"truncated_edges,omitempty"`
+	Mode                string  `json:"mode,omitempty"`
+	NodeLimit           int     `json:"node_limit,omitempty"`
+	EdgeLimit           int     `json:"edge_limit,omitempty"`
+	MinWeight           float64 `json:"min_weight,omitempty"`
+	FocusID             int64   `json:"focus_id,omitempty"`
+	Depth               int     `json:"depth,omitempty"`
+	TotalNodes          int     `json:"total_nodes,omitempty"`
+	TotalEdges          int     `json:"total_edges,omitempty"`
+	TruncatedNodes      bool    `json:"truncated_nodes,omitempty"`
+	TruncatedEdges      bool    `json:"truncated_edges,omitempty"`
+	VirtualEdges        int     `json:"virtual_edges,omitempty"`
+	IsolatedBeforeHints int     `json:"isolated_before_hints,omitempty"`
 }
 
 // GraphData wraps nodes + edges for the memory graph.
@@ -62,15 +65,16 @@ type GraphData struct {
 
 // GraphBuildOptions controls server-side graph slicing for scalable rendering.
 type GraphBuildOptions struct {
-	Mode               string
-	NodeLimit          int
-	EdgeLimit          int
-	MinWeight          float64
-	FocusID            int64
-	Depth              int
-	SearchQuery        string
-	IncludeAutoLinks   bool
-	IncludeManualLinks bool
+	Mode                string
+	NodeLimit           int
+	EdgeLimit           int
+	MinWeight           float64
+	FocusID             int64
+	Depth               int
+	SearchQuery         string
+	IncludeAutoLinks    bool
+	IncludeManualLinks  bool
+	IncludeVirtualLinks bool
 }
 
 // EnsureLinksSchema creates the memory_links table if missing.
@@ -217,9 +221,14 @@ func (s *SQLiteStore) ListLinksFor(memoryID int64) ([]MemoryLink, error) {
 // AutoLinkOptions controls automatic similarity-based linking.
 type AutoLinkOptions struct {
 	WorkspaceID int64
-	Threshold   float64 // minimum cosine similarity (0..1). default 0.78
-	MaxPerNode  int     // top-k links to keep per node. default 5
+	Threshold   float64 // minimum similarity/score. semantic default 0.78, aggressive default 0.28
+	MaxPerNode  int     // top-k links to keep per node. semantic default 5, aggressive default 10
 	Replace     bool    // remove previous auto-links before re-running
+
+	Strategy       string  // smart|semantic|lexical|aggressive
+	HubLinks       bool    // enable hub/topic grouping for aggressive mode
+	AttachIsolated bool    // attach isolated memories to best neighbor in aggressive mode
+	HubThreshold   float64 // minimum score when attaching isolated nodes. default 0.18
 }
 
 // AutoLink builds similarity links between memories with embeddings.
@@ -489,6 +498,24 @@ func (s *SQLiteStore) BuildGraphWithOptions(workspaceID int64, opts GraphBuildOp
 		meta.TruncatedEdges = true
 	}
 
+	if opts.IncludeVirtualLinks && opts.Mode == "overview" && len(nodes) > 1 {
+		maxVirtual := 0
+		if opts.EdgeLimit > 0 {
+			maxVirtual = opts.EdgeLimit - len(edges)
+		}
+		if maxVirtual != 0 {
+			var added int
+			edges, added, meta.IsolatedBeforeHints = addVirtualGraphHintEdges(nodes, edges, maxVirtual)
+			meta.VirtualEdges = added
+			if added > 0 {
+				for _, e := range edges[len(edges)-added:] {
+					degree[e.From]++
+					degree[e.To]++
+				}
+			}
+		}
+	}
+
 	for i := range nodes {
 		nodes[i].Degree = degree[nodes[i].ID]
 	}
@@ -511,4 +538,122 @@ func shortLabel(content string, maxLen int) string {
 		s += "…"
 	}
 	return s
+}
+
+// addVirtualGraphHintEdges adds lightweight, view-only edges for otherwise
+// isolated nodes. These edges are not stored in the database; they make the web
+// graph feel closer to Obsidian by giving unlinked notes a gentle visual bridge
+// to notes with overlapping tags/entities/source.
+func addVirtualGraphHintEdges(nodes []GraphNode, edges []GraphEdge, maxAdd int) ([]GraphEdge, int, int) {
+	existing := make(map[string]struct{}, len(edges)*2)
+	degree := make(map[int64]int, len(nodes))
+	for _, e := range edges {
+		a, b := canonicalPair(e.From, e.To)
+		existing[fmt.Sprintf("%d:%d", a, b)] = struct{}{}
+		degree[e.From]++
+		degree[e.To]++
+	}
+
+	islands := make([]GraphNode, 0)
+	for _, n := range nodes {
+		if degree[n.ID] == 0 {
+			islands = append(islands, n)
+		}
+	}
+	if len(islands) == 0 || maxAdd == 0 {
+		return edges, 0, len(islands)
+	}
+
+	limit := maxAdd
+	if limit < 0 {
+		limit = len(islands)
+	}
+
+	added := 0
+	for _, island := range islands {
+		if added >= limit {
+			break
+		}
+		bestID := int64(0)
+		bestScore := 0.0
+		for _, candidate := range nodes {
+			if candidate.ID == island.ID {
+				continue
+			}
+			a, b := canonicalPair(island.ID, candidate.ID)
+			if _, ok := existing[fmt.Sprintf("%d:%d", a, b)]; ok {
+				continue
+			}
+			score := graphHintScore(island, candidate)
+			if degree[candidate.ID] > 0 {
+				score += 0.08 // prefer attaching islands to existing clusters/hubs
+			}
+			if score > bestScore {
+				bestScore = score
+				bestID = candidate.ID
+			}
+		}
+		if bestID == 0 || bestScore < 0.18 {
+			continue
+		}
+		a, b := canonicalPair(island.ID, bestID)
+		existing[fmt.Sprintf("%d:%d", a, b)] = struct{}{}
+		edges = append(edges, GraphEdge{From: a, To: b, Relation: "hint", Weight: clamp01(bestScore), Auto: true})
+		degree[a]++
+		degree[b]++
+		added++
+	}
+	return edges, added, len(islands)
+}
+
+func graphHintScore(a, b GraphNode) float64 {
+	score := 0.0
+	if a.Source != "" && b.Source != "" && strings.EqualFold(a.Source, b.Source) {
+		score += 0.28
+	}
+	if a.CategoryID != nil && b.CategoryID != nil && *a.CategoryID == *b.CategoryID {
+		score += 0.22
+	}
+	ta := make(map[string]struct{})
+	for _, t := range a.Tags {
+		for _, tok := range splitToken(strings.ToLower(t)) {
+			if tok != "" {
+				ta[tok] = struct{}{}
+			}
+		}
+	}
+	tb := make(map[string]struct{})
+	for _, t := range b.Tags {
+		for _, tok := range splitToken(strings.ToLower(t)) {
+			if tok != "" {
+				tb[tok] = struct{}{}
+			}
+		}
+	}
+	if len(ta) > 0 && len(tb) > 0 {
+		score += jaccard(ta, tb) * 0.45
+	}
+	ca := tokenize(a.Content)
+	cb := tokenize(b.Content)
+	if len(ca) > 0 && len(cb) > 0 {
+		score += jaccard(ca, cb) * 0.55
+	}
+	return score
+}
+
+func canonicalPair(a, b int64) (int64, int64) {
+	if a > b {
+		return b, a
+	}
+	return a, b
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }

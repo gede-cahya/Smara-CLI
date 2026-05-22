@@ -87,34 +87,35 @@ function FieldInput({ field, config, onSave, saving }: { field: Field; config: C
   useEffect(() => setValue(normalizeValue(field, getValue(config, field.key))), [config, field.key])
   const dirty = String(value) !== String(normalizeValue(field, getValue(config, field.key)))
 
-  return <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-3">
-    <label className="block text-xs font-medium text-gray-400 mb-1">{field.label}</label>
+  const inputClass = "w-full bg-[#26321f] shadow-inner shadow-black/10 rounded-lg px-3 py-2 pr-9 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"
+
+  return <div className="bg-[#2a3522]/78 rounded-xl p-3 shadow-sm shadow-black/10">
+    <label className="block text-xs font-medium text-gray-300 mb-1">{field.label}</label>
     <div className="flex gap-2">
       {field.type === 'boolean' ? (
-        <button onClick={() => setValue(!value)} className={`px-3 py-2 rounded-lg text-sm border ${value ? 'bg-smara-700/30 border-smara-600 text-smara-200' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>{value ? 'Enabled' : 'Disabled'}</button>
+        <button onClick={() => setValue(!value)} className={`px-3 py-2 rounded-lg text-sm shadow-sm ${value ? 'bg-smara-500/75 text-[#111807]' : 'bg-[#202a1a] text-gray-300'}`}>{value ? 'Enabled' : 'Disabled'}</button>
       ) : field.type === 'select' ? (
-        <select value={value} onChange={e => setValue(e.target.value)} className="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500">
+        <select value={value} onChange={e => setValue(e.target.value)} className="flex-1 bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-smara-300/20">
           {(field.options || []).map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : (
         <div className="relative flex-1">
-          <input type={field.type === 'password' && !show ? 'password' : field.type === 'number' ? 'number' : 'text'} value={value} onChange={e => setValue(e.target.value)} placeholder={field.placeholder} className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 pr-9 text-sm focus:outline-none focus:border-smara-500" />
-          {field.type === 'password' && <button onClick={() => setShow(!show)} className="absolute right-2 top-2 text-gray-500 hover:text-gray-300">{show ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}</button>}
+          <input type={field.type === 'password' && !show ? 'password' : field.type === 'number' ? 'number' : 'text'} value={value} onChange={e => setValue(e.target.value)} placeholder={field.placeholder} className={inputClass} />
+          {field.type === 'password' && <button onClick={() => setShow(!show)} className="absolute right-2 top-2 text-gray-400 hover:text-gray-200">{show ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}</button>}
         </div>
       )}
-      <button disabled={!dirty || saving} onClick={() => onSave(field.key, field.type === 'number' ? Number(value) : value)} className="px-3 py-2 bg-smara-700 hover:bg-smara-600 disabled:bg-gray-800 disabled:text-gray-600 rounded-lg text-sm flex items-center gap-1"><Save className="w-4 h-4"/> Save</button>
+      <button disabled={!dirty || saving} onClick={() => onSave(field.key, field.type === 'number' ? Number(value) : value)} className="px-3 py-2 bg-smara-500 hover:bg-smara-400 text-[#111807] disabled:bg-[#202a1a] disabled:text-gray-500 rounded-lg text-sm flex items-center gap-1 shadow-sm"><Save className="w-4 h-4"/> Save</button>
     </div>
   </div>
 }
 
 function Section({ icon, title, desc, children }: { icon: any; title: string; desc?: string; children: React.ReactNode }) {
   const Icon = icon
-  return <section className="bg-gray-950/40 border border-gray-800 rounded-2xl p-4 space-y-4">
-    <div className="flex items-start gap-3"><Icon className="w-5 h-5 text-smara-400 mt-0.5"/><div><h3 className="font-semibold text-gray-100">{title}</h3>{desc && <p className="text-xs text-gray-500 mt-1">{desc}</p>}</div></div>
+  return <section className="bg-[#24301d]/82 rounded-2xl p-4 space-y-4 shadow-lg shadow-black/10">
+    <div className="flex items-start gap-3"><Icon className="w-5 h-5 text-smara-400 mt-0.5"/><div><h3 className="font-semibold text-gray-100">{title}</h3>{desc && <p className="text-xs text-gray-400 mt-1">{desc}</p>}</div></div>
     {children}
   </section>
 }
-
 export default function Config() {
   const [config, setConfig] = useState<ConfigData>({})
   const [loading, setLoading] = useState(false)
@@ -148,14 +149,14 @@ export default function Config() {
     setMcpDraft({ name: '', type: 'local', command: '', args: [], url: '', enabled: true })
   }
 
-  return <div className="flex flex-col h-full overflow-y-auto bg-gray-950">
-    <div className="sticky top-0 z-10 bg-gray-950/95 backdrop-blur border-b border-gray-800 p-4 flex items-center justify-between">
-      <div className="flex items-center gap-3"><Settings className="w-6 h-6 text-smara-400"/><div><h2 className="text-xl font-semibold">Settings</h2><p className="text-xs text-gray-500">Atur config, MCP, model provider, agent runtime, memory, dan advanced settings.</p></div></div>
-      <button onClick={load} className="px-3 py-2 bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-lg text-sm flex items-center gap-2"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}/> Refresh</button>
+  return <div className="flex flex-col h-full overflow-y-auto bg-[#1d2718]">
+    <div className="sticky top-0 z-10 bg-[#1d2718]/95 backdrop-blur p-4 flex items-center justify-between">
+      <div className="flex items-center gap-3"><Settings className="w-6 h-6 text-smara-400"/><div><h2 className="text-xl font-semibold">Settings</h2><p className="text-xs text-gray-400">Atur config, MCP, model provider, agent runtime, memory, dan advanced settings.</p></div></div>
+      <button onClick={load} className="px-3 py-2 bg-[#2a3522] hover:bg-[#303d27] rounded-lg text-sm flex items-center gap-2"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}/> Refresh</button>
     </div>
 
     <div className="p-4 space-y-4">
-      {notice && <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${notice.type === 'ok' ? 'bg-green-900/20 border-green-700/50 text-green-300' : 'bg-red-900/20 border-red-700/50 text-red-300'}`}>{notice.type === 'ok' ? <CheckCircle2 className="w-4 h-4"/> : <AlertCircle className="w-4 h-4"/>}{notice.text}</div>}
+      {notice && <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm shadow-sm ${notice.type === 'ok' ? 'bg-smara-700/35 text-smara-200' : 'bg-red-950/35 text-red-200'}`}>{notice.type === 'ok' ? <CheckCircle2 className="w-4 h-4"/> : <AlertCircle className="w-4 h-4"/>}{notice.text}</div>}
 
       <Section icon={Cpu} title="Model Provider" desc="Pilih provider utama, model default, API key, base URL, OpenRouter, OpenAI, Anthropic, Ollama, atau custom provider.">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{providerFields.map(f => <FieldInput key={f.key} field={f} config={config} onSave={save} saving={saving}/>)}</div>
@@ -163,14 +164,14 @@ export default function Config() {
 
       <Section icon={Wrench} title="MCP Servers" desc="Kelola server MCP lokal atau remote. Perubahan tersimpan ke config.yaml; restart Smara Web jika perlu re-connect runtime.">
         <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-          <input value={mcpDraft.name} onChange={e => setMcpDraft({...mcpDraft, name:e.target.value})} placeholder="name" className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
-          <select value={mcpDraft.type} onChange={e => setMcpDraft({...mcpDraft, type:e.target.value as any})} className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm"><option value="local">local</option><option value="remote">remote</option></select>
-          <input value={mcpDraft.command || ''} onChange={e => setMcpDraft({...mcpDraft, command:e.target.value})} placeholder="command" className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm md:col-span-2" />
-          <input value={Array.isArray(mcpDraft.args) ? mcpDraft.args.join(' ') : (mcpDraft.args as any)} onChange={e => setMcpDraft({...mcpDraft, args:e.target.value.split(/\s+/).filter(Boolean)})} placeholder="args" className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm" />
-          <button onClick={addMCP} className="bg-smara-700 hover:bg-smara-600 rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1"><Plus className="w-4 h-4"/> Add</button>
-          <input value={mcpDraft.url || ''} onChange={e => setMcpDraft({...mcpDraft, url:e.target.value})} placeholder="remote url (optional)" className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm md:col-span-6" />
+          <input value={mcpDraft.name} onChange={e => setMcpDraft({...mcpDraft, name:e.target.value})} placeholder="name" className="bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20" />
+          <select value={mcpDraft.type} onChange={e => setMcpDraft({...mcpDraft, type:e.target.value as any})} className="bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"><option value="local">local</option><option value="remote">remote</option></select>
+          <input value={mcpDraft.command || ''} onChange={e => setMcpDraft({...mcpDraft, command:e.target.value})} placeholder="command" className="bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20 md:col-span-2" />
+          <input value={Array.isArray(mcpDraft.args) ? mcpDraft.args.join(' ') : (mcpDraft.args as any)} onChange={e => setMcpDraft({...mcpDraft, args:e.target.value.split(/\s+/).filter(Boolean)})} placeholder="args" className="bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20" />
+          <button onClick={addMCP} className="bg-smara-500 hover:bg-smara-400 text-[#111807] rounded-lg px-3 py-2 text-sm flex items-center justify-center gap-1"><Plus className="w-4 h-4"/> Add</button>
+          <input value={mcpDraft.url || ''} onChange={e => setMcpDraft({...mcpDraft, url:e.target.value})} placeholder="remote url (optional)" className="bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20 md:col-span-6" />
         </div>
-        <div className="space-y-2">{mcpServers.map(s => <div key={s.name} className="flex items-center justify-between bg-gray-900/60 border border-gray-800 rounded-xl p-3"><div><div className="font-mono text-sm text-smara-300">{s.name} <span className="text-xs text-gray-500">({s.type})</span></div><div className="text-xs text-gray-500 mt-1">{s.type === 'remote' ? s.url : `${s.command || ''} ${(s.args || []).join(' ')}`}</div></div><button onClick={() => saveMCP(mcpServers.filter(x => x.name !== s.name))} className="p-2 text-gray-500 hover:text-red-400"><Trash2 className="w-4 h-4"/></button></div>)}</div>
+        <div className="space-y-2">{mcpServers.map(s => <div key={s.name} className="flex items-center justify-between bg-[#2a3522]/78 shadow-sm shadow-black/10 rounded-xl p-3"><div><div className="font-mono text-sm text-smara-300">{s.name} <span className="text-xs text-gray-400">({s.type})</span></div><div className="text-xs text-gray-400 mt-1">{s.type === 'remote' ? s.url : `${s.command || ''} ${(s.args || []).join(' ')}`}</div></div><button onClick={() => saveMCP(mcpServers.filter(x => x.name !== s.name))} className="p-2 text-gray-400 hover:text-red-300"><Trash2 className="w-4 h-4"/></button></div>)}</div>
       </Section>
 
       <Section icon={SlidersHorizontal} title="Agent Runtime" desc="Batas iterasi, timeout, verbose, dan auto skill capture."><div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{agentFields.map(f => <FieldInput key={f.key} field={f} config={config} onSave={save} saving={saving}/>)}</div></Section>
@@ -179,8 +180,8 @@ export default function Config() {
       <Section icon={KeyRound} title="Built-in Smara MCP"><div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{smaraMCPFields.map(f => <FieldInput key={f.key} field={f} config={config} onSave={save} saving={saving}/>)}</div></Section>
 
       <Section icon={Settings} title="Advanced Raw Config" desc="Untuk key lain yang belum dibuatkan field khusus.">
-        <div className="flex gap-2"><input value={rawKey} onChange={e => setRawKey(e.target.value)} placeholder="config key" className="w-56 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm"/><input value={rawValue} onChange={e => setRawValue(e.target.value)} placeholder="value" className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm"/><button onClick={() => rawKey && save(rawKey, rawValue)} className="px-3 py-2 bg-smara-700 hover:bg-smara-600 rounded-lg text-sm flex items-center gap-1"><Save className="w-4 h-4"/> Save</button></div>
-        <details className="text-xs text-gray-500"><summary className="cursor-pointer hover:text-gray-300">Lihat semua config raw</summary><pre className="mt-3 overflow-auto bg-gray-900 border border-gray-800 rounded-lg p-3 max-h-96">{JSON.stringify(config, null, 2)}</pre></details>
+        <div className="flex gap-2"><input value={rawKey} onChange={e => setRawKey(e.target.value)} placeholder="config key" className="w-56 bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"/><input value={rawValue} onChange={e => setRawValue(e.target.value)} placeholder="value" className="flex-1 bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"/><button onClick={() => rawKey && save(rawKey, rawValue)} className="px-3 py-2 bg-smara-500 hover:bg-smara-400 text-[#111807] rounded-lg text-sm flex items-center gap-1"><Save className="w-4 h-4"/> Save</button></div>
+        <details className="text-xs text-gray-400"><summary className="cursor-pointer hover:text-gray-200">Lihat semua config raw</summary><pre className="mt-3 overflow-auto bg-[#26321f] rounded-lg p-3 max-h-96 text-gray-200 shadow-inner shadow-black/10">{JSON.stringify(config, null, 2)}</pre></details>
       </Section>
     </div>
   </div>

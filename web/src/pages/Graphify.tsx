@@ -31,18 +31,18 @@ import { fetchGraphList, fetchGraphData, fetchGraphQuery, type GraphNode, type G
 const NODE_TYPE_COLORS: Record<string, string> = {
   function: '#bef264',
   method: '#bef264',
-  class: '#60a5fa',
-  type: '#60a5fa',
-  struct: '#60a5fa',
-  interface: '#a78bfa',
+  class: '#84cc16',
+  type: '#84cc16',
+  struct: '#84cc16',
+  interface: '#a3e635',
   variable: '#fbbf24',
   constant: '#fbbf24',
   package: '#34d399',
   import: '#6ee7b7',
-  concept: '#f472b6',
-  doc: '#94a3b8',
-  file: '#64748b',
-  default: '#9ca3af',
+  concept: '#65a30d',
+  doc: '#9ca878',
+  file: '#7a875d',
+  default: '#a5ad8f',
 }
 
 function getNodeColor(type?: string) {
@@ -70,8 +70,8 @@ function CustomNode({ data }: NodeProps) {
     <div
       className="rounded-md px-2 py-1 text-[11px] font-medium text-center min-w-[80px] cursor-pointer select-none pointer-events-auto"
       style={{
-        background: color + '22',
-        border: `1px solid ${color}`,
+        background: color + '30',
+        border: `1px solid ${color}66`,
         color: '#e5e7eb',
       }}
       title={label}
@@ -103,8 +103,8 @@ function toFlowNodes(graphNodes: GraphNode[]): Node[] {
         original: n,
       },
       style: {
-        background: color + '22',
-        border: `1px solid ${color}`,
+        background: color + '30',
+        border: `1px solid ${color}66`,
         color: '#e5e7eb',
         borderRadius: 6,
         padding: '6px 10px',
@@ -126,12 +126,12 @@ function toFlowEdges(graphEdges: GraphEdge[]): Edge[] {
     label: e.relation,
     animated: e.confidence === 'INFERRED',
     style: {
-      stroke: e.confidence === 'INFERRED' ? '#a78bfa' : '#4b5563',
+      stroke: e.confidence === 'INFERRED' ? '#a3e635' : '#59634a',
       strokeWidth: e.confidence === 'INFERRED' ? 1.5 : 1,
       strokeDasharray: e.confidence === 'INFERRED' ? '4,4' : undefined,
     },
-    labelStyle: { fontSize: 9, fill: '#9ca3af' },
-    labelBgStyle: { fill: '#1f2937', fillOpacity: 0.8 },
+    labelStyle: { fontSize: 9, fill: '#cbd5b1' },
+    labelBgStyle: { fill: '#1f2617', fillOpacity: 0.9 },
     labelBgPadding: [2, 4],
     labelBgBorderRadius: 4,
   }))
@@ -194,13 +194,13 @@ export default function Graphify() {
         animated: isConnected || edge.animated,
         style: {
           ...edge.style,
-          stroke: isConnected ? '#facc15' : '#374151',
+          stroke: isConnected ? '#bef264' : '#59634a',
           strokeWidth: isConnected ? 3 : 1,
           opacity: isConnected ? 1 : 0.25,
         },
         labelStyle: {
           ...edge.labelStyle,
-          fill: isConnected ? '#fde68a' : '#6b7280',
+          fill: isConnected ? '#d9f99d' : '#9ca878',
         },
       }
     })
@@ -348,10 +348,10 @@ export default function Graphify() {
   const nodeTypes = Array.from(nodeTypesSet).sort()
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-gray-950 text-gray-100">
+    <div className="flex h-full w-full overflow-hidden bg-[#10160c] text-gray-100">
       {/* Sidebar */}
-      <aside className="w-72 bg-gray-900 border-r border-gray-800 flex flex-col overflow-hidden">
-        <div className="p-4 border-b border-gray-800">
+      <aside className="w-72 bg-[#151c10] ring-1 ring-black/30 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-transparent">
           <div className="flex items-center gap-2 mb-3">
             <Network className="w-4 h-4 text-smara-300" />
             <h2 className="font-semibold text-sm">Graphify</h2>
@@ -366,12 +366,12 @@ export default function Graphify() {
                 onChange={e => setSearchText(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSearch()}
                 placeholder="Search nodes..."
-                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-smara-500"
+                className="flex-1 bg-[#202719] ring-1 ring-black/35 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/25"
               />
               <button
                 onClick={handleSearch}
                 disabled={!selectedGraph || !searchText.trim() || loadingData}
-                className="px-2 py-1 bg-smara-700 hover:bg-smara-600 disabled:bg-gray-700 disabled:text-gray-500 rounded text-xs text-white transition-colors"
+                className="px-2 py-1 bg-smara-500 hover:bg-smara-400 text-black disabled:bg-[#303829] disabled:text-neutral-400 rounded text-xs transition-colors"
               >
                 <Search className="w-3 h-3" />
               </button>
@@ -379,11 +379,11 @@ export default function Graphify() {
 
             {nodeTypes.length > 0 && (
               <div className="flex items-center gap-1">
-                <Filter className="w-3 h-3 text-gray-500" />
+                <Filter className="w-3 h-3 text-neutral-400" />
                 <select
                   value={filterType}
                   onChange={e => handleFilterType(e.target.value)}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-smara-500"
+                  className="flex-1 bg-[#202719] ring-1 ring-black/35 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:ring-2 focus:ring-smara-300/25"
                 >
                   <option value="">All types</option>
                   {nodeTypes.map(t => (
@@ -403,14 +403,14 @@ export default function Graphify() {
             <button
               onClick={loadGraphList}
               disabled={loadingList}
-              className="ml-auto text-gray-500 hover:text-gray-300 transition-colors"
+              className="ml-auto text-neutral-400 hover:text-gray-300 transition-colors"
             >
               {loadingList ? <Loader2 className="w-3 h-3 animate-spin" /> : <ChevronRight className="w-3 h-3 rotate-90" />}
             </button>
           </div>
 
           {graphs.length === 0 && !loadingList && (
-            <div className="text-xs text-gray-500 italic px-1">No graphs stored.</div>
+            <div className="text-xs text-neutral-400 italic px-1">No graphs stored.</div>
           )}
 
           {graphs.map(g => (
@@ -419,12 +419,12 @@ export default function Graphify() {
               onClick={() => handleGraphSelect(g.graph_id)}
               className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
                 selectedGraph === g.graph_id
-                  ? 'bg-smara-700/20 border border-smara-700/40 text-smara-300'
-                  : 'bg-gray-800/50 hover:bg-gray-800 text-gray-300 border border-transparent'
+                  ? 'bg-[#233016] ring-1 ring-black/30 text-smara-200'
+                  : 'bg-[#202719]/50 hover:bg-[#202719] text-gray-300 border border-transparent'
               }`}
             >
               <div className="font-medium truncate">{g.graph_id}</div>
-              <div className="text-gray-500 mt-0.5 flex gap-2">
+              <div className="text-neutral-400 mt-0.5 flex gap-2">
                 <span>{g.node_count} nodes</span>
                 <span>{g.edge_count} edges</span>
               </div>
@@ -433,17 +433,17 @@ export default function Graphify() {
         </div>
 
         {/* Upload */}
-        <div className="p-3 border-t border-gray-800">
+        <div className="p-3 border-t border-transparent">
           <div
             onDrop={onDrop}
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             className={`border-2 border-dashed rounded-lg p-3 text-center transition-colors ${
-              dragOver ? 'border-smara-500 bg-smara-900/10' : 'border-gray-700 hover:border-gray-600'
+              dragOver ? 'border-smara-500 bg-smara-900/10' : 'border-transparent hover:bg-[#202719]'
             }`}
           >
-            <Upload className="w-4 h-4 text-gray-500 mx-auto mb-1" />
-            <div className="text-[10px] text-gray-500">
+            <Upload className="w-4 h-4 text-neutral-400 mx-auto mb-1" />
+            <div className="text-[10px] text-neutral-400">
               Drop .json file or{' '}
               <button
                 onClick={() => fileRef.current?.click()}
@@ -470,7 +470,7 @@ export default function Graphify() {
                 <FileJson className="w-3 h-3" />
                 Uploaded file
               </span>
-              <button onClick={() => { setUploadData(null); setNodes([]); setEdges([]); setFilterType('') }} className="text-gray-500 hover:text-gray-300">
+              <button onClick={() => { setUploadData(null); setNodes([]); setEdges([]); setFilterType('') }} className="text-neutral-400 hover:text-gray-300">
                 <X className="w-3 h-3" />
               </button>
             </div>
@@ -505,7 +505,7 @@ export default function Graphify() {
         )}
 
         {loadingData && (
-          <div className="absolute inset-0 z-10 bg-gray-950/60 flex items-center justify-center">
+          <div className="absolute inset-0 z-10 bg-[#10160c]/60 flex items-center justify-center">
             <div className="flex items-center gap-2 text-sm text-gray-400">
               <Loader2 className="w-4 h-4 animate-spin" />
               Loading graph...
@@ -516,8 +516,8 @@ export default function Graphify() {
         {/* Empty state */}
         {nodes.length === 0 && !loadingData && !uploadData && !selectedGraph && (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-gray-500">
-              <Network className="w-10 h-10 mx-auto mb-3 text-gray-600" />
+            <div className="text-center text-neutral-400">
+              <Network className="w-10 h-10 mx-auto mb-3 text-neutral-500" />
               <p className="text-sm font-medium mb-1">No graph selected</p>
               <p className="text-xs">Select a stored graph from the sidebar or upload a JSON export.</p>
             </div>
@@ -526,7 +526,7 @@ export default function Graphify() {
 
         {/* React Flow canvas */}
         {(nodes.length > 0 || edges.length > 0 || selectedGraph || uploadData) && (
-          <div className="flex-1 overflow-hidden bg-gray-950 relative">
+          <div className="flex-1 overflow-hidden bg-[#10160c] relative">
             <ReactFlow
               nodes={highlightedNodes}
               edges={highlightedEdges}
@@ -550,18 +550,18 @@ export default function Graphify() {
               minZoom={0.1}
               maxZoom={2}
             >
-              <Background gap={20} size={1} color="#374151" />
+              <Background gap={20} size={1} color="#3f4a32" />
               <Controls />
               <MiniMap
                 nodeColor={(n) => {
                   const type = (n.data?.type as string) || ''
                   return getNodeColor(type)
                 }}
-                maskColor="rgba(0,0,0,0.4)"
-                className="bg-gray-900/80 border border-gray-700 rounded-lg"
+                maskColor="rgba(10,14,8,0.45)"
+                className="bg-[#0c1009]/82 ring-1 ring-black/35 rounded-lg"
               />
               <Panel position="top-left">
-                <div className="bg-gray-900/80 border border-gray-700 rounded-lg px-2 py-1 text-[10px] text-gray-400">
+                <div className="bg-[#0c1009]/82 ring-1 ring-black/35 rounded-lg px-2 py-1 text-[10px] text-gray-400">
                   {nodes.length} nodes · {edges.length} edges
                 </div>
               </Panel>
@@ -571,8 +571,8 @@ export default function Graphify() {
 
         {/* Node details panel */}
         {selectedNode && (
-          <div className="absolute bottom-3 right-3 z-20 w-80 bg-gray-900 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+          <div className="absolute bottom-3 right-3 z-20 w-80 bg-[#151c10] ring-1 ring-black/35 rounded-lg shadow-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-transparent">
               <div className="flex items-center gap-2 min-w-0">
                 <span
                   className="inline-block w-2 h-2 rounded-full shrink-0"
@@ -581,39 +581,39 @@ export default function Graphify() {
                 <span className="text-xs font-medium text-gray-200 truncate" title={selectedNode.label}>
                   {selectedNode.label}
                 </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 shrink-0">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#202719] text-gray-400 shrink-0">
                   {selectedNode.type}
                 </span>
               </div>
-              <button onClick={() => setSelectedNode(null)} className="text-gray-500 hover:text-gray-300 shrink-0 ml-2">
+              <button onClick={() => setSelectedNode(null)} className="text-neutral-400 hover:text-gray-300 shrink-0 ml-2">
                 <X className="w-3 h-3" />
               </button>
             </div>
             <div className="p-3 space-y-2 max-h-72 overflow-y-auto text-xs">
               <div>
-                <span className="text-gray-500">Label</span>
+                <span className="text-neutral-400">Label</span>
                 <p className="text-gray-200 font-medium mt-0.5">{selectedNode.label}</p>
               </div>
               <div className="flex gap-3">
                 <div>
-                  <span className="text-gray-500">Type</span>
+                  <span className="text-neutral-400">Type</span>
                   <p className="text-gray-200 mt-0.5">{selectedNode.type}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Community</span>
+                  <span className="text-neutral-400">Community</span>
                   <p className="text-gray-200 mt-0.5">{selectedNode.community}</p>
                 </div>
               </div>
               {selectedNode.source_file && (
                 <div>
-                  <span className="text-gray-500">Source</span>
+                  <span className="text-neutral-400">Source</span>
                   <p className="text-gray-300 mt-0.5 font-mono truncate">{selectedNode.source_file}{selectedNode.source_line > 0 ? `:${selectedNode.source_line}` : ''}</p>
                 </div>
               )}
               {selectedNode.content && (
                 <div>
-                  <span className="text-gray-500">Content</span>
-                  <pre className="mt-0.5 bg-gray-800 rounded p-2 text-gray-300 overflow-x-auto whitespace-pre-wrap text-[10px] leading-relaxed">
+                  <span className="text-neutral-400">Content</span>
+                  <pre className="mt-0.5 bg-[#202719] rounded p-2 text-gray-300 overflow-x-auto whitespace-pre-wrap text-[10px] leading-relaxed">
                     {selectedNode.content}
                   </pre>
                 </div>

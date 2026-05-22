@@ -35,8 +35,8 @@ const STAR_POINTS_FOR_DEPTH: Record<number, number> = {
 // ---- Palette --------------------------------------------------------------
 
 const PALETTE = [
-  '#818cf8', '#f472b6', '#34d399', '#fbbf24', '#60a5fa',
-  '#a78bfa', '#fb923c', '#2dd4bf', '#f87171', '#38bdf8',
+  '#a3e635', '#84cc16', '#34d399', '#fbbf24', '#d9f99d',
+  '#65a30d', '#fb923c', '#2dd4bf', '#f87171', '#a3e635',
 ]
 
 function hashColor(str: string): string {
@@ -570,7 +570,7 @@ export default function SkillConstellation({ skills }: { skills: SkillItem[] }) 
             <feMerge><feMergeNode in="blur" /><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
           <radialGradient id="core-glow">
-            <stop offset="0%" stopColor="#818cf8" stopOpacity="0.6" />
+            <stop offset="0%" stopColor="#a3e635" stopOpacity="0.6" />
             <stop offset="50%" stopColor="#4f46e5" stopOpacity="0.2" />
             <stop offset="100%" stopColor="#4f46e5" stopOpacity="0" />
           </radialGradient>
@@ -843,12 +843,12 @@ export default function SkillConstellation({ skills }: { skills: SkillItem[] }) 
           <rect x={0} y={0} width={180} height={100} rx={8} fill="#111827" stroke="#374151" strokeWidth={0.5} opacity={0.9} />
           <text x={12} y={18} fill="#c7d2fe" fontSize="10" fontWeight="700" letterSpacing={0.5}>FRACTAL STAR MAP</text>
 
-          <g transform="translate(18, 36)" style={{ color: '#818cf8' }}>
+          <g transform="translate(18, 36)" style={{ color: '#a3e635' }}>
             <path d={starPath(6, 2.5, 5)} fill="url(#star-shine)" />
           </g>
           <text x={32} y={39} fill="#9ca3af" fontSize="9">Skill star (5-point)</text>
 
-          <g transform="translate(18, 54)" style={{ color: '#f472b6' }}>
+          <g transform="translate(18, 54)" style={{ color: '#84cc16' }}>
             <path d={starPath(7, 3, 6)} fill="url(#star-shine)" />
           </g>
           <text x={32} y={57} fill="#9ca3af" fontSize="9">Category (6-point)</text>
@@ -869,8 +869,8 @@ export default function SkillConstellation({ skills }: { skills: SkillItem[] }) 
 
       {/* Detail Panel */}
       {selected && (
-        <div className="absolute bottom-4 right-4 w-80 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-20">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+        <div className="absolute bottom-4 right-4 w-80 bg-gray-900/95 backdrop-blur ring-1 ring-black/35 rounded-xl shadow-2xl overflow-hidden z-20">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-smara-300/12">
             <div className="flex items-center gap-2 min-w-0">
               <Zap className="w-4 h-4 text-smara-400 shrink-0" />
               <span className="text-sm font-semibold text-gray-100 truncate">{selected.name}</span>
@@ -922,14 +922,14 @@ export default function SkillConstellation({ skills }: { skills: SkillItem[] }) 
                 </div>
                 <ol className="space-y-1 mt-1">
                   <li className="flex items-center gap-2 text-[11px] bg-amber-900/20 border border-amber-800/40 rounded px-2 py-1">
-                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600/90 text-[10px] font-bold text-gray-900">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-400/90 text-[10px] font-bold text-amber-950">
                       v{selected.version}
                     </span>
                     <span className="text-amber-200 truncate flex-1">sekarang</span>
                     <RefreshCw className="w-3 h-3 text-amber-400" />
                   </li>
                   {[...selected.lineage].reverse().map((l, idx) => (
-                    <li key={`${l.version}-${idx}`} className="flex items-center gap-2 text-[11px] bg-gray-800/40 border border-gray-700/60 rounded px-2 py-1">
+                    <li key={`${l.version}-${idx}`} className="flex items-center gap-2 text-[11px] bg-gray-800/40 ring-1 ring-black/30 rounded px-2 py-1">
                       <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-[10px] font-bold text-gray-300">
                         v{l.version}
                       </span>

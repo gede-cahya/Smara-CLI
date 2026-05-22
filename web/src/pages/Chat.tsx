@@ -58,7 +58,7 @@ function formatCostUSD(cost?: number): string {
   return `$${cost.toFixed(6)}`
 }
 
-const CHART_COLORS = ['#22d3ee', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#60a5fa']
+const CHART_COLORS = ['#bef264', '#84cc16', '#65a30d', '#d9f99d', '#22c55e', '#facc15']
 
 function MermaidBlock({ code }: { code: string }) {
   const [svg, setSvg] = useState('')
@@ -82,7 +82,7 @@ function MermaidBlock({ code }: { code: string }) {
     return <div className="my-2 rounded-xl border border-red-700/50 bg-red-950/20 p-3 text-xs text-red-200">Mermaid error: {error}</div>
   }
   return (
-    <div className="my-3 overflow-x-auto rounded-2xl border border-smara-500/30 bg-gray-950/70 p-4 shadow-lg shadow-black/25">
+    <div className="my-3 overflow-x-auto rounded-2xl border border-[#223018]/75 bg-[#1d2718]/88 p-4 shadow-lg shadow-black/25">
       {svg ? <div className="min-w-fit" dangerouslySetInnerHTML={{ __html: svg }} /> : <div className="text-xs text-gray-400">Rendering diagram...</div>}
     </div>
   )
@@ -97,21 +97,21 @@ function SmartChart({ data }: { data: any[] }) {
 
   return (
     <div className="my-3 grid gap-3 lg:grid-cols-2">
-      <div className="h-72 rounded-2xl border border-cyan-500/20 bg-gray-950/60 p-3">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-300">Auto Bar Chart</div>
+      <div className="h-72 rounded-2xl border border-[#223018]/70 bg-[#1d2718]/84 p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-smara-300">Auto Bar Chart</div>
         <ResponsiveContainer width="100%" height="88%">
-          <BarChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey={labelKey} stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip /><Bar dataKey={valueKey} fill="#22d3ee" radius={[6, 6, 0, 0]} /></BarChart>
+          <BarChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey={labelKey} stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip /><Bar dataKey={valueKey} fill="#84cc16" radius={[6, 6, 0, 0]} /></BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="h-72 rounded-2xl border border-violet-500/20 bg-gray-950/60 p-3">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-violet-300">Auto Line Chart</div>
+      <div className="h-72 rounded-2xl border border-[#223018]/70 bg-[#1d2718]/84 p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-smara-300">Auto Line Chart</div>
         <ResponsiveContainer width="100%" height="88%">
-          <LineChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey={labelKey} stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip /><Line type="monotone" dataKey={valueKey} stroke="#a78bfa" strokeWidth={2} /></LineChart>
+          <LineChart data={data}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey={labelKey} stroke="#94a3b8" /><YAxis stroke="#94a3b8" /><Tooltip /><Line type="monotone" dataKey={valueKey} stroke="#bef264" strokeWidth={2} /></LineChart>
         </ResponsiveContainer>
       </div>
       {data.length <= 8 && (
-        <div className="h-72 rounded-2xl border border-emerald-500/20 bg-gray-950/60 p-3 lg:col-span-2">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-300">Auto Pie Chart</div>
+        <div className="h-72 rounded-2xl border border-[#223018]/70 bg-[#1d2718]/84 p-3 lg:col-span-2">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-smara-300">Auto Pie Chart</div>
           <ResponsiveContainer width="100%" height="88%">
             <PieChart><Pie data={data} dataKey={valueKey} nameKey={labelKey} outerRadius={90} label>{data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}</Pie><Tooltip /></PieChart>
           </ResponsiveContainer>
@@ -128,12 +128,12 @@ function JsonVisualBlock({ code }: { code: string }) {
   if (!rows || !rows.every((r: any) => r && typeof r === 'object' && !Array.isArray(r))) return null
   const columns = Array.from(new Set(rows.flatMap((r: any) => Object.keys(r)))) as string[]
   return (
-    <div className="my-3 overflow-hidden rounded-2xl border border-smara-500/25 bg-gray-950/60">
-      <div className="border-b border-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-smara-300">Auto Visual JSON</div>
+    <div className="my-3 overflow-hidden rounded-2xl border border-[#223018]/70 bg-[#1d2718]/84">
+      <div className="border-b border-[#223018]/75 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-smara-300">Auto Visual JSON</div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-xs text-gray-200">
-          <thead className="bg-gray-900/80 text-gray-300"><tr>{columns.map(c => <th key={c} className="px-3 py-2 font-semibold">{c}</th>)}</tr></thead>
-          <tbody>{rows.map((row: any, i: number) => <tr key={i} className="border-t border-gray-800/80">{columns.map(c => <td key={c} className="px-3 py-2 font-mono">{String(row[c] ?? '')}</td>)}</tr>)}</tbody>
+          <thead className="bg-[#27331f]/90 text-gray-300"><tr>{columns.map(c => <th key={c} className="px-3 py-2 font-semibold">{c}</th>)}</tr></thead>
+          <tbody>{rows.map((row: any, i: number) => <tr key={i} className="border-t border-[#223018]/75">{columns.map(c => <td key={c} className="px-3 py-2 font-mono">{String(row[c] ?? '')}</td>)}</tr>)}</tbody>
         </table>
       </div>
       <div className="p-3"><SmartChart data={rows} /></div>
@@ -158,7 +158,7 @@ function MarkdownCodeBlock({ children, className, inline, ...props }: any) {
   const raw = String(children ?? '')
 
   if (inline || !language) {
-    return <code className="rounded border border-smara-500/20 bg-smara-950/40 px-1 py-0.5 text-[0.85em] text-cyan-200 font-mono" {...props}>{children}</code>
+    return <code className="rounded border border-[#31421f]/60 bg-[#20291a]/78 px-1 py-0.5 text-[0.85em] text-smara-200 font-mono" {...props}>{children}</code>
   }
 
   const code = formatCodeBlock(raw, language)
@@ -176,10 +176,10 @@ function MarkdownCodeBlock({ children, className, inline, ...props }: any) {
   return (
     <>
       {jsonVisual}
-      <div className="my-2 overflow-hidden rounded-xl border border-gray-700/70 bg-gray-950/85 shadow-inner shadow-black/25">
-        <div className="flex items-center gap-2 border-b border-gray-800/80 bg-gray-900/80 px-3 py-1.5">
+      <div className="my-2 overflow-hidden rounded-xl border border-[#223018]/75 bg-[#1d2718]/92 shadow-inner shadow-black/25">
+        <div className="flex items-center gap-2 border-b border-[#223018]/75 bg-[#27331f]/90 px-3 py-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-smara-300">{language}</span>
-          <button onClick={copy} className="ml-auto flex items-center gap-1 rounded-md border border-gray-700 bg-gray-950/80 px-2 py-1 text-[10px] text-gray-300 hover:border-smara-400 hover:text-white transition-colors" title={language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy code'}>
+          <button onClick={copy} className="ml-auto flex items-center gap-1 rounded-md border border-[#31421f]/60 bg-[#202b18]/95 px-2 py-1 text-[10px] text-gray-300 hover:border-smara-400 hover:text-white transition-colors" title={language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy code'}>
             {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
             {copied ? 'Copied' : language.toLowerCase() === 'json' ? 'Copy JSON' : 'Copy'}
           </button>
@@ -195,31 +195,31 @@ function SmaraMarkdown({ content }: { content: string }) {
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-200 leading-6">{children}</p>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-50 leading-6">{children}</p>,
         strong: ({ children }) => <strong className="font-semibold text-white bg-smara-500/10 px-0.5 rounded">{children}</strong>,
         em: ({ children }) => <em className="text-smara-200 not-italic">{children}</em>,
         ul: ({ children }) => <ul className="my-2 space-y-1.5 pl-1">{children}</ul>,
         ol: ({ children }) => <ol className="my-2 space-y-1.5 pl-5 list-decimal marker:text-smara-400">{children}</ol>,
         li: ({ children }) => (
-          <li className="relative pl-5 text-gray-200 leading-6 before:content-[''] before:absolute before:left-0 before:top-2.5 before:w-1.5 before:h-1.5 before:rounded-full before:bg-gradient-to-r before:from-smara-400 before:to-cyan-300">
+          <li className="relative pl-5 text-gray-100 leading-6 before:content-[''] before:absolute before:left-0 before:top-2.5 before:w-1.5 before:h-1.5 before:rounded-full before:bg-gradient-to-r before:from-smara-400 before:to-smara-300">
             {children}
           </li>
         ),
         code: MarkdownCodeBlock,
         pre: ({ children }) => <>{children}</>,
-        table: ({ children }) => <div className="my-3 overflow-x-auto rounded-2xl border border-smara-500/25 bg-gray-950/60"><table className="min-w-full text-left text-sm text-gray-200">{children}</table></div>,
-        thead: ({ children }) => <thead className="bg-gray-900/80 text-gray-100">{children}</thead>,
-        tbody: ({ children }) => <tbody className="divide-y divide-gray-800/80">{children}</tbody>,
+        table: ({ children }) => <div className="my-3 overflow-x-auto rounded-2xl border border-[#223018]/70 bg-[#1d2718]/84"><table className="min-w-full text-left text-sm text-gray-200">{children}</table></div>,
+        thead: ({ children }) => <thead className="bg-[#27331f]/90 text-gray-100">{children}</thead>,
+        tbody: ({ children }) => <tbody className="divide-y divide-[#31421f]/70">{children}</tbody>,
         tr: ({ children }) => <tr className="hover:bg-smara-500/5">{children}</tr>,
         th: ({ children }) => <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-smara-200">{children}</th>,
         td: ({ children }) => <td className="px-3 py-2 text-sm text-gray-200">{children}</td>,
-        blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-smara-400/70 bg-smara-950/20 px-3 py-2 text-gray-300 rounded-r-xl">{children}</blockquote>,
-        a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-cyan-400/40 underline-offset-4 hover:text-cyan-200">{children}</a>,
-        img: ({ src, alt }) => <img src={src || ''} alt={alt || 'generated image'} className="my-2 max-h-96 rounded-xl border border-gray-700/70 shadow-lg shadow-black/30" />,
+        blockquote: ({ children }) => <blockquote className="my-2 rounded-xl border border-[#31421f]/60 bg-[#202b18]/58 px-3 py-2 text-gray-200">{children}</blockquote>,
+        a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" className="text-smara-300 underline decoration-smara-400/40 underline-offset-4 hover:text-smara-200">{children}</a>,
+        img: ({ src, alt }) => <img src={src || ''} alt={alt || 'generated image'} className="my-2 max-h-96 rounded-xl border border-[#31421f]/60 shadow-lg shadow-black/30" />,
         h1: ({ children }) => <h1 className="mb-2 mt-1 text-xl font-bold text-white tracking-tight">{children}</h1>,
         h2: ({ children }) => <h2 className="mb-2 mt-3 text-lg font-semibold text-white tracking-tight">{children}</h2>,
         h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-base font-semibold text-smara-100">{children}</h3>,
-        hr: () => <hr className="my-3 border-gray-700/60" />,
+        hr: () => <hr className="my-3 border-[#31421f]/60" />,
       }}
     >
       {content}
@@ -292,15 +292,15 @@ function ToolCallCard({
   const hasBody = logs.length > 0 || hasOutput || imageUrls.length > 0
 
   const accent =
-    kind === 'shell' ? 'border-cyan-700/50 bg-cyan-950/20'
-    : kind === 'write' ? 'border-amber-700/50 bg-amber-950/20'
-    : kind === 'read' ? 'border-emerald-700/50 bg-emerald-950/20'
-    : 'border-gray-700/50 bg-gray-900/40'
+    kind === 'shell' ? 'border-neutral-800/75 bg-[#202b18]/58'
+    : kind === 'write' ? 'border-neutral-800/75 bg-[#202b18]/58'
+    : kind === 'read' ? 'border-neutral-800/75 bg-[#202b18]/58'
+    : 'border-neutral-800/75 bg-[#202b18]/58'
 
   const titleColor =
-    kind === 'shell' ? 'text-cyan-300'
-    : kind === 'write' ? 'text-amber-300'
-    : kind === 'read' ? 'text-emerald-300'
+    kind === 'shell' ? 'text-smara-300'
+    : kind === 'write' ? 'text-smara-200'
+    : kind === 'read' ? 'text-smara-200'
     : 'text-gray-300'
 
   const Icon = kind === 'shell' ? Terminal : kind === 'write' || kind === 'read' ? FileText : Wrench
@@ -326,7 +326,7 @@ function ToolCallCard({
         <Icon className={`w-3.5 h-3.5 ${titleColor} shrink-0`} />
         <span className={`text-xs font-medium ${titleColor}`}>{title}</span>
         {msg.server && (
-          <span className="text-[10px] text-gray-500 font-mono">[{msg.server}]</span>
+          <span className="text-[10px] text-neutral-400 font-mono">[{msg.server}]</span>
         )}
         {subtitle && (
           <span className="text-xs text-gray-300 font-mono truncate flex-1 min-w-0" title={subtitle}>
@@ -335,7 +335,7 @@ function ToolCallCard({
         )}
         <div className="flex items-center gap-1 ml-auto shrink-0">
           {status === 'running' && (
-            <span className="flex items-center gap-1 text-[10px] text-cyan-400">
+            <span className="flex items-center gap-1 text-[10px] text-smara-400">
               <Loader2 className="w-3 h-3 animate-spin" />
               <span>running</span>
             </span>
@@ -355,7 +355,7 @@ function ToolCallCard({
           {subtitle && (
             <button
               onClick={() => onCopy(subtitle)}
-              className="ml-1 text-gray-500 hover:text-white transition-colors"
+              className="ml-1 text-neutral-400 hover:text-white transition-colors"
               title="Salin command"
             >
               {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
@@ -366,7 +366,7 @@ function ToolCallCard({
 
       {/* Body — terminal-style stream + final result */}
       {!collapsed && hasBody && (
-        <div className="border-t border-gray-800 bg-black/40 px-3 py-2 max-h-72 overflow-y-auto font-mono text-[11px] leading-snug">
+        <div className="border-t border-[#223018]/75 bg-[#1a2314]/65 px-3 py-2 max-h-72 overflow-y-auto font-mono text-[11px] leading-snug">
           {logs.length > 0 && (
             <pre className="whitespace-pre-wrap text-gray-200">
               {logs.join('\n')}
@@ -376,13 +376,13 @@ function ToolCallCard({
             <pre className="whitespace-pre-wrap text-gray-300">
               {(msg.output || '').slice(0, 4000)}
               {(msg.output || '').length > 4000 && (
-                <span className="text-gray-500">{`\n[... ${(msg.output || '').length - 4000} chars truncated ...]`}</span>
+                <span className="text-neutral-400">{`\n[... ${(msg.output || '').length - 4000} chars truncated ...]`}</span>
               )}
             </pre>
           )}
           {hasOutput && logs.length > 0 && msg.output && msg.output.trim() !== logs.join('\n').trim() && (
             <details className="mt-2 text-gray-400">
-              <summary className="cursor-pointer text-[10px] text-gray-500 hover:text-gray-300">
+              <summary className="cursor-pointer text-[10px] text-neutral-400 hover:text-gray-300">
                 full result ({msg.output.length} chars)
               </summary>
               <pre className="mt-1 whitespace-pre-wrap">{msg.output}</pre>
@@ -391,7 +391,7 @@ function ToolCallCard({
           {imageUrls.length > 0 && (
             <div className="mt-3 grid gap-2">
               {imageUrls.map(url => (
-                <img key={url} src={url} alt="generated image" className="max-h-72 rounded-lg border border-gray-700/70 object-contain shadow-lg shadow-black/30" />
+                <img key={url} src={url} alt="generated image" className="max-h-72 rounded-lg border border-[#31421f]/60 object-contain shadow-lg shadow-black/30" />
               ))}
             </div>
           )}
@@ -404,11 +404,11 @@ function ToolCallCard({
 const spinnerFrames = ['\u280B','\u2819','\u2839','\u2838','\u283C','\u2834','\u2826','\u2827','\u2807','\u280F']
 
 const MODES: Array<{ id: string; label: string; emoji: string; icon: typeof MessageCircle; bg: string; border: string; text: string }> = [
-  { id: 'ask', label: 'Ask', emoji: '\uD83D\uDCAC', icon: MessageCircle, bg: 'bg-cyan-600', border: 'border-cyan-500', text: 'text-cyan-400' },
+  { id: 'ask', label: 'Ask', emoji: '\uD83D\uDCAC', icon: MessageCircle, bg: 'bg-smara-600', border: 'border-smara-500', text: 'text-smara-400' },
   { id: 'rush', label: 'Rush', emoji: '\u26A1', icon: Zap, bg: 'bg-yellow-600', border: 'border-yellow-500', text: 'text-yellow-400' },
-  { id: 'plan', label: 'Plan', emoji: '\uD83D\uDCCB', icon: ClipboardList, bg: 'bg-fuchsia-600', border: 'border-fuchsia-500', text: 'text-fuchsia-400' },
+  { id: 'plan', label: 'Plan', emoji: '\uD83D\uDCCB', icon: ClipboardList, bg: 'bg-lime-600', border: 'border-lime-500', text: 'text-lime-400' },
   { id: 'test', label: 'Test', emoji: '\uD83E\uDDEA', icon: FlaskConical, bg: 'bg-green-600', border: 'border-green-500', text: 'text-green-400' },
-  { id: 'workflow', label: 'Workflow', emoji: '\uD83D\uDD04', icon: ArrowRightLeft, bg: 'bg-blue-600', border: 'border-blue-500', text: 'text-blue-400' },
+  { id: 'workflow', label: 'Workflow', emoji: '\uD83D\uDD04', icon: ArrowRightLeft, bg: 'bg-smara-600', border: 'border-smara-500', text: 'text-smara-400' },
 ]
 
 const SESSION_META_KEY = 'smara_chat_sessions'
@@ -520,12 +520,12 @@ function mergeSessionPreview(prev: ChatSession | undefined, incoming: ChatSessio
 
 function statusBadgeClass(status?: WebSessionStatus) {
   switch (status) {
-    case 'running': return 'border-cyan-400/30 bg-cyan-500/10 text-cyan-300'
-    case 'completed': return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-300'
+    case 'running': return 'border-smara-400/30 bg-smara-500/10 text-smara-300'
+    case 'completed': return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
     case 'error': return 'border-red-400/25 bg-red-500/10 text-red-300'
     case 'cancelled': return 'border-amber-400/25 bg-amber-500/10 text-amber-300'
-    case 'archived': return 'border-gray-500/25 bg-gray-700/20 text-gray-400'
-    default: return 'border-gray-500/20 bg-gray-700/10 text-gray-400'
+    case 'archived': return 'border-[#5f7446]/30 bg-[#31421f]/35 text-gray-400'
+    default: return 'border-[#5f7446]/24 bg-[#31421f]/24 text-gray-400'
   }
 }
 
@@ -1237,31 +1237,31 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       onDrop={handleDrop}
     >
       {/* Header */}
-      <div className="h-16 border-b border-white/10 flex items-center justify-between px-5 bg-gradient-to-r from-gray-950/75 via-gray-900/55 to-smara-950/35 backdrop-blur-xl shadow-lg shadow-black/15">
+      <div className="h-[72px] flex items-center justify-between gap-4 px-5 bg-[#1b2416]/96 backdrop-blur-xl shadow-lg shadow-black/10">
         <div className="flex items-center gap-3 min-w-0">
           <div className="relative shrink-0">
-            <div className="absolute inset-0 rounded-2xl bg-cyan-400/30 blur-md" />
-            <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-400 via-smara-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-cyan-950/40 ring-1 ring-white/15">
+            <div className="absolute inset-0 rounded-2xl bg-smara-400/30 blur-md" />
+            <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-br from-smara-200 via-smara-400 to-smara-700 flex items-center justify-center shadow-lg shadow-smara-950/40 ring-1 ring-smara-300/14">
               <Bot className="w-5 h-5 text-white" />
             </div>
           </div>
           <button
             onClick={() => setShowSessions(!showSessions)}
-            className="group flex items-center gap-2 min-w-0 max-w-[360px] px-3 py-1.5 rounded-lg border border-gray-700/70 bg-gray-950/50 hover:border-smara-500/60 hover:bg-smara-950/30 transition-colors"
+            className="group flex items-center gap-2 min-w-0 max-w-[420px] px-3 py-2 rounded-2xl bg-[#24301b]/96 hover:bg-[#2b3a20] transition-colors"
             title="Pilih sesi chat"
           >
-            <MessageSquare className="w-4 h-4 text-gray-500 group-hover:text-smara-300 shrink-0" />
+            <MessageSquare className="w-4 h-4 text-neutral-400 group-hover:text-smara-300 shrink-0" />
             <span className="font-medium truncate group-hover:text-smara-200">{current.name}</span>
             <span className={`text-[10px] shrink-0 rounded-full border px-1.5 py-0.5 ${statusBadgeClass(current.status)}`}>{current.status || 'idle'}</span>
-            <span className="text-[10px] text-gray-500 shrink-0">{sessions.length} sesi</span>
-            <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform shrink-0 ${showSessions ? 'rotate-180 text-smara-300' : ''}`} />
+            <span className="text-[10px] text-neutral-400 shrink-0">{sessions.length} sesi</span>
+            <ChevronDown className={`w-4 h-4 text-neutral-400 transition-transform shrink-0 ${showSessions ? 'rotate-180 text-smara-300' : ''}`} />
           </button>
-          <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-gray-500 font-mono truncate max-w-[220px]"><Server className="w-3 h-3" />{sessionId}</span>
+          <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-neutral-400 font-mono truncate max-w-[220px]"><Server className="w-3 h-3" />{sessionId}</span>
         </div>
         <div className="flex items-center gap-3">
           <button
             onClick={newSession}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-gradient-to-r from-smara-600 to-cyan-600 hover:from-smara-500 hover:to-cyan-500 rounded-xl transition-all shadow-lg shadow-smara-950/30 border border-white/10"
+            className="flex items-center gap-1.5 rounded-2xl bg-smara-300 px-3.5 py-2 text-xs font-semibold text-black shadow-lg shadow-smara-950/20 transition-colors hover:bg-smara-200"
           >
             <Plus className="w-3 h-3" /> Sesi Baru
           </button>
@@ -1270,7 +1270,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
               <RefreshCw className="w-3 h-3" /> Reconnect
             </button>
           )}
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${connected ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300' : 'border-red-400/20 bg-red-500/10 text-red-300'}`}>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${connected ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300' : 'border-red-400/20 bg-red-500/10 text-red-300'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.9)]' : 'bg-red-400'}`} />
             {connected ? 'Online' : 'Offline'}
           </span>
@@ -1279,18 +1279,18 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
 
       {/* Session dropdown */}
       {showSessions && (
-        <div className="absolute top-14 left-0 right-0 md:left-64 z-50 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl shadow-2xl shadow-black/40">
-          <div className="mx-auto max-w-5xl p-3">
+        <div className="absolute top-[72px] left-3 right-3 z-50 overflow-hidden rounded-3xl bg-[#202b18] shadow-2xl shadow-black/35 ring-1 ring-black/55">
+          <div className="mx-auto max-w-5xl p-4">
             <div className="flex items-center justify-between mb-3 px-1">
               <div>
-                <div className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Sesi dari Smara Web</div>
-                <div className="text-[11px] text-gray-600">Pilih sesi untuk ditampilkan di chat</div>
+                <div className="text-xs text-gray-200 font-semibold uppercase tracking-wider">Sesi dari Smara Web</div>
+                <div className="text-[11px] text-neutral-400">Pilih sesi untuk ditampilkan di chat</div>
               </div>
-              <button onClick={() => setShowSessions(false)} className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800">Tutup</button>
+              <button onClick={() => setShowSessions(false)} className="text-xs text-gray-400 hover:text-gray-100 px-2 py-1 rounded-lg hover:bg-[#26331d]">Tutup</button>
             </div>
             <div className="grid gap-2 max-h-80 overflow-y-auto pr-1">
               {sessions.length === 0 && (
-                <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-sm text-gray-500">Belum ada sesi tersimpan.</div>
+                <div className="rounded-xl bg-[#27331f] p-4 text-sm text-gray-300 ring-1 ring-black/35">Belum ada sesi tersimpan.</div>
               )}
               {sessions.map(s => {
                 const last = s.messages[s.messages.length - 1]
@@ -1298,48 +1298,48 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                   <div
                     key={s.id}
                     onClick={() => { setCurrent(s); setShowSessions(false); }}
-                    className={`group flex items-center justify-between gap-3 p-3 rounded-xl cursor-pointer text-sm border transition-all ${
+                    className={`group flex items-center justify-between gap-3 p-3 rounded-xl cursor-pointer text-sm transition-all ring-1 ${
                       s.id === current.id
-                        ? 'bg-smara-900/35 border-smara-500/40 shadow-sm shadow-smara-950/40'
-                        : 'bg-gray-900/60 border-gray-800 hover:bg-gray-800 hover:border-gray-700'
+                        ? 'bg-[#31421f] ring-black/35 shadow-sm shadow-black/20'
+                        : 'bg-[#26331d] ring-black/35 hover:bg-[#2b3a20] hover:ring-black/25'
                     }`}
                   >
                     <div className="flex items-start gap-3 min-w-0">
-                      <div className={`mt-0.5 rounded-lg p-2 ${s.id === current.id ? 'bg-smara-500/15 text-smara-300' : 'bg-gray-800 text-gray-500 group-hover:text-gray-300'}`}>
+                      <div className={`mt-0.5 rounded-lg p-2 ${s.id === current.id ? 'bg-smara-500/15 text-smara-300' : 'bg-[#26331d] text-neutral-400 group-hover:text-gray-300'}`}>
                         <MessageSquare className="w-4 h-4" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="font-medium text-gray-100 truncate max-w-[360px]">{s.name}</span>
-                          {s.id === current.id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-smara-500/15 text-smara-200 border border-smara-500/20">aktif</span>}
+                          {s.id === current.id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-smara-500/15 text-smara-200 ring-1 ring-smara-300/12">aktif</span>}
                         </div>
-                        <div className="mt-1 text-xs text-gray-500 truncate max-w-[520px]">
+                        <div className="mt-1 text-xs text-gray-400 truncate max-w-[520px]">
                           {last?.content ? last.content : 'Sesi kosong'}
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <div className="hidden sm:flex flex-col items-end text-[10px] text-gray-600">
+                      <div className="hidden sm:flex flex-col items-end text-[10px] text-neutral-400">
                         <span>{s.totalHistory ?? s.messages.length} pesan</span>
                         <span className={`inline-flex rounded-full border px-1.5 py-0.5 ${statusBadgeClass(s.status)}`}>{s.status || 'idle'}</span>
                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(s.updatedAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                       <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
                         {s.status === 'running' && (
-                          <button onClick={(e) => { e.stopPropagation(); cancelSession(s.id); }} className="text-cyan-400 hover:text-amber-300 transition-colors p-1.5 rounded hover:bg-amber-950/30" title="Stop session">
+                          <button onClick={(e) => { e.stopPropagation(); cancelSession(s.id); }} className="text-smara-400 hover:text-amber-300 transition-colors p-1.5 rounded hover:bg-amber-400/10" title="Stop session">
                             <StopCircle className="w-4 h-4" />
                           </button>
                         )}
-                        <button onClick={(e) => { e.stopPropagation(); renameSession(s.id); }} className="text-gray-600 hover:text-cyan-300 transition-colors p-1.5 rounded hover:bg-cyan-950/30" title="Rename sesi">
+                        <button onClick={(e) => { e.stopPropagation(); renameSession(s.id); }} className="text-neutral-500 hover:text-smara-300 transition-colors p-1.5 rounded hover:bg-smara-950/30" title="Rename sesi">
                           <Pencil className="w-4 h-4" />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); toggleArchiveSession(s); }} className="text-gray-600 hover:text-amber-300 transition-colors p-1.5 rounded hover:bg-amber-950/30" title={s.archived ? 'Unarchive sesi' : 'Archive sesi'}>
+                        <button onClick={(e) => { e.stopPropagation(); toggleArchiveSession(s); }} className="text-neutral-600 hover:text-amber-300 transition-colors p-1.5 rounded hover:bg-[#26331d]/80" title={s.archived ? 'Unarchive sesi' : 'Archive sesi'}>
                           {s.archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
                         </button>
                         {sessions.length > 1 && (
                           <button
                             onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
-                            className="text-gray-600 hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-950/30"
+                            className="text-neutral-600 hover:text-red-400 transition-colors p-1.5 rounded hover:bg-[#26331d]/80"
                             title="Hapus sesi"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1359,10 +1359,10 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       <div
         ref={messagesScrollRef}
         onScroll={markAutoScrollIfNearBottom}
-        className="flex-1 overflow-y-auto px-4 py-5 md:px-7 md:py-6 space-y-4 bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.08),transparent_32%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]"
+        className="flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-7 space-y-5 bg-[linear-gradient(180deg,rgba(163,230,53,0.09),rgba(255,255,255,0.035)_38%,rgba(21,29,16,0.22)_72%)]"
       >
         {(current.totalHistory ?? messages.length) > messages.length && (
-          <div className="mx-auto max-w-3xl rounded-2xl border border-cyan-400/20 bg-cyan-950/20 px-4 py-3 text-center text-xs text-cyan-100 shadow-lg shadow-black/20">
+          <div className="mx-auto max-w-3xl rounded-2xl border border-[#31421f]/60 bg-[#202b18]/48 px-4 py-3 text-center text-xs text-smara-100 shadow-lg shadow-black/20">
             Menampilkan {messages.length} pesan terakhir dari {current.totalHistory} pesan. Riwayat lama disimpan di backend tapi tidak dirender agar sesi tetap ringan.
           </div>
         )}
@@ -1383,15 +1383,15 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             // compact muted block. The common case is rendered inside the
             // ToolCallCard above.
             return (
-              <div key={i} className="ml-11 px-3 py-2 bg-gray-900/40 border border-gray-800 rounded text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
+              <div key={i} className="ml-11 px-3 py-2 bg-[#20291a]/78 border border-[#223018]/75 rounded text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {msg.output || msg.content}
               </div>
             )
           }
           if (msg.role === 'log') {
             return (
-              <div key={i} className="flex items-center gap-2 text-xs text-gray-500 px-2 ml-11">
-                <span className="text-gray-600">&#9654;</span>
+              <div key={i} className="flex items-center gap-2 text-xs text-neutral-400 px-2 ml-11">
+                <span className="text-neutral-500">&#9654;</span>
                 <span>{msg.content}</span>
               </div>
             )
@@ -1403,20 +1403,20 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                   ? 'bg-gradient-to-br from-smara-600 to-smara-800 ring-smara-400/30 shadow-smara-950/40'
                   : msg.role === 'error'
                   ? 'bg-gradient-to-br from-red-700 to-red-950 ring-red-400/30 shadow-red-950/40'
-                  : 'bg-gradient-to-br from-gray-700 via-gray-800 to-smara-950 ring-smara-400/20 shadow-smara-950/40'
+                  : 'bg-gradient-to-br from-[#4f6138] via-[#38482a] to-[#24301b] ring-smara-400/20 shadow-smara-950/40'
               }`}>
                 {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-200" />}
               </div>
-              <div className={`max-w-[88%] md:max-w-[78%] rounded-[1.35rem] px-4 py-3 text-sm leading-relaxed relative shadow-2xl backdrop-blur-md overflow-hidden transition-all duration-200 group-hover:-translate-y-0.5 ${
+              <div className={`max-w-[90%] md:max-w-[76%] rounded-[1.45rem] px-5 py-4 text-sm leading-relaxed relative shadow-xl backdrop-blur-md overflow-hidden transition-all duration-200 ${
                 msg.role === 'user'
-                  ? 'bg-gradient-to-br from-cyan-600/30 via-smara-700/35 to-fuchsia-900/25 border border-cyan-300/25 shadow-cyan-950/25 ring-1 ring-white/10'
+                  ? 'bg-[#49751a]/96 text-white shadow-smara-950/18'
                   : msg.role === 'error'
-                  ? 'bg-gradient-to-br from-red-950/70 to-gray-950/60 border border-red-600/50 text-red-100 shadow-red-950/20'
-                  : 'bg-gradient-to-br from-white/[0.08] via-gray-900/85 to-smara-950/35 border border-white/10 shadow-black/30 ring-1 ring-white/[0.04] before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-cyan-200/60 before:to-transparent'
+                  ? 'bg-gradient-to-br from-red-950/70 to-neutral-950/60 border border-red-600/40 text-red-100 shadow-red-950/20'
+                  : 'bg-[#2b3522]/98 text-gray-50 shadow-black/12'
               }`}>
                 {msg.role !== 'user' && msg.role !== 'error' && (
-                  <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-smara-300/90">
-                    <span className="h-1.5 w-1.5 rounded-full bg-smara-300 shadow-[0_0_12px_rgba(45,212,191,0.8)]" />
+                  <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-smara-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-smara-300/85" />
                     Smara Response
                   </div>
                 )}
@@ -1427,18 +1427,18 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                       return (
                         <div key={ai} className="relative group/att">
                           {att.kind === 'image' && att.preview ? (
-                            <img src={att.preview} alt={att.path} className="max-h-32 rounded-xl border border-gray-700/70 shadow-lg" />
+                            <img src={att.preview} alt={att.path} className="max-h-32 rounded-xl border border-[#31421f]/60 shadow-lg" />
                           ) : (
-                            <div className="flex items-center gap-2 px-3 py-2 bg-gray-950/60 border border-gray-700/70 rounded-xl shadow-inner">
+                            <div className="flex items-center gap-2 px-3 py-2 bg-gray-950/60 border border-[#31421f]/60 rounded-xl shadow-inner">
                               <Icon className="w-5 h-5 text-smara-300 shrink-0" />
                               <div className="flex flex-col min-w-0">
                                 <span className="text-xs text-gray-200 truncate max-w-[200px]">{att.name || att.path.split('/').pop()}</span>
-                                <span className="text-[10px] text-gray-500 font-mono">{(att.size / 1024).toFixed(0)} KB</span>
+                                <span className="text-[10px] text-neutral-400 font-mono">{(att.size / 1024).toFixed(0)} KB</span>
                               </div>
                             </div>
                           )}
                           {att.kind === 'image' && (
-                            <div className="text-[10px] text-gray-500 mt-0.5 font-mono truncate max-w-[200px]">{(att.size / 1024).toFixed(0)} KB</div>
+                            <div className="text-[10px] text-neutral-400 mt-0.5 font-mono truncate max-w-[200px]">{(att.size / 1024).toFixed(0)} KB</div>
                           )}
                         </div>
                       )
@@ -1451,29 +1451,29 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                   <div className="whitespace-pre-wrap leading-6">{msg.content}</div>
                 ) : (
                   <>
-                    <SmaraMarkdown content={msg.content} />
+                    <div className="text-gray-100"><SmaraMarkdown content={msg.content} /></div>
                     {msg.requestPrompt && (
-                      <details className="mt-3 rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-[10px] text-gray-400">
-                        <summary className="cursor-pointer select-none text-cyan-200">Request prompt</summary>
+                      <details className="mt-3 rounded-lg border border-[#31421f]/60 bg-[#20291a]/78 px-2 py-1 text-[10px] text-gray-400">
+                        <summary className="cursor-pointer select-none text-smara-200">Request prompt</summary>
                         <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-gray-300">{msg.requestPrompt}</pre>
                       </details>
                     )}
                   </>
                 )}
                 {(msg.role !== 'user' && msg.role !== 'error' && (msg.inputTokens !== undefined || msg.outputTokens !== undefined || msg.totalTokens !== undefined || msg.duration || msg.estimatedCostUSD !== undefined || msg.model || msg.provider)) ? (
-                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/5 pt-1.5 text-[10px] text-gray-500">
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-neutral-800/60 pt-2 text-[10px] text-gray-400">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      {(msg.provider || msg.model) && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">{msg.provider ? `${msg.provider}/` : ''}{msg.model || 'unknown'}</span>}
-                      {msg.inputTokens !== undefined && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">in {msg.inputTokens}</span>}
-                      {msg.outputTokens !== undefined && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">out {msg.outputTokens}</span>}
-                      {msg.totalTokens !== undefined && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">total {msg.totalTokens}</span>}
-                      {msg.duration && <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">{msg.duration}</span>}
-                      {msg.estimatedCostUSD !== undefined && <span className="rounded-full border border-emerald-400/20 bg-emerald-500/5 px-2 py-0.5 text-emerald-200">~{formatCostUSD(msg.estimatedCostUSD)}</span>}
+                      {(msg.provider || msg.model) && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">{msg.provider ? `${msg.provider}/` : ''}{msg.model || 'unknown'}</span>}
+                      {msg.inputTokens !== undefined && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">in {msg.inputTokens}</span>}
+                      {msg.outputTokens !== undefined && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">out {msg.outputTokens}</span>}
+                      {msg.totalTokens !== undefined && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">total {msg.totalTokens}</span>}
+                      {msg.duration && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">{msg.duration}</span>}
+                      {msg.estimatedCostUSD !== undefined && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5 text-smara-200">~{formatCostUSD(msg.estimatedCostUSD)}</span>}
                     </div>
                     <div className="shrink-0 text-right">{new Date(msg.timestamp).toLocaleTimeString()}</div>
                   </div>
                 ) : (
-                  <div className="mt-2 flex justify-end border-t border-white/5 pt-1.5 text-[10px] text-gray-500">
+                  <div className="mt-3 flex justify-end border-t border-neutral-800/60 pt-2 text-[10px] text-gray-400">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </div>
                 )}
@@ -1481,7 +1481,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                   onClick={() => copyMessage(i, msg.content)}
                   title="Salin pesan"
                   aria-label="Salin pesan"
-                  className={`absolute top-2 ${msg.role === 'user' ? 'left-2' : 'right-2'} z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-gray-950/90 text-gray-300 shadow-lg shadow-black/30 backdrop-blur-md opacity-80 transition-all hover:border-smara-400 hover:bg-gray-900 hover:text-white hover:opacity-100 group-hover:opacity-100 md:opacity-0 md:group-hover:opacity-100`}
+                  className={`absolute top-2 ${msg.role === 'user' ? 'left-2' : 'right-2'} z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl bg-[#202b18]/90 text-gray-300 shadow-lg shadow-black/30 backdrop-blur-md opacity-80 transition-all hover:bg-[#26331d] hover:text-white hover:opacity-100 group-hover:opacity-100 md:opacity-0 md:group-hover:opacity-100`}
                 >
                   {copiedIdx === i ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
@@ -1498,8 +1498,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             <div className="flex-1 max-w-lg space-y-2">
               {/* Active phase stepper */}
               {activePhases.length > 0 && (
-                <div className="bg-gray-900/80 border border-gray-700/60 rounded-lg p-3 space-y-1.5">
-                  <div className="flex items-center gap-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-1">
+                <div className="bg-[#20291a]/82 border border-[#223018]/75 rounded-lg p-3 space-y-1.5">
+                  <div className="flex items-center gap-2 text-[10px] text-neutral-400 uppercase tracking-wider font-medium mb-1">
                     <BrainCircuit className="w-3 h-3" />
                     Proses Berjalan
                   </div>
@@ -1510,7 +1510,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                       ) : (
                         <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
                       )}
-                      <span className={ph.status === 'running' ? 'text-gray-200 font-medium' : 'text-gray-500'}>
+                      <span className={ph.status === 'running' ? 'text-gray-200 font-medium' : 'text-neutral-400'}>
                         {ph.description || ph.phase}
                       </span>
                     </div>
@@ -1518,7 +1518,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                 </div>
               )}
               {activePhases.length === 0 && (
-                <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 flex items-center gap-2">
+                <div className="bg-[#20291a]/78 border border-[#223018]/75 rounded-lg px-4 py-3 flex items-center gap-2">
                   <span className="text-smara-400 text-sm font-mono">{spinnerFrames[spinnerIdx]}</span>
                   <span className="text-xs text-gray-400">Menghasilkan...</span>
                 </div>
@@ -1531,7 +1531,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
 
       {/* Status bar */}
       {statusStats && (
-        <div className="px-4 py-1 border-t border-gray-800/50 bg-gray-900/30 flex items-center gap-3 text-[10px] text-gray-500">
+        <div className="px-5 py-1.5 bg-[#1a2314]/96 flex items-center gap-3 text-[10px] text-neutral-500">
           <span className={`flex items-center gap-1 ${MODES.find(m => m.id === mode)?.text || 'text-gray-400'}`}>
             {MODES.find(m => m.id === mode)?.emoji} {MODES.find(m => m.id === mode)?.label || mode}
           </span>
@@ -1545,8 +1545,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       )}
 
       {/* Mode switcher + Input */}
-      <div className="p-4 border-t border-white/10 bg-gray-950/70 backdrop-blur-xl space-y-3 shadow-[0_-18px_40px_rgba(0,0,0,0.25)]">
-        <div className="flex flex-wrap gap-1.5 rounded-2xl border border-white/10 bg-black/20 p-1.5 w-fit">
+      <div className="p-4 bg-[#1b2416]/98 backdrop-blur-xl space-y-3 shadow-[0_-18px_40px_rgba(0,0,0,0.22)]">
+        <div className="flex flex-wrap gap-1.5 rounded-2xl border border-[#31421f]/60 bg-[#20291a]/78 p-1.5 w-fit">
           {MODES.map(m => {
             const Icon = m.icon
             const active = mode === m.id
@@ -1561,8 +1561,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl transition-all ${
                   active
-                    ? `${m.bg} text-white border ${m.border} shadow-lg shadow-black/20`
-                    : 'bg-white/[0.04] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200 border border-transparent'
+                    ? `${m.bg} text-white shadow-lg shadow-black/20`
+                    : 'text-gray-400 hover:bg-[#26331d]/80 hover:text-gray-200'
                 }`}
                 title={m.label}
               >
@@ -1573,8 +1573,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           })}
         </div>
         {activePlanQuest && (
-          <div className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-950/20 p-3 shadow-lg shadow-fuchsia-950/20">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-fuchsia-200">
+          <div className="rounded-2xl border border-[#31421f]/60 bg-[#20291a]/78 p-3 shadow-lg shadow-lime-950/20">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-lime-200">
               <ClipboardList className="h-3.5 w-3.5" /> Open question
             </div>
             <div className="mb-3 text-sm font-medium text-gray-100">{activePlanQuest.title}</div>
@@ -1584,13 +1584,13 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                   key={opt}
                   onClick={() => sendPlanQuestAnswer(opt)}
                   disabled={thinking}
-                  className="rounded-xl border border-fuchsia-300/25 bg-white/[0.06] px-3 py-2 text-xs text-gray-100 transition-colors hover:border-fuchsia-300/60 hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-xl bg-smara-300/8 px-3 py-2 text-xs text-gray-100 transition-colors hover:bg-smara-300/14 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {opt}
                 </button>
               ))}
               {activePlanQuest.allowCustom && (
-                <span className="rounded-xl border border-gray-700/70 bg-black/20 px-3 py-2 text-xs text-gray-400">Custom: ketik jawaban di input</span>
+                <span className="rounded-xl border border-[#31421f]/60 bg-[#20291a]/78 px-3 py-2 text-xs text-gray-400">Custom: ketik jawaban di input</span>
               )}
             </div>
           </div>
@@ -1600,21 +1600,21 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             {attachments.map((att, i) => {
               const Icon = attachmentIcon(att.name, att.mime)
               return (
-                <div key={i} className="relative group inline-flex items-center gap-2 pl-1 pr-2 py-1 bg-gray-800/80 border border-gray-700 rounded">
+                <div key={i} className="relative group inline-flex items-center gap-2 pl-1 pr-2 py-1 bg-[#20291a]/82 border border-[#223018]/75 rounded">
                   {att.kind === 'image' && att.preview ? (
                     <img src={att.preview} alt="" className="h-8 w-8 object-cover rounded" />
                   ) : (
-                    <div className="h-8 w-8 flex items-center justify-center bg-gray-900/60 rounded">
+                    <div className="h-8 w-8 flex items-center justify-center bg-[#27331f]/80 rounded">
                       <Icon className="w-4 h-4 text-smara-300" />
                     </div>
                   )}
                   <span className="text-xs text-gray-300 font-mono truncate max-w-[160px]" title={att.path}>
                     {att.name}
                   </span>
-                  <span className="text-[10px] text-gray-500">{(att.size / 1024).toFixed(0)} KB</span>
+                  <span className="text-[10px] text-neutral-400">{(att.size / 1024).toFixed(0)} KB</span>
                   <button
                     onClick={() => removeAttachment(i)}
-                    className="ml-1 text-gray-500 hover:text-red-400 transition-colors"
+                    className="ml-1 text-neutral-400 hover:text-red-400 transition-colors"
                     title="Hapus lampiran"
                   >
                     <X className="w-3 h-3" />
@@ -1624,7 +1624,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             })}
           </div>
         )}
-        <div className="flex gap-2 rounded-3xl border border-white/10 bg-black/25 p-2 shadow-inner shadow-black/30 focus-within:border-cyan-300/35 focus-within:ring-2 focus-within:ring-cyan-400/10 transition-all">
+        <div className="flex gap-2 rounded-[1.35rem] bg-[#2b3522]/98 p-2 shadow-inner shadow-black/30 focus-within:ring-1 focus-within:ring-smara-300/20 transition-all">
           <input
             ref={fileInputRef}
             type="file"
@@ -1636,7 +1636,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             title="Lampirkan file (gambar, PDF, dokumen, kode)"
-            className="px-3 py-2 bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 hover:border-smara-400/60 rounded-2xl transition-colors disabled:opacity-50"
+            className="px-3 py-2 bg-[#20291a]/78 hover:bg-[#26331d]/80 rounded-2xl transition-colors disabled:opacity-50"
           >
             <Paperclip className="w-4 h-4 text-gray-400" />
           </button>
@@ -1646,13 +1646,13 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={uploading ? 'Mengunggah...' : 'Ketik pesan... (Enter kirim · Ctrl+V paste · drop file untuk lampirkan)'}
-            className="flex-1 bg-transparent border border-transparent rounded-2xl px-3 py-2 text-sm resize-none focus:outline-none min-h-[42px] max-h-[140px] placeholder:text-gray-500"
+            className="flex-1 bg-transparent border border-transparent rounded-2xl px-3 py-2 text-sm text-gray-100 resize-none focus:outline-none min-h-[42px] max-h-[140px] placeholder:text-gray-400"
             rows={1}
           />
           <button
             onClick={send}
             disabled={(!input.trim() && attachments.length === 0) || current.status === 'running' || uploading}
-            className="px-4 py-2 bg-gradient-to-r from-smara-600 to-cyan-600 hover:from-smara-500 hover:to-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl transition-all shadow-lg shadow-cyan-950/30 border border-white/10"
+            className="px-4 py-2 rounded-2xl bg-smara-300 text-black shadow-lg shadow-smara-950/25 transition-colors hover:bg-smara-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />
           </button>
@@ -1660,7 +1660,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       </div>
 
       {dragOver && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-smara-900/40 backdrop-blur-sm border-4 border-dashed border-smara-500 rounded-lg pointer-events-none">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#11170d]/78 backdrop-blur-sm rounded-lg pointer-events-none">
           <div className="flex flex-col items-center gap-2 text-smara-200">
             <Upload className="w-12 h-12" />
             <span className="text-lg font-semibold">Drop file untuk lampirkan</span>
@@ -1670,7 +1670,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       )}
 
       {toast && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg shadow-lg text-sm text-gray-200">
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-[#202b18] border border-[#223018]/75 rounded-lg shadow-lg text-sm text-gray-200">
           {toast}
         </div>
       )}

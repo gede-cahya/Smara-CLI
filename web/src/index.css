@@ -12,13 +12,13 @@
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(34, 211, 238, 0.35) rgba(255, 255, 255, 0.04);
+    scrollbar-color: rgba(190, 242, 100, 0.32) rgba(255, 255, 255, 0.035);
   }
 
   *::-webkit-scrollbar { width: 9px; height: 9px; }
   *::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.04); }
   *::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(34,211,238,.45), rgba(168,85,247,.35));
+    background: linear-gradient(180deg, rgba(190,242,100,.42), rgba(101,163,13,.32));
     border-radius: 999px;
   }
 }
@@ -27,10 +27,10 @@
   .smara-shell {
     position: relative;
     background:
-      radial-gradient(circle at 25% 18%, rgba(34, 211, 238, 0.18), transparent 30%),
-      radial-gradient(circle at 72% 24%, rgba(168, 85, 247, 0.16), transparent 32%),
-      radial-gradient(circle at 55% 82%, rgba(45, 212, 191, 0.10), transparent 35%),
-      #08090f;
+      radial-gradient(circle at 16% -8%, rgba(190, 242, 100, 0.12), transparent 27rem),
+      radial-gradient(circle at 88% 10%, rgba(101, 163, 13, 0.09), transparent 25rem),
+      radial-gradient(circle at 54% 112%, rgba(132, 204, 22, 0.075), transparent 34rem),
+      linear-gradient(180deg, #11170d 0%, #151d10 46%, #10160c 100%);
   }
 
   .smara-shell::before {
@@ -38,11 +38,11 @@
     position: absolute;
     inset: 0;
     background-image:
-      linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
-    background-size: 44px 44px;
-    mask-image: radial-gradient(circle at center, black, transparent 82%);
-    opacity: .35;
+      linear-gradient(rgba(190,242,100,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(190,242,100,.03) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(circle at center, black, transparent 86%);
+    opacity: .26;
     pointer-events: none;
   }
 
@@ -50,22 +50,22 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, rgba(255,255,255,.08), transparent 26%, transparent 72%, rgba(34,211,238,.08));
+    background: linear-gradient(135deg, rgba(255,255,255,.018), transparent 28%, transparent 78%, rgba(190,242,100,.025));
     pointer-events: none;
   }
 
   .smara-orb {
     position: absolute;
     border-radius: 9999px;
-    filter: blur(28px);
-    opacity: .52;
+    filter: blur(34px);
+    opacity: .26;
     animation: smara-float 8s ease-in-out infinite;
     pointer-events: none;
   }
 
-  .smara-orb-a { width: 220px; height: 220px; left: 18%; top: 8%; background: rgba(34, 211, 238, .22); }
-  .smara-orb-b { width: 260px; height: 260px; right: 12%; top: 12%; background: rgba(168, 85, 247, .18); animation-delay: -2.5s; }
-  .smara-orb-c { width: 240px; height: 240px; left: 42%; bottom: 5%; background: rgba(16, 185, 129, .13); animation-delay: -5s; }
+  .smara-orb-a { width: 240px; height: 240px; left: 18%; top: 8%; background: rgba(190, 242, 100, .11); }
+  .smara-orb-b { width: 280px; height: 280px; right: 12%; top: 12%; background: rgba(132, 204, 22, .08); animation-delay: -2.5s; }
+  .smara-orb-c { width: 240px; height: 240px; left: 42%; bottom: 5%; background: rgba(245, 245, 245, .035); animation-delay: -5s; }
 
   .memory-dot-node { animation: memory-dot-float 4.5s ease-in-out infinite; }
   .memory-dot-node:hover { z-index: 20; filter: saturate(1.35) brightness(1.12); }

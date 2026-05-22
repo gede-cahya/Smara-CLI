@@ -30,10 +30,37 @@ func TestIterationBudget_ModeDefaults(t *testing.T) {
 func TestIterationBudget_UserOverride(t *testing.T) {
 	b := NewIterationBudget(ModeAsk, 100)
 	if b.Limit() != 100 {
-		t.Errorf("user override should be respected; got %d", b.Limit())
+		t.Errorf("user override should be respected as base/current limit; got %d", b.Limit())
 	}
 	if b.HardCap() != 100 {
-		t.Errorf("override should set hard cap = %d, got %d", 100, b.HardCap())
+		t.Errorf("ask/light override should keep hard cap = base; got %d", b.HardCap())
+	}
+}
+
+func TestIterationBudget_UserOverrideAdaptiveHardCap(t *testing.T) {
+	cases := []struct {
+		name     string
+		mode     Mode
+		userMax  int
+		wantHard int
+	}{
+		{"plan normal 2x", ModePlan, 80, 160},
+		{"rush normal 2x", ModeRush, 80, 160},
+		{"test normal 2x", ModeTest, 80, 160},
+		{"workflow heavy 3x", ModeWorkflow, 80, 240},
+		{"workflow clamped", ModeWorkflow, 120, 240},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := NewIterationBudget(c.mode, c.userMax)
+			if b.Limit() != c.userMax {
+				t.Errorf("Limit() = %d, want userMax/base %d", b.Limit(), c.userMax)
+			}
+			if b.HardCap() != c.wantHard {
+				t.Errorf("HardCap() = %d, want %d", b.HardCap(), c.wantHard)
+			}
+		})
 	}
 }
 

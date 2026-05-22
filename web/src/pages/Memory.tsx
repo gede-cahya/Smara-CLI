@@ -13,8 +13,8 @@ interface CategoryConfig {
 }
 
 const defaultCategories: CategoryConfig[] = [
-  { name: 'Developer', keywords: ['code','coding','program','bug','git','api','function','variable','deploy','debug','error','compile','dev','developer','terminal','bash','script','backend','frontend','test','unit test','testing'], color: 'text-blue-400' },
-  { name: 'Desain', keywords: ['design','desain','css','figma','ui','ux','layout','color','font','style','mockup','prototype','tailwind','gradient','icon','responsive','theme','svg','png','jpg'], color: 'text-purple-400' },
+  { name: 'Developer', keywords: ['code','coding','program','bug','git','api','function','variable','deploy','debug','error','compile','dev','developer','terminal','bash','script','backend','frontend','test','unit test','testing'], color: 'text-smara-400' },
+  { name: 'Desain', keywords: ['design','desain','css','figma','ui','ux','layout','color','font','style','mockup','prototype','tailwind','gradient','icon','responsive','theme','svg','png','jpg'], color: 'text-lime-400' },
   { name: 'Hukum', keywords: ['lawyer','hukum','legal','contract','kontrak','sue','gugat','pengadilan','notaris','advokat','undang-undang','peraturan','hak','kewajiban'], color: 'text-yellow-400' },
   { name: 'Bisnis', keywords: ['business','bisnis','market','marketing','sales','jual','beli','profit','revenue','customer','client','strategi','management'], color: 'text-green-400' },
   { name: 'Umum', keywords: [], color: 'text-gray-400' },
@@ -141,7 +141,7 @@ export default function Memory() {
   const addCategory = () => {
     if (!newCatName.trim()) return
     const keywords = newCatKeywords.split(',').map(s => s.trim()).filter(Boolean)
-    const colors = ['text-blue-400','text-purple-400','text-yellow-400','text-green-400','text-red-400','text-pink-400','text-cyan-400','text-orange-400']
+    const colors = ['text-smara-400','text-lime-400','text-yellow-400','text-green-400','text-red-400','text-pink-400','text-smara-400','text-orange-400']
     const color = colors[categoryConfig.length % colors.length]
     const updated = [...categoryConfig.slice(0, -1), { name: newCatName.trim(), keywords, color }, categoryConfig[categoryConfig.length -1]]
     setCategoryConfig(updated)
@@ -160,8 +160,8 @@ export default function Memory() {
   return (
     <div className="flex h-full">
       {/* Workspace sidebar */}
-      <div className="w-48 border-r border-gray-800 bg-gray-900/40 flex flex-col shrink-0">
-        <div className="p-3 border-b border-gray-800 flex items-center gap-2 text-xs text-gray-400 uppercase tracking-wider font-medium">
+      <div className="w-48 border-r border-transparent bg-[#0c1009]/62 flex flex-col shrink-0">
+        <div className="p-3 border-b border-transparent flex items-center gap-2 text-xs text-gray-400 uppercase tracking-wider font-medium">
           <Layers className="w-3 h-3" />
           Workspace
         </div>
@@ -172,8 +172,8 @@ export default function Memory() {
               onClick={() => { setActiveWorkspace(ws.name); setActiveTag(null); }}
               className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
                 ws.name === activeWorkspace
-                  ? 'bg-smara-900/40 text-smara-300 border border-smara-700/30'
-                  : 'hover:bg-gray-800 text-gray-300'
+                  ? 'bg-smara-900/40 text-smara-300 border ring-1 ring-smara-300/15 border-transparent'
+                  : 'hover:bg-neutral-950/55 text-gray-300'
               }`}
             >
               <Folder className="w-3 h-3 shrink-0" />
@@ -186,20 +186,20 @@ export default function Memory() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header bar */}
-        <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-gray-800/60 shrink-0">
+        <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-transparent shrink-0">
           <Database className="w-5 h-5 text-smara-400" />
           <h2 className="text-lg font-medium">Memory Store</h2>
           {view === 'list' && (
             <span className="text-xs text-gray-500 ml-2">({visibleMemories.length})</span>
           )}
           {activeWorkspace && (
-            <span className="text-xs bg-gray-800 px-2 py-0.5 rounded text-gray-400">
+            <span className="text-xs bg-neutral-950/55 px-2 py-0.5 rounded text-gray-400">
               {activeWorkspace}
             </span>
           )}
 
           {/* View toggle */}
-          <div className="ml-4 flex bg-gray-900/60 border border-gray-800 rounded-md p-0.5">
+          <div className="ml-4 flex bg-[#0c1009]/72 ring-1 ring-black/35 rounded-md p-0.5">
             <button
               onClick={() => setView('list')}
               className={`px-2.5 py-1 text-xs flex items-center gap-1 rounded transition-colors ${
@@ -237,7 +237,7 @@ export default function Memory() {
         <div className="flex-1 overflow-y-auto p-4">
 
         {showCatManager && (
-          <div className="mb-4 bg-gray-900/60 border border-gray-800 rounded-lg p-3 space-y-2">
+          <div className="mb-4 bg-[#0c1009]/72 ring-1 ring-black/35 rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-300">Kelompok Kategori</span>
               <button onClick={() => setShowCatManager(false)} className="text-gray-500 hover:text-gray-300">
@@ -257,23 +257,23 @@ export default function Memory() {
                 </div>
               ))}
             </div>
-            <div className="flex gap-2 pt-2 border-t border-gray-800">
+            <div className="flex gap-2 pt-2 border-t border-transparent">
               <input
                 value={newCatName}
                 onChange={e => setNewCatName(e.target.value)}
                 placeholder="Nama kategori"
-                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-smara-500"
+                className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-smara-300/25"
               />
               <input
                 value={newCatKeywords}
                 onChange={e => setNewCatKeywords(e.target.value)}
                 placeholder="Keyword, dipisah koma"
-                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-smara-500"
+                className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-smara-300/25"
               />
               <button
                 onClick={addCategory}
                 disabled={!newCatName.trim()}
-                className="px-2 py-1 bg-smara-700 hover:bg-smara-600 disabled:opacity-50 rounded text-xs flex items-center gap-1"
+                className="px-2 py-1 bg-smara-500 hover:bg-smara-400 text-black disabled:opacity-50 rounded text-xs flex items-center gap-1"
               >
                 <Plus className="w-3 h-3" /> Tambah
               </button>
@@ -287,12 +287,12 @@ export default function Memory() {
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && search()}
             placeholder="Cari memori..."
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+            className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-smara-300/25"
           />
           <button
             onClick={search}
             disabled={searching}
-            className="px-3 py-2 bg-smara-700 hover:bg-smara-600 rounded-lg transition-colors flex items-center gap-1"
+            className="px-3 py-2 bg-smara-500 hover:bg-smara-400 text-black rounded-lg transition-colors flex items-center gap-1"
           >
             <Search className="w-4 h-4" />
             {searching ? '...' : 'Cari'}
@@ -301,7 +301,7 @@ export default function Memory() {
 
         {activeTag && (
           <div className="flex items-center gap-2 mb-3 text-xs">
-            <span className="bg-smara-700/40 text-smara-300 px-2 py-1 rounded border border-smara-700/30">
+            <span className="bg-smara-700/40 text-smara-300 px-2 py-1 rounded border ring-1 ring-smara-300/15 border-transparent">
               Filter: #{activeTag}
             </span>
             <button onClick={() => setActiveTag(null)} className="text-gray-500 hover:text-gray-300">× Hapus filter</button>
@@ -317,10 +317,10 @@ export default function Memory() {
             if (items.length === 0) return null
             const isExpanded = expandedCats.has(hash(key))
             return (
-              <div key={key} className="border border-gray-800 rounded-lg overflow-hidden">
+              <div key={key} className="ring-1 ring-black/35 rounded-lg overflow-hidden">
                 <button
                   onClick={() => toggleCat(key)}
-                  className="w-full flex items-center gap-2 px-3 py-2 bg-gray-900/60 hover:bg-gray-900 text-sm font-medium text-gray-300"
+                  className="w-full flex items-center gap-2 px-3 py-2 bg-[#0c1009]/72 hover:bg-gray-900 text-sm font-medium text-gray-300"
                 >
                   {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                   <Folder className="w-3 h-3 text-smara-400" />
@@ -330,7 +330,7 @@ export default function Memory() {
                 {isExpanded && (
                   <div className="p-2 space-y-2">
                     {items.map(m => (
-                      <div key={m.id} className="bg-gray-900/30 border border-gray-800/50 rounded-lg p-3 hover:border-gray-700 transition-colors">
+                      <div key={m.id} className="bg-[#0c1009]/55 ring-1 ring-black/35 rounded-lg p-3 hover:border-transparent transition-colors">
                         <div className="text-sm leading-relaxed mb-2 line-clamp-3">{m.content}</div>
                         <div className="flex items-center justify-between text-xs text-gray-500">
                           <div className="flex items-center gap-3 flex-wrap">

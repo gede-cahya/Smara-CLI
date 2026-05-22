@@ -5,8 +5,8 @@ import { getSkillIcon, getCategoryIcon } from './skillIcons'
 
 // Palette reused across views for consistent color coding.
 const PALETTE = [
-  '#818cf8', '#f472b6', '#34d399', '#fbbf24', '#60a5fa',
-  '#a78bfa', '#fb923c', '#2dd4bf', '#f87171', '#38bdf8',
+  '#bef264', '#84cc16', '#34d399', '#fbbf24', '#d9f99d',
+  '#65a30d', '#fb923c', '#2dd4bf', '#f87171', '#a3e635',
 ]
 
 function hashColor(str: string): string {
@@ -408,16 +408,16 @@ export default function SkillHierarchy({ skills }: Props) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Cari skill, tag, atau deskripsi…"
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-900/80 border border-gray-700 rounded-lg text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-smara-500"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-900/80 ring-1 ring-black/35 rounded-lg text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-smara-500"
           />
         </div>
-        <button onClick={expandAll} className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-gray-900/80 border border-gray-700 rounded-lg text-gray-300 hover:bg-gray-800" title="Expand semua">
+        <button onClick={expandAll} className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-gray-900/80 ring-1 ring-black/35 rounded-lg text-gray-300 hover:bg-gray-800" title="Expand semua">
           <Maximize2 className="w-3 h-3" /> Expand
         </button>
-        <button onClick={collapseAll} className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-gray-900/80 border border-gray-700 rounded-lg text-gray-300 hover:bg-gray-800" title="Collapse semua">
+        <button onClick={collapseAll} className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-gray-900/80 ring-1 ring-black/35 rounded-lg text-gray-300 hover:bg-gray-800" title="Collapse semua">
           <Minimize2 className="w-3 h-3" /> Collapse
         </button>
-        <button onClick={fit} className="px-2.5 py-1.5 text-xs bg-gray-900/80 border border-gray-700 rounded-lg text-gray-300 hover:bg-gray-800">
+        <button onClick={fit} className="px-2.5 py-1.5 text-xs bg-gray-900/80 ring-1 ring-black/35 rounded-lg text-gray-300 hover:bg-gray-800">
           Fit
         </button>
         {hasMoved && (
@@ -429,7 +429,7 @@ export default function SkillHierarchy({ skills }: Props) {
             <Move className="w-3 h-3" /> Reset posisi
           </button>
         )}
-        <div className="text-xs text-gray-500 ml-auto bg-gray-900/70 border border-gray-800 rounded px-2 py-1">
+        <div className="text-xs text-gray-500 ml-auto bg-gray-900/70 ring-1 ring-black/30 rounded px-2 py-1">
           {layout.nodes.filter(n => !n.synthetic).length} skills · {layout.edges.length} links
           {hasMoved && <span className="ml-2 text-amber-400">· {nodeDeltas.size} digeser</span>}
         </div>
@@ -479,7 +479,7 @@ export default function SkillHierarchy({ skills }: Props) {
                 key={`e-${i}`}
                 d={linkPath(p.x, p.y, c.x, c.y)}
                 fill="none"
-                stroke={active ? '#818cf8' : 'url(#link-grad)'}
+                stroke={active ? '#bef264' : 'url(#link-grad)'}
                 strokeWidth={active ? 2 : 1.2}
                 opacity={active ? 0.95 : 0.55}
                 style={{ transition: draggedNode ? 'none' : 'all 0.2s' }}
@@ -650,14 +650,14 @@ export default function SkillHierarchy({ skills }: Props) {
       </svg>
 
       {/* Hint for drag */}
-      <div className="absolute bottom-3 left-3 bg-gray-900/80 border border-gray-800 rounded px-2.5 py-1.5 text-[10px] text-gray-500 pointer-events-none">
+      <div className="absolute bottom-3 left-3 bg-gray-900/80 ring-1 ring-black/30 rounded px-2.5 py-1.5 text-[10px] text-gray-500 pointer-events-none">
         💡 Drag node untuk geser sub-tree · drag area kosong untuk pan · scroll untuk zoom
       </div>
 
       {/* Detail panel */}
       {selected && (
-        <div className="absolute bottom-4 right-4 w-80 bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-20">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+        <div className="absolute bottom-4 right-4 w-80 bg-gray-900/95 backdrop-blur ring-1 ring-black/35 rounded-xl shadow-2xl overflow-hidden z-20">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-smara-300/12">
             <div className="flex items-center gap-2 min-w-0">
               <Zap className="w-4 h-4 text-smara-400 shrink-0" />
               <span className="text-sm font-semibold text-gray-100 truncate">{selected.name}</span>
@@ -723,14 +723,14 @@ export default function SkillHierarchy({ skills }: Props) {
                 </div>
                 <ol className="space-y-1 mt-1">
                   <li className="flex items-center gap-2 text-[11px] bg-amber-900/20 border border-amber-800/40 rounded px-2 py-1">
-                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600/90 text-[10px] font-bold text-gray-900">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-400/90 text-[10px] font-bold text-amber-950">
                       v{selected.version}
                     </span>
                     <span className="text-amber-200 truncate flex-1">sekarang</span>
                     <RefreshCw className="w-3 h-3 text-amber-400" />
                   </li>
                   {[...selected.lineage].reverse().map((l, idx) => (
-                    <li key={`${l.version}-${idx}`} className="flex items-center gap-2 text-[11px] bg-gray-800/40 border border-gray-700/60 rounded px-2 py-1">
+                    <li key={`${l.version}-${idx}`} className="flex items-center gap-2 text-[11px] bg-gray-800/40 ring-1 ring-black/30 rounded px-2 py-1">
                       <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-[10px] font-bold text-gray-300">
                         v{l.version}
                       </span>

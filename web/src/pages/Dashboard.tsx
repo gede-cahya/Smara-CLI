@@ -45,38 +45,38 @@ export default function Dashboard() {
   useEffect(() => { load() }, [])
 
   return (
-    <div className="flex flex-col h-full p-4 overflow-y-auto space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-smara-400" />
-          <h2 className="text-lg font-medium">Dashboard Analytics</h2>
+    <div className="flex flex-col h-full overflow-y-auto p-5 md:p-6 space-y-5">
+      <div className="flex items-start justify-between gap-4 rounded-3xl border border-neutral-800/70 bg-white/[0.035] p-4 shadow-lg shadow-black/20">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-2xl border border-smara-300/20 bg-smara-300/10 text-smara-300 shadow-lg shadow-smara-950/20"><BarChart3 className="w-5 h-5" /></div>
+          <div><h2 className="text-xl font-semibold tracking-tight text-white">Dashboard Analytics</h2><p className="text-xs text-neutral-500">Ringkasan runtime, model, token, cost, dan MCP server.</p></div>
         </div>
-        <button onClick={load} className="px-3 py-1.5 bg-smara-700 hover:bg-smara-600 rounded text-xs text-white">Refresh</button>
+        <button onClick={load} className="rounded-2xl border border-smara-300/20 bg-smara-300 px-4 py-2 text-xs font-semibold text-black shadow-lg shadow-smara-950/20 transition-colors hover:bg-smara-200">Refresh</button>
       </div>
 
       {loading && <div className="text-gray-500 text-sm">Loading...</div>}
 
       {status && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <StatCard icon={Activity} label="Status" value={status.status} color="text-green-400" />
           <StatCard icon={Cpu} label="Mode" value={`${status.mode_emoji} ${status.mode_label}`} color="text-smara-400" />
-          <StatCard icon={Server} label="Provider" value={status.provider} color="text-blue-400" />
-          <StatCard icon={Activity} label="Workspace" value={status.workspace || 'default'} color="text-purple-400" />
+          <StatCard icon={Server} label="Provider" value={status.provider} color="text-smara-400" />
+          <StatCard icon={Activity} label="Workspace" value={status.workspace || 'default'} color="text-lime-400" />
         </div>
       )}
 
       {analytics && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-            <StatCard icon={Hash} label="Prompts" value={String(analytics.total_prompts || 0)} color="text-cyan-400" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
+            <StatCard icon={Hash} label="Prompts" value={String(analytics.total_prompts || 0)} color="text-smara-400" />
             <StatCard icon={Zap} label="Requests" value={String(analytics.total_requests || 0)} color="text-yellow-400" />
             <StatCard icon={BarChart3} label="Total Tokens" value={formatNum(analytics.total_tokens || 0)} color="text-smara-400" />
-            <StatCard icon={BarChart3} label="Input Tokens" value={formatNum(analytics.input_tokens || 0)} color="text-blue-400" />
-            <StatCard icon={BarChart3} label="Output Tokens" value={formatNum(analytics.output_tokens || 0)} color="text-purple-400" />
+            <StatCard icon={BarChart3} label="Input Tokens" value={formatNum(analytics.input_tokens || 0)} color="text-smara-400" />
+            <StatCard icon={BarChart3} label="Output Tokens" value={formatNum(analytics.output_tokens || 0)} color="text-lime-400" />
             <StatCard icon={DollarSign} label="Cost Est." value={`$${(analytics.estimated_cost_usd || 0).toFixed(6)}`} color="text-green-400" />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             <Panel title="Grafik Token & Cost Harian">
               <DailyChart data={analytics.daily || []} />
             </Panel>
@@ -102,7 +102,7 @@ export default function Dashboard() {
         <div className="space-y-2">
           {mcp.length === 0 && <Empty text="Tidak ada MCP server terhubung." />}
           {mcp.map(s => (
-            <div key={s.name} className="flex items-center justify-between p-3 bg-gray-950/50 border border-gray-800 rounded-lg">
+            <div key={s.name} className="flex items-center justify-between rounded-2xl border border-neutral-800/60 bg-neutral-950/45 p-3.5 transition-colors hover:border-smara-300/18 hover:bg-white/[0.035]">
               <div className="flex items-center gap-3">
                 <Plug className={`w-4 h-4 ${s.connected ? 'text-green-400' : 'text-red-400'}`} />
                 <div><div className="text-sm font-medium">{s.name}</div>{s.error && <div className="text-xs text-red-400">{s.error}</div>}</div>
@@ -117,10 +117,10 @@ export default function Dashboard() {
 }
 
 function StatCard({ icon: Icon, label, value, color }: { icon: typeof Activity, label: string, value: string, color: string }) {
-  return <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3"><div className="flex items-center gap-2 mb-1"><Icon className={`w-4 h-4 ${color}`} /><span className="text-xs text-gray-500">{label}</span></div><div className="text-sm font-medium truncate">{value}</div></div>
+  return <div className="group rounded-3xl border border-neutral-800/70 bg-white/[0.035] p-4 shadow-lg shadow-black/15 transition-all hover:-translate-y-0.5 hover:border-smara-300/20 hover:bg-white/[0.055]"><div className="flex items-center gap-2 mb-3"><span className="grid h-9 w-9 place-items-center rounded-2xl border border-neutral-800/60 bg-neutral-950/50"><Icon className={`w-4 h-4 ${color}`} /></span><span className="text-xs text-neutral-500">{label}</span></div><div className="text-lg font-semibold tracking-tight text-white truncate">{value}</div></div>
 }
-function Panel({ title, children }: { title: string, children: React.ReactNode }) { return <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg"><div className="text-sm font-medium text-gray-300 mb-3">{title}</div>{children}</div> }
-function Empty({ text }: { text: string }) { return <div className="text-gray-600 text-sm p-4 bg-gray-950/40 rounded-lg">{text}</div> }
+function Panel({ title, children }: { title: string, children: React.ReactNode }) { return <div className="rounded-3xl border border-neutral-800/70 bg-white/[0.035] p-4 shadow-lg shadow-black/15"><div className="mb-4 flex items-center justify-between border-b border-neutral-800/60 pb-3"><div className="text-sm font-semibold text-neutral-200">{title}</div><div className="h-1.5 w-1.5 rounded-full bg-smara-300 shadow-[0_0_12px_rgba(190,242,100,.8)]" /></div>{children}</div> }
+function Empty({ text }: { text: string }) { return <div className="rounded-2xl border border-neutral-800/60 bg-neutral-950/35 p-4 text-sm text-neutral-600">{text}</div> }
 function formatNum(n: number) { return new Intl.NumberFormat().format(n) }
-function BarRow({ label, value, max, right }: { label: string, value: number, max: number, right: string }) { const pct = Math.max(2, Math.round((value / max) * 100)); return <div className="space-y-1 mb-3"><div className="flex justify-between text-xs"><span className="text-gray-300 truncate">{label}</span><span className="text-gray-500 ml-2">{right}</span></div><div className="h-2 bg-gray-800 rounded"><div className="h-2 bg-smara-500 rounded" style={{ width: `${pct}%` }} /></div></div> }
-function DailyChart({ data }: { data: DailyUsage[] }) { const max = Math.max(...data.map(d => d.total_tokens), 1); if (!data.length) return <Empty text="Belum ada data harian." />; return <div className="h-48 flex items-end gap-2 border-b border-l border-gray-800 px-2 pt-2">{data.slice(-14).map(d => { const h = Math.max(4, Math.round((d.total_tokens / max) * 160)); return <div key={d.date} className="flex-1 flex flex-col items-center gap-1"><div title={`${d.date}: ${d.total_tokens} tokens (in ${d.input_tokens || 0} / out ${d.output_tokens || 0}), $${d.cost_usd.toFixed(5)}`} className="w-full bg-gradient-to-t from-smara-700 to-cyan-400 rounded-t" style={{ height: h }} /><span className="text-[9px] text-gray-500 rotate-45 origin-left w-10">{d.date.slice(5)}</span></div> })}</div> }
+function BarRow({ label, value, max, right }: { label: string, value: number, max: number, right: string }) { const pct = Math.max(2, Math.round((value / max) * 100)); return <div className="space-y-1 mb-3"><div className="flex justify-between text-xs"><span className="text-gray-300 truncate">{label}</span><span className="text-gray-500 ml-2">{right}</span></div><div className="h-2 rounded-full bg-neutral-900"><div className="h-2 rounded-full bg-gradient-to-r from-smara-600 to-smara-300" style={{ width: `${pct}%` }} /></div></div> }
+function DailyChart({ data }: { data: DailyUsage[] }) { const max = Math.max(...data.map(d => d.total_tokens), 1); if (!data.length) return <Empty text="Belum ada data harian." />; return <div className="h-48 flex items-end gap-2 rounded-2xl border border-neutral-800/60 bg-neutral-950/25 px-3 pb-4 pt-2">{data.slice(-14).map(d => { const h = Math.max(4, Math.round((d.total_tokens / max) * 160)); return <div key={d.date} className="flex-1 flex flex-col items-center gap-1"><div title={`${d.date}: ${d.total_tokens} tokens (in ${d.input_tokens || 0} / out ${d.output_tokens || 0}), $${d.cost_usd.toFixed(5)}`} className="w-full bg-gradient-to-t from-smara-600 to-smara-300 rounded-t" style={{ height: h }} /><span className="text-[9px] text-gray-500 rotate-45 origin-left w-10">{d.date.slice(5)}</span></div> })}</div> }

@@ -49,7 +49,53 @@ const (
 	// value via manual requests. Auto-extend (progress-based) still
 	// respects this same ceiling once it's reached.
 	MaxManualExtMultiplier = 3
+	// AbsoluteIterationHardCap is the global safety ceiling for adaptive
+	// hard caps derived from user/config overrides. This prevents the agent
+	// from turning a reasonable base budget into an unbounded long-running turn.
+	AbsoluteIterationHardCap = 240
 )
+
+type budgetComplexity int
+
+const (
+	budgetLight budgetComplexity = iota
+	budgetNormal
+	budgetHeavy
+)
+
+func budgetComplexityForMode(mode Mode) budgetComplexity {
+	switch mode {
+	case ModeAsk:
+		return budgetLight
+	case ModeWorkflow:
+		return budgetHeavy
+	case ModeRush, ModePlan, ModeTest:
+		return budgetNormal
+	default:
+		return budgetNormal
+	}
+}
+
+func adaptiveHardCapForUserMax(mode Mode, base int) int {
+	if base <= 0 {
+		return base
+	}
+	multiplier := 2
+	switch budgetComplexityForMode(mode) {
+	case budgetLight:
+		multiplier = 1
+	case budgetHeavy:
+		multiplier = 3
+	}
+	hardCap := base * multiplier
+	if hardCap > AbsoluteIterationHardCap {
+		hardCap = AbsoluteIterationHardCap
+	}
+	if hardCap < base {
+		hardCap = base
+	}
+	return hardCap
+}
 
 // NewIterationBudget creates a budget with sensible defaults for the mode.
 // userMax is the value from config / SetMaxIterations; pass 0 to use mode defaults.
@@ -59,11 +105,12 @@ func NewIterationBudget(mode Mode, userMax int) *IterationBudget {
 		repeatN: 8, // last 8 calls considered for repetition
 	}
 
-	// User override wins, but still gets stuck-loop & progress-extend logic
-	// applied within that ceiling.
+	// User override sets the base budget, while the hard cap remains adaptive
+	// by mode. This keeps request_iteration_budget/progress extension useful
+	// without giving the agent an unbounded ceiling.
 	if userMax > 0 {
 		b.base = userMax
-		b.hardCap = userMax
+		b.hardCap = adaptiveHardCapForUserMax(mode, userMax)
 		b.current = userMax
 		b.override = true
 		b.overrideN = userMax

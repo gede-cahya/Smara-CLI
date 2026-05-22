@@ -525,6 +525,16 @@ func (a *Adapter) registerSlashCommands() {
 						{Name: "idea", Description: "Ide produk singkat untuk PRD", Type: discordgo.ApplicationCommandOptionString, Required: false},
 					},
 				},
+				{
+					Name:        "memory_autolink",
+					Description: "Bangun aggressive memory autolink permanen",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{Name: "strategy", Description: "Strategy: aggressive atau smart", Type: discordgo.ApplicationCommandOptionString, Required: false},
+						{Name: "threshold", Description: "Minimum score, default aggressive 0.28", Type: discordgo.ApplicationCommandOptionNumber, Required: false},
+						{Name: "top_k", Description: "Maks edge per node, default aggressive 10", Type: discordgo.ApplicationCommandOptionInteger, Required: false},
+					},
+				},
 			},
 		},
 	}
@@ -616,7 +626,18 @@ func (a *Adapter) onSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 		Timestamp: time.Now(),
 	}
 	for _, opt := range subCmd.Options {
-		msg.CommandArgs = append(msg.CommandArgs, opt.StringValue())
+		switch opt.Type {
+		case discordgo.ApplicationCommandOptionString:
+			msg.CommandArgs = append(msg.CommandArgs, opt.StringValue())
+		case discordgo.ApplicationCommandOptionInteger:
+			msg.CommandArgs = append(msg.CommandArgs, "--"+strings.ReplaceAll(opt.Name, "_", "-"), fmt.Sprintf("%d", opt.IntValue()))
+		case discordgo.ApplicationCommandOptionNumber:
+			msg.CommandArgs = append(msg.CommandArgs, "--"+strings.ReplaceAll(opt.Name, "_", "-"), fmt.Sprintf("%.4g", opt.FloatValue()))
+		case discordgo.ApplicationCommandOptionBoolean:
+			if opt.BoolValue() {
+				msg.CommandArgs = append(msg.CommandArgs, "--"+strings.ReplaceAll(opt.Name, "_", "-"))
+			}
+		}
 	}
 	msg.Content = strings.Join(msg.CommandArgs, " ")
 

@@ -119,13 +119,13 @@ func GetBuiltinTools() []llm.ToolFunction {
 		},
 		{
 			Name:        "generate_image",
-			Description: "Membuat/generate gambar dari prompt teks menggunakan image model OpenAI-compatible seperti gpt-image-2 atau gemini-2.5-flash-image. Gunakan saat user meminta dibuatkan gambar, logo, ilustrasi, icon, poster, atau desain visual.",
+			Description: "Membuat/generate gambar dari prompt teks. Untuk permintaan gambar/logo/desain, panggil tool ini langsung maksimal satu kali; jangan hanya menulis rencana/prompt dan jangan ulangi call yang sama.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"prompt": map[string]interface{}{
 						"type":        "string",
-						"description": "Deskripsi gambar yang ingin dibuat",
+						"description": "Prompt final yang sangat detail untuk image model. Jika user cuma menulis singkat seperti 'buatkan logo smara', kembangkan sendiri menjadi brief visual lengkap sebelum memanggil tool.",
 					},
 					"model": map[string]interface{}{
 						"type":        "string",

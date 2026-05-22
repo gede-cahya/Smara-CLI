@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles } from 'lucide-react'
 import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
@@ -34,7 +34,7 @@ class PageErrorBoundary extends Component<{ children: ReactNode; label: string }
     if (this.state.error) {
       return (
         <div className="h-full flex items-center justify-center p-8">
-          <div className="max-w-md bg-black/70 border border-red-500/30 rounded-3xl p-6 space-y-4 shadow-2xl backdrop-blur-xl">
+          <div className="max-w-md bg-slate-950/70 border border-red-500/30 rounded-3xl p-6 space-y-4 shadow-2xl backdrop-blur-xl">
             <div className="flex items-center gap-2 text-red-300">
               <AlertTriangle className="w-5 h-5" />
               <span className="font-semibold">{this.props.label} crashed</span>
@@ -115,19 +115,30 @@ export default function App() {
       <div className="smara-orb smara-orb-b" />
       <div className="smara-orb smara-orb-c" />
 
-      <aside className="relative z-10 m-4 mr-0 w-72 rounded-[2rem] border border-white/10 bg-black/35 shadow-2xl shadow-black/50 backdrop-blur-2xl flex flex-col overflow-hidden">
-        <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" />
-        <div className="p-5 flex items-center gap-3 border-b border-white/10">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-400 via-smara-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-            <Atom className="w-6 h-6 text-white" />
+      <aside className="relative z-10 m-4 mr-0 w-[286px] rounded-[1.65rem] border border-neutral-900/80 bg-[#151b12]/92 shadow-2xl shadow-black/45 backdrop-blur-2xl flex flex-col overflow-hidden">
+        <div className="absolute inset-x-7 top-0 h-px bg-gradient-to-r from-transparent via-smara-300/22 to-transparent" />
+        <div className="p-4 border-b border-neutral-900/80">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-2xl bg-smara-300/18 blur-lg" />
+              <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-smara-200 via-smara-400 to-smara-700 flex items-center justify-center shadow-lg shadow-smara-950/40 ring-1 ring-smara-300/16">
+                <Atom className="w-6 h-6 text-black" />
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="font-semibold text-xl tracking-tight text-white">Smara</div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-smara-200/70">Autonomous Console</div>
+            </div>
           </div>
-          <div>
-            <div className="font-bold text-xl tracking-tight">Smara</div>
-            <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-200/70">AI Console</div>
+          <div className="mt-4 rounded-2xl border border-neutral-900/70 bg-neutral-900/35 px-3 py-2 shadow-inner shadow-black/20">
+            <div className="flex items-center gap-2 text-[11px] text-smara-100"><Sparkles className="h-3.5 w-3.5 text-smara-300" /> Ready for work</div>
+            <div className="mt-1 text-[10px] text-neutral-500">CLI · Web · Skills · Memory</div>
           </div>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-3 overflow-y-auto">
+          <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-600">Navigation</div>
+          <div className="space-y-1">
           {navItems.map(item => {
             const Icon = item.icon
             const isActive = active === item.id
@@ -138,32 +149,36 @@ export default function App() {
                   setActive(item.id)
                   if (item.id === 'chat') chatRef.current?.openSessions()
                 }}
-                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm transition-all border ${
+                className={`group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${
                   isActive
-                    ? 'bg-gradient-to-r from-cyan-500/20 via-smara-500/20 to-fuchsia-500/20 border-cyan-300/25 text-white shadow-lg shadow-cyan-950/30'
-                    : 'border-transparent text-gray-400 hover:bg-white/7 hover:text-gray-100 hover:border-white/10'
+                    ? 'bg-smara-300/10 text-white shadow-sm shadow-smara-950/20'
+                    : 'text-neutral-500 hover:bg-neutral-900/60 hover:text-neutral-100'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-200' : ''}`} />
-                <span className="truncate">{item.label}</span>
+                {isActive && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-smara-300/80 shadow-[0_0_14px_rgba(190,242,100,.45)]" />}
+                <span className={`grid h-8 w-8 place-items-center rounded-lg transition-colors ${isActive ? 'bg-smara-300/12 text-smara-200' : 'bg-neutral-900/50 text-neutral-500 group-hover:text-smara-200'}`}>
+                  <Icon className="w-4 h-4" />
+                </span>
+                <span className="truncate text-left">{item.label}</span>
                 {item.id === 'chat' && (
-                  <span className="ml-auto rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200">
-                    Sesi ▼
+                  <span className="ml-auto rounded-full bg-smara-300/10 px-2 py-0.5 text-[10px] text-smara-200">
+                    Sesi
                   </span>
                 )}
               </button>
             )
           })}
+          </div>
         </nav>
 
-        <div className="p-4 border-t border-white/10 text-xs text-gray-500 flex items-center gap-2 bg-white/[0.03]">
-          <Terminal className="w-3 h-3 text-cyan-300" />
-          Smara Web v1.0
+        <div className="m-3 rounded-2xl bg-neutral-900/35 p-3 text-xs text-neutral-500 shadow-inner shadow-black/20">
+          <div className="flex items-center gap-2"><Terminal className="w-3.5 h-3.5 text-smara-300" /> Smara Web</div>
+          <div className="mt-1 text-[10px] text-neutral-600">Local AI control center</div>
         </div>
       </aside>
 
       <main className="relative z-10 flex-1 overflow-hidden p-4">
-        <div className="h-full overflow-hidden rounded-[2rem] border border-white/10 bg-black/30 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="h-full overflow-hidden rounded-[1.65rem] bg-[#151d10]/96 shadow-2xl shadow-black/22 backdrop-blur-xl ring-1 ring-black/35">
           <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat ref={chatRef} /></PageErrorBoundary></div>
           <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
           <div className={active === 'magic-pointer' ? 'h-full' : 'hidden'}><MagicPointer /></div>

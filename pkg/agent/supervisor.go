@@ -592,6 +592,26 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 	}
 
+	// Direct fast-path for image/logo requests. Some chat models fail to emit a
+	// native tool call for very short prompts (e.g. "buatkan logo smara") and keep
+	// cycling until the iteration budget is exhausted. If the user's intent is
+	// clearly image generation, run the image tool directly and return its result.
+	if isDirectImageGenerationRequest(userPrompt) {
+		result, err := ExecuteBuiltinTool("generate_image", map[string]interface{}{
+			"prompt":  enhanceImagePrompt(userPrompt),
+			"size":    "1024x1024",
+			"quality": "high",
+		}, nil)
+		if err != nil {
+			result = fmt.Sprintf("Error: %s", err)
+		}
+		return &PromptResult{
+			Response:      result,
+			ToolsExecuted: []string{"generate_image"},
+			Duration:      time.Since(startTime),
+		}, nil
+	}
+
 	modeInfo := GetModeInfo(s.mode)
 
 	// 1. Search memory for relevant context
@@ -612,7 +632,6 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-
 	// 2. Build messages with mode-specific system prompt
 	messages := []llm.Message{
 		{
@@ -980,7 +999,11 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			if err != nil {
 				toolOutput = fmt.Sprintf("Error: %s", err)
 			}
-			if tc.Function == "generate_image" && err == nil && strings.Contains(toolOutput, "Path:") {
+			// Image generation is a terminal user-facing action: return its result
+			// immediately (success or error) instead of asking the LLM to reason
+			// about it again. This prevents repeated generate_image calls from
+			// exhausting the tool-iteration budget and hiding the real provider error.
+			if tc.Function == "generate_image" {
 				imageToolOutputs = append(imageToolOutputs, toolOutput)
 			}
 

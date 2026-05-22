@@ -70,6 +70,7 @@ func (s *Server) handleMemoryGraph(w http.ResponseWriter, r *http.Request) {
 		Mode: mode, NodeLimit: limit, EdgeLimit: edgeLimit, MinWeight: minWeight,
 		FocusID: focusID, Depth: depth, SearchQuery: searchQuery,
 		IncludeAutoLinks: includeAuto, IncludeManualLinks: includeManual,
+		IncludeVirtualLinks: r.URL.Query().Get("hints") != "0",
 	})
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
@@ -159,28 +160,46 @@ func (s *Server) handleMemoryAutolink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Threshold float64 `json:"threshold"`
-		TopK      int     `json:"top_k"`
-		Replace   bool    `json:"replace"`
-		WikiLinks bool    `json:"wikilinks"`
+		Threshold      float64 `json:"threshold"`
+		TopK           int     `json:"top_k"`
+		Replace        bool    `json:"replace"`
+		WikiLinks      bool    `json:"wikilinks"`
+		Strategy       string  `json:"strategy"`
+		HubLinks       bool    `json:"hub_links"`
+		AttachIsolated bool    `json:"attach_isolated"`
+		HubThreshold   float64 `json:"hub_threshold"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if req.Threshold == 0 {
-		req.Threshold = 0.78
-	}
-	if req.TopK == 0 {
-		req.TopK = 5
+	if req.Strategy == "aggressive" {
+		if req.Threshold == 0 {
+			req.Threshold = 0.28
+		}
+		if req.TopK == 0 {
+			req.TopK = 10
+		}
+		if req.HubThreshold == 0 {
+			req.HubThreshold = 0.18
+		}
+		req.HubLinks = true
+		req.AttachIsolated = true
+	} else {
+		if req.Threshold == 0 {
+			req.Threshold = 0.78
+		}
+		if req.TopK == 0 {
+			req.TopK = 5
+		}
 	}
 	report, err := store.AutoLinkSmart(memory.AutoLinkOptions{
-		WorkspaceID: s.resolveWorkspaceID(),
-		Threshold:   req.Threshold,
-		MaxPerNode:  req.TopK,
-		Replace:     req.Replace,
+		WorkspaceID:    s.resolveWorkspaceID(),
+		Threshold:      req.Threshold,
+		MaxPerNode:     req.TopK,
+		Replace:        req.Replace,
+		Strategy:       req.Strategy,
+		HubLinks:       req.HubLinks,
+		AttachIsolated: req.AttachIsolated,
+		HubThreshold:   req.HubThreshold,
 	})
-	if err != nil {
-		errorResponse(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	wikiCreated := 0
 	if req.WikiLinks {
 		wikiCreated, err = store.AutoLinkWikiLinks(s.resolveWorkspaceID())
@@ -198,6 +217,9 @@ func (s *Server) handleMemoryAutolink(w http.ResponseWriter, r *http.Request) {
 		"embedding_ratio":      report.EmbeddingRatio,
 		"threshold":            report.Threshold,
 		"top_k":                report.TopK,
+		"attached_isolated":    report.AttachedIsolated,
+		"hub_links":            req.HubLinks,
+		"attach_isolated":      req.AttachIsolated,
 		"fell_back_to_lexical": report.FellBackToLexical,
 	})
 }

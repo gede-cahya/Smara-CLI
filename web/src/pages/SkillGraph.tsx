@@ -11,7 +11,7 @@ import '@xyflow/react/dist/style.css'
 import { fetchJSON } from '../api'
 
 const categoryColors: Record<string, string> = {
-  deploy: '#3b82f6',
+  deploy: '#84cc16',
   frontend: '#10b981',
   backend: '#8b5cf6',
   test: '#f59e0b',
@@ -62,7 +62,7 @@ export default function SkillGraph() {
         target: data.nodes[e.target]?.id || '',
         animated: e.type === 'dependency',
         style: {
-          stroke: e.type === 'parent' ? '#9ca3af' : '#3b82f6',
+          stroke: e.type === 'parent' ? '#9ca3af' : '#84cc16',
           strokeDasharray: e.type === 'parent' ? '5,5' : undefined,
           strokeWidth: e.type === 'dependency' ? 2 : 1,
         },
@@ -87,13 +87,13 @@ export default function SkillGraph() {
         <h3 className="text-sm font-medium text-gray-300">Skill Dependency Graph</h3>
         <button
           onClick={load}
-          className="px-2 py-1 bg-smara-700 hover:bg-smara-600 rounded text-[10px] text-white transition-colors"
+          className="px-2 py-1 bg-smara-500 hover:bg-smara-400 text-black rounded text-[10px] text-white transition-colors"
         >
           Refresh
         </button>
       </div>
       {loading && <div className="text-gray-500 text-xs mb-2">Loading graph...</div>}
-      <div className="flex-1 border border-gray-800 rounded-lg overflow-hidden bg-gray-900/30">
+      <div className="flex-1 ring-1 ring-black/30 rounded-lg overflow-hidden bg-gray-900/30">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -108,7 +108,7 @@ export default function SkillGraph() {
         </ReactFlow>
       </div>
       {selected && (
-        <div className="mt-2 p-2 bg-gray-900/50 border border-gray-800 rounded text-xs text-gray-300">
+        <div className="mt-2 p-2 bg-[#0f1a0f]/60 ring-1 ring-black/30 rounded text-xs text-gray-300">
           Selected: <span className="font-medium text-smara-300">{selected}</span>
         </div>
       )}

@@ -35,18 +35,18 @@ function TreeSection({ name, data, depth = 0 }: { name: string; data: any; depth
     <div className="select-none">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1 w-full text-left hover:bg-gray-800/50 rounded px-2 py-1 ${depth === 0 ? 'font-medium text-sm' : 'text-xs'}`}
+        className={`flex items-center gap-1 w-full text-left hover:bg-[#2b3a20]/70 rounded px-2 py-1 ${depth === 0 ? 'font-medium text-sm' : 'text-xs'}`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
       >
         {hasChildren || skills.length > 0 ? (
-          open ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-500" />
+          open ? <ChevronDown className="w-3 h-3 text-neutral-400" /> : <ChevronRight className="w-3 h-3 text-neutral-400" />
         ) : (
           <span className="w-3" />
         )}
         <Folder className="w-3.5 h-3.5 text-smara-400 mr-1" />
         <span className="text-gray-200">{name}</span>
         {skills.length > 0 && (
-          <span className="ml-2 text-[10px] text-gray-500 bg-gray-800 px-1.5 rounded">{skills.length}</span>
+          <span className="ml-2 text-[10px] text-neutral-400 bg-[#202719] px-1.5 rounded">{skills.length}</span>
         )}
       </button>
       {open && (
@@ -57,15 +57,15 @@ function TreeSection({ name, data, depth = 0 }: { name: string; data: any; depth
           {skills.map(sk => (
             <div
               key={sk.name}
-              className="flex items-center gap-2 px-2 py-1 hover:bg-gray-800/50 rounded text-xs"
+              className="flex items-center gap-2 px-2 py-1 hover:bg-[#2b3a20]/70 rounded text-xs"
               style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
             >
               <FileCode className="w-3.5 h-3.5 text-green-400" />
               <span className="text-gray-300">{sk.name}</span>
               {sk.dependencies && sk.dependencies.length > 0 && (
-                <span className="text-[10px] text-gray-500">({sk.dependencies.length} deps)</span>
+                <span className="text-[10px] text-neutral-400">({sk.dependencies.length} deps)</span>
               )}
-              <span className="ml-auto text-[10px] text-gray-600">v{sk.version}</span>
+              <span className="ml-auto text-[10px] text-neutral-500">v{sk.version}</span>
             </div>
           ))}
         </div>
@@ -201,10 +201,10 @@ export default function SkillTree() {
   return (
     <div className="relative flex flex-col h-full overflow-hidden">
       {/* Header with view toggle + export/import actions */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0 gap-2">
+      <div className="flex items-center justify-between px-4 py-3 shadow-sm shadow-black/20 shrink-0 gap-2">
         <h3 className="text-sm font-medium text-gray-300 flex items-center gap-2">
           Skill Tree
-          <span className="text-[10px] text-gray-500 bg-gray-800/60 px-1.5 py-0.5 rounded">
+          <span className="text-[10px] text-neutral-400 bg-[#202719] px-1.5 py-0.5 rounded">
             {skills.length}
           </span>
         </h3>
@@ -212,7 +212,7 @@ export default function SkillTree() {
         <div className="flex items-center gap-2">
           <button
             onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800/60 hover:bg-gray-700 text-gray-300 transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[#202719] hover:bg-[#2b3521] text-gray-300 transition-all"
             title="Unduh seluruh skill tree sebagai JSON"
           >
             <Download className="w-3 h-3" />
@@ -220,7 +220,7 @@ export default function SkillTree() {
           </button>
           <button
             onClick={handlePickImport}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-gray-800/60 hover:bg-gray-700 text-gray-300 transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[#202719] hover:bg-[#2b3521] text-gray-300 transition-all"
             title="Muat skill tree dari file JSON"
           >
             <Upload className="w-3 h-3" />
@@ -234,13 +234,13 @@ export default function SkillTree() {
             onChange={handleFileSelected}
           />
 
-          <div className="flex items-center gap-1 bg-gray-800/60 rounded-lg p-0.5 ml-2">
+          <div className="flex items-center gap-1 bg-[#202719] rounded-lg p-0.5 ml-2">
             <button
               onClick={() => switchView('tree')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                 view === 'tree'
-                  ? 'bg-gray-700 text-gray-100 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'bg-[#2b3521] text-gray-100 shadow-sm'
+                  : 'text-neutral-400 hover:text-gray-300'
               }`}
             >
               <TreePine className="w-3 h-3" />
@@ -250,8 +250,8 @@ export default function SkillTree() {
               onClick={() => switchView('hierarchy')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                 view === 'hierarchy'
-                  ? 'bg-indigo-700/40 text-indigo-300 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'bg-smara-700/40 text-smara-300 shadow-sm'
+                  : 'text-neutral-400 hover:text-gray-300'
               }`}
             >
               <Network className="w-3 h-3" />
@@ -262,7 +262,7 @@ export default function SkillTree() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                 view === 'constellation'
                   ? 'bg-smara-700/40 text-smara-300 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-300'
+                  : 'text-neutral-400 hover:text-gray-300'
               }`}
             >
               <Sparkles className="w-3 h-3" />
@@ -272,8 +272,8 @@ export default function SkillTree() {
               onClick={() => switchView('3d')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                 view === '3d'
-                  ? 'bg-fuchsia-700/40 text-fuchsia-300 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'bg-lime-700/40 text-lime-300 shadow-sm'
+                  : 'text-neutral-400 hover:text-gray-300'
               }`}
               title="Visual 3D fractal — butuh GPU sederhana"
             >
@@ -287,7 +287,7 @@ export default function SkillTree() {
       {/* Loading */}
       {loading && (
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-500 text-xs">Loading skills...</div>
+          <div className="text-neutral-400 text-xs">Loading skills...</div>
         </div>
       )}
 
@@ -295,7 +295,7 @@ export default function SkillTree() {
       {!loading && view === 'tree' && (
         <div className="flex-1 overflow-y-auto p-4">
           {skills.length === 0 && (
-            <div className="text-gray-600 text-xs">No skills found.</div>
+            <div className="text-neutral-500 text-xs">No skills found.</div>
           )}
           <div className="space-y-1">
             {Object.entries(tree).map(([name, data]) => (
@@ -320,7 +320,7 @@ export default function SkillTree() {
       {!loading && view === '3d' && (
         <div className="flex-1 overflow-hidden">
           <Suspense fallback={
-            <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs">
+            <div className="w-full h-full flex items-center justify-center text-neutral-400 text-xs">
               Memuat WebGL renderer…
             </div>
           }>
@@ -331,12 +331,12 @@ export default function SkillTree() {
 
       {/* Import dialog */}
       {importOpen && (
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeImportDialog}>
+        <div className="absolute inset-0 bg-[#172012]/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeImportDialog}>
           <div
-            className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden"
+            className="bg-[#151c10] ring-1 ring-black/35 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+            <div className="flex items-center justify-between px-5 py-4 shadow-sm shadow-black/20">
               <div className="flex items-center gap-2">
                 <Upload className="w-4 h-4 text-smara-400" />
                 <h3 className="text-sm font-semibold text-gray-100">Import Skill Tree</h3>
@@ -344,7 +344,7 @@ export default function SkillTree() {
               <button
                 onClick={closeImportDialog}
                 disabled={importBusy}
-                className="text-gray-500 hover:text-gray-300 disabled:opacity-40"
+                className="text-neutral-400 hover:text-gray-300 disabled:opacity-40"
               >
                 ✕
               </button>
@@ -352,20 +352,20 @@ export default function SkillTree() {
 
             <div className="p-5 space-y-4">
               {importFile && (
-                <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-3">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">File</div>
+                <div className="bg-[#202719] ring-1 ring-black/35 rounded-lg p-3">
+                  <div className="text-[10px] text-neutral-400 uppercase tracking-wider mb-1">File</div>
                   <div className="text-xs text-gray-200 font-mono break-all">{importFile.name}</div>
-                  <div className="text-[10px] text-gray-500 mt-1">
+                  <div className="text-[10px] text-neutral-400 mt-1">
                     {(importFile.size / 1024).toFixed(1)} KB · {importFile.type || 'application/json'}
                   </div>
                 </div>
               )}
 
               <div>
-                <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1.5">
+                <label className="text-[10px] text-neutral-400 uppercase tracking-wider block mb-1.5">
                   Conflict mode
                 </label>
-                <div className="grid grid-cols-3 gap-1 bg-gray-800/60 p-0.5 rounded-lg">
+                <div className="grid grid-cols-3 gap-1 bg-[#202719] p-0.5 rounded-lg">
                   {(['overwrite', 'skip', 'rename'] as const).map(m => (
                     <button
                       key={m}
@@ -378,7 +378,7 @@ export default function SkillTree() {
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-gray-500 mt-1.5 leading-relaxed">
+                <p className="text-[10px] text-neutral-400 mt-1.5 leading-relaxed">
                   {importMode === 'overwrite' && 'Skill yang sudah ada akan ditimpa. Versi lama masuk ke lineage history.'}
                   {importMode === 'skip' && 'Skill yang sudah ada dibiarkan. Hanya skill baru yang ditambahkan.'}
                   {importMode === 'rename' && 'Skill yang konflik diimport dengan suffix -2, -3, dst. Keduanya coexist.'}
@@ -393,8 +393,8 @@ export default function SkillTree() {
               )}
 
               {importResult && (
-                <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-3">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+                <div className="bg-[#202719] ring-1 ring-black/35 rounded-lg p-3">
+                  <div className="text-[10px] text-neutral-400 uppercase tracking-wider mb-2">
                     {importDryRun ? 'Preview (dry-run)' : 'Hasil import'}
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -403,19 +403,19 @@ export default function SkillTree() {
                     <div className="text-gray-400">↺ Overwritten</div>
                     <div className="text-amber-300 font-mono">{importResult.overwritten.length}</div>
                     <div className="text-gray-400">⇝ Renamed</div>
-                    <div className="text-indigo-300 font-mono">{Object.keys(importResult.renamed || {}).length}</div>
+                    <div className="text-smara-300 font-mono">{Object.keys(importResult.renamed || {}).length}</div>
                     <div className="text-gray-400">∅ Skipped</div>
                     <div className="text-gray-400 font-mono">{importResult.skipped.length}</div>
                     <div className="text-gray-400">📌 Patterns</div>
                     <div className="text-gray-300 font-mono">{importResult.patterns_loaded}</div>
                   </div>
                   {importResult.warnings && importResult.warnings.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-amber-400 space-y-0.5">
+                    <div className="mt-2 pt-2 ring-t-1 ring-black/30 text-[10px] text-amber-400 space-y-0.5">
                       {importResult.warnings.slice(0, 5).map((w, i) => (
                         <div key={i}>⚠ {w}</div>
                       ))}
                       {importResult.warnings.length > 5 && (
-                        <div className="text-gray-500">… dan {importResult.warnings.length - 5} warning lagi</div>
+                        <div className="text-neutral-400">… dan {importResult.warnings.length - 5} warning lagi</div>
                       )}
                     </div>
                   )}
@@ -423,7 +423,7 @@ export default function SkillTree() {
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-800 bg-gray-900/50">
+            <div className="flex items-center justify-end gap-2 px-5 py-3 ring-t-1 ring-black/30 bg-[#0f1a0f]/60">
               <button
                 onClick={closeImportDialog}
                 disabled={importBusy}
@@ -434,7 +434,7 @@ export default function SkillTree() {
               <button
                 onClick={() => { setImportDryRun(true); runImport(true) }}
                 disabled={importBusy || !importFile}
-                className="px-3 py-1.5 text-xs bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-200 rounded disabled:opacity-40"
+                className="px-3 py-1.5 text-xs bg-[#202719] ring-1 ring-black/35 hover:bg-[#2b3521] text-gray-200 rounded disabled:opacity-40"
               >
                 {importBusy && importDryRun ? 'Preview…' : 'Preview (dry-run)'}
               </button>

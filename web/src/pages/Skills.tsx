@@ -124,7 +124,7 @@ export default function Skills() {
         </div>
         <button
           onClick={() => setImportOpen(!importOpen)}
-          className="flex items-center gap-1 px-3 py-1.5 bg-smara-700 hover:bg-smara-600 rounded-lg text-xs transition-colors"
+          className="flex items-center gap-1 px-3 py-1.5 bg-smara-500 hover:bg-smara-400 text-black rounded-lg text-xs transition-colors"
         >
           {importOpen ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
           {importOpen ? 'Batal' : 'Import'}
@@ -132,15 +132,15 @@ export default function Skills() {
       </div>
 
       {importOpen && (
-        <div className="mb-4 p-3 bg-gray-900/50 border border-gray-800 rounded-lg space-y-2">
+        <div className="mb-4 p-3 bg-[#0f1a0f]/60 border border-smara-300/12 rounded-lg space-y-2">
           <div className="flex gap-2">
             <input
               value={importName}
               onChange={e => setImportName(e.target.value)}
               placeholder="Nama skill..."
-              className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-smara-500"
+              className="flex-1 bg-gray-800 border border-smara-300/16 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-smara-300"
             />
-            <div className="flex bg-gray-800 rounded border border-gray-700 overflow-hidden">
+            <div className="flex bg-gray-800 rounded border border-smara-300/16 overflow-hidden">
               <button
                 onClick={() => setImportFormat('json')}
                 className={`px-3 py-1.5 text-xs ${importFormat === 'json' ? 'bg-smara-700 text-white' : 'text-gray-400'}`}
@@ -159,7 +159,7 @@ export default function Skills() {
             value={importData}
             onChange={e => setImportData(e.target.value)}
             placeholder={`Paste ${importFormat.toUpperCase()} skill di sini...`}
-            className="w-full h-32 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:border-smara-500"
+            className="w-full h-32 bg-gray-800 border border-smara-300/16 rounded px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:border-smara-300"
           />
           <div className="flex justify-end">
             <button
@@ -181,14 +181,14 @@ export default function Skills() {
       </div>
       <div className="space-y-2 mb-6">
         {skills.length === 0 && !loading && (
-          <div className="text-gray-600 text-sm p-4 bg-gray-900/50 rounded-lg">
+          <div className="text-gray-600 text-sm p-4 bg-[#0f1a0f]/60 rounded-lg">
             Belum ada skill tersimpan. Import dari bundled atau buat dari workflow.
           </div>
         )}
         {skills.map(sk => (
           <div
             key={sk.name}
-            className="flex items-center justify-between p-3 bg-gray-900/50 border border-gray-800 rounded-lg hover:border-gray-700 transition-colors"
+            className="flex items-center justify-between p-3 bg-[#0f1a0f]/60 border border-smara-300/12 rounded-lg hover:border-smara-300/16 transition-colors"
           >
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{sk.name}</div>
@@ -237,7 +237,7 @@ export default function Skills() {
               return (
                 <div
                   key={b.name}
-                  className="flex items-center justify-between p-3 bg-gray-900/30 border border-gray-800/60 rounded-lg"
+                  className="flex items-center justify-between p-3 bg-gray-900/30 border border-smara-300/12/60 rounded-lg"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate flex items-center gap-2">
@@ -260,7 +260,7 @@ export default function Skills() {
                   <button
                     onClick={() => installBundled(b.name)}
                     disabled={installed}
-                    className="px-3 py-1.5 bg-smara-700 hover:bg-smara-600 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs transition-colors"
+                    className="px-3 py-1.5 bg-smara-500 hover:bg-smara-400 text-black disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs transition-colors"
                   >
                     {installed ? 'Installed' : 'Install'}
                   </button>
@@ -273,8 +273,8 @@ export default function Skills() {
 
       {/* Run Modal */}
       {runModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 w-full max-w-md space-y-4 shadow-2xl">
+        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-smara-300/16 rounded-xl p-5 w-full max-w-md space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">Run: {runModal.name}</h3>
               <button onClick={() => setRunModal(null)} className="text-gray-500 hover:text-gray-300">
@@ -291,7 +291,7 @@ export default function Skills() {
                     value={runArgs[p.name] ?? ''}
                     onChange={e => setRunArgs(prev => ({ ...prev, [p.name]: e.target.value }))}
                     placeholder={p.description}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-500"
+                    className="w-full bg-gray-800 border border-smara-300/16 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-smara-300"
                   />
                 </div>
               ))}
@@ -317,7 +317,7 @@ export default function Skills() {
 
       {/* Run Result */}
       {runResult && (
-        <div className="mt-4 p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+        <div className="mt-4 p-3 bg-[#0f1a0f]/60 border border-smara-300/12 rounded-lg">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-gray-400">Hasil Eksekusi</span>
             <button onClick={() => setRunResult(null)} className="text-xs text-gray-500 hover:text-gray-300"><X className="w-3 h-3" /></button>

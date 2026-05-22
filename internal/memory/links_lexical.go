@@ -12,9 +12,10 @@ import (
 type AutoLinkMode string
 
 const (
-	AutoLinkModeSemantic AutoLinkMode = "semantic" // cosine similarity on embeddings
-	AutoLinkModeLexical  AutoLinkMode = "lexical"  // jaccard on token sets
-	AutoLinkModeNone     AutoLinkMode = "none"     // not enough data
+	AutoLinkModeSemantic   AutoLinkMode = "semantic"   // cosine similarity on embeddings
+	AutoLinkModeLexical    AutoLinkMode = "lexical"    // jaccard on token sets
+	AutoLinkModeAggressive AutoLinkMode = "aggressive" // multi-signal low-threshold graph linking
+	AutoLinkModeNone       AutoLinkMode = "none"       // not enough data
 )
 
 // AutoLinkReport describes the outcome of an auto-link run.
@@ -27,6 +28,7 @@ type AutoLinkReport struct {
 	Threshold         float64      `json:"threshold"`
 	TopK              int          `json:"top_k"`
 	FellBackToLexical bool         `json:"fell_back_to_lexical"`
+	AttachedIsolated  int          `json:"attached_isolated,omitempty"`
 }
 
 // AutoLinkSmart runs the best available similarity engine:
@@ -39,6 +41,9 @@ type AutoLinkReport struct {
 func (s *SQLiteStore) AutoLinkSmart(opts AutoLinkOptions) (AutoLinkReport, error) {
 	if err := EnsureLinksSchema(s.db); err != nil {
 		return AutoLinkReport{}, err
+	}
+	if strings.EqualFold(opts.Strategy, string(AutoLinkModeAggressive)) {
+		return s.AutoLinkAggressive(opts)
 	}
 	if opts.Threshold <= 0 {
 		opts.Threshold = 0.78

@@ -70,7 +70,7 @@ export default function SkillDashboard() {
         <h3 className="text-sm font-medium text-gray-300">Skill Analytics Dashboard</h3>
         <button
           onClick={() => { load(); loadRecent() }}
-          className="px-2 py-1 bg-smara-700 hover:bg-smara-600 rounded text-[10px] text-white transition-colors"
+          className="px-2 py-1 bg-smara-500 hover:bg-smara-400 text-black rounded text-[10px] text-white transition-colors"
         >
           Refresh
         </button>
@@ -81,13 +81,13 @@ export default function SkillDashboard() {
       {/* Summary cards */}
       {analytics && (
         <div className="grid grid-cols-3 gap-3">
-          <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+          <div className="p-3 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg">
             <div className="flex items-center gap-2 text-xs text-gray-400 mb-1">
               <Activity className="w-3.5 h-3.5 text-smara-400" /> Total Runs
             </div>
             <div className="text-lg font-semibold text-gray-200">{analytics.total_runs}</div>
           </div>
-          <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+          <div className="p-3 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg">
             <div className="flex items-center gap-2 text-xs text-gray-400 mb-1">
               <TrendingUp className="w-3.5 h-3.5 text-green-400" /> Success Rate
             </div>
@@ -97,7 +97,7 @@ export default function SkillDashboard() {
                 : 'N/A'}
             </div>
           </div>
-          <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+          <div className="p-3 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg">
             <div className="flex items-center gap-2 text-xs text-gray-400 mb-1">
               <Trophy className="w-3.5 h-3.5 text-yellow-400" /> Top Skill
             </div>
@@ -110,7 +110,7 @@ export default function SkillDashboard() {
 
       {/* Top skills */}
       {analytics?.top_skills && analytics.top_skills.length > 0 && (
-        <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+        <div className="p-3 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg">
           <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
             <Trophy className="w-3.5 h-3.5 text-yellow-400" /> Top Skills (Most Used)
           </div>
@@ -132,7 +132,7 @@ export default function SkillDashboard() {
 
       {/* Skills needing attention */}
       {analytics?.struggling && analytics.struggling.length > 0 && (
-        <div className="p-3 bg-gray-900/50 border border-red-900/30 rounded-lg">
+        <div className="p-3 bg-[#0f1a0f]/60 border ring-1 ring-red-500/15 border-transparent rounded-lg">
           <div className="flex items-center gap-2 text-xs text-red-400 mb-2">
             <AlertTriangle className="w-3.5 h-3.5" /> Skills Needing Attention
           </div>
@@ -152,7 +152,7 @@ export default function SkillDashboard() {
 
       {/* Recent activity timeline */}
       {recentRuns.length > 0 && (
-        <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+        <div className="p-3 bg-[#0f1a0f]/60 ring-1 ring-black/35 rounded-lg">
           <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
             <Clock className="w-3.5 h-3.5 text-smara-400" /> Recent Activity
           </div>

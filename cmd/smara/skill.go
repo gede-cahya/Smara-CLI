@@ -27,6 +27,8 @@ var skillRunArgs string
 var skillInstallAlias string
 var skillInstallOverwrite bool
 var skillCreateFormat string
+var skillPluginAlias string
+var skillPluginOverwrite bool
 
 var skillRunCmd = &cobra.Command{
 	Use:   "run [nama-skill]",
@@ -454,6 +456,48 @@ var skillInstallCmd = &cobra.Command{
 	},
 }
 
+var skillPluginAddCmd = &cobra.Command{
+	Use:     "add <source|npx skills add source>",
+	Aliases: []string{"plugin-add"},
+	Short:   "Install skill/plugin dari GitHub shorthand, URL, path lokal, atau format npx skills add",
+	Long: `Install declarative Smara skill/plugin dari sumber eksternal.
+
+Contoh:
+  smara skill add pbakaus/impeccable
+  smara skill add owner/repo/path/to/skill.json
+  smara skill add https://example.com/skill.json
+  smara skill add ./my-plugin
+  smara skill add npx skills add pbakaus/impeccable
+  smara skill add "npx skills add pbakaus/impeccable"
+
+Catatan keamanan: command ini menerima format kompatibilitas npx skills add, tetapi tetap memakai installer aman Smara yang hanya membaca manifest skill JSON/Markdown dan tidak menjalankan install script eksternal.`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		source, err := skill.NormalizePluginSource(args)
+		if err != nil {
+			return err
+		}
+		installed, err := skill.InstallFromPluginSource(skill.PluginInstallOptions{
+			Source:    source,
+			Alias:     skillPluginAlias,
+			Overwrite: skillPluginOverwrite,
+		})
+		if err != nil {
+			return fmt.Errorf("gagal install skill/plugin: %w", err)
+		}
+		if source != strings.Join(args, " ") {
+			fmt.Printf("Terdeteksi format eksternal: %s\n", strings.Join(args, " "))
+			fmt.Printf("Menggunakan installer aman Smara untuk source: %s\n", source)
+		}
+		fmt.Printf("Berhasil install %d skill dari %s:\n", len(installed), source)
+		for _, sk := range installed {
+			fmt.Printf("  - %s: %s\n", sk.Name, sk.Description)
+		}
+		fmt.Println("Skill bisa langsung dijalankan dengan: smara skill run <nama-skill>")
+		return nil
+	},
+}
+
 var skillUpdateCmd = &cobra.Command{
 	Use:   "update [nama-skill]",
 	Short: "Update skill yang sudah di-install dari source URL",
@@ -779,7 +823,7 @@ func init() {
 	skillCmd.AddCommand(skillInstallCmd, skillUpdateCmd, skillInfoCmd)
 	skillCmd.AddCommand(skillSearchCmd, skillPublishCmd, skillRegistryCmd)
 	skillCmd.AddCommand(skillTreeCmd, skillStatsCmd, skillRefineCmd, skillAnalyticsCmd)
-	skillRegistryCmd.AddCommand(skillRegistryListCmd, skillRegistrySyncCmd)
+	skillCmd.AddCommand(skillPluginAddCmd)
 	rootCmd.AddCommand(skillCmd)
 
 	skillRunCmd.Flags().StringVar(&skillRunArgs, "args", "", "Argumen runtime skill sebagai JSON object")
@@ -788,4 +832,6 @@ func init() {
 	skillSearchCmd.Flags().StringVar(&skillSearchQuery, "query", "", "Filter kata kunci (positional juga bisa)")
 	skillSearchCmd.Flags().StringVar(&skillSearchRegistry, "registry", "", "Filter nama registry tertentu")
 	skillCreateCmd.Flags().StringVar(&skillCreateFormat, "format", "json", "Format input skill: json atau md (markdown)")
+	skillPluginAddCmd.Flags().StringVar(&skillPluginAlias, "as", "", "Alias nama skill jika sumber hanya berisi satu skill")
+	skillPluginAddCmd.Flags().BoolVar(&skillPluginOverwrite, "overwrite", false, "Timpa skill yang sudah ada")
 }
