@@ -10,6 +10,12 @@ Smara (Sanskerta: स्मृति — *Ingatan*) adalah terminal pintar berba
 
 ---
 
+## 🖥️ Smara Web Preview
+
+![Smara Web Dashboard](images/smara-web-dashboard.png)
+
+---
+
 ## ✨ Fitur Utama
 - **Multi-Agent System**: Arsitektur Supervisor-Worker untuk pendelegasian tugas yang kompleks.
 - **3 Mode Agen**:
