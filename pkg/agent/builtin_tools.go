@@ -148,6 +148,40 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "edit_image",
+			Description: "Mengedit gambar / image-to-image dari file input dan instruksi teks. Gunakan ini bila user menyertakan [image:/path] atau image_path dan meminta ubah gaya, edit, atau transformasi gambar.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"image_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path gambar input yang akan diedit, misalnya /tmp/input.png",
+					},
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "Instruksi edit/style transfer yang detail untuk image model.",
+					},
+					"model": map[string]interface{}{
+						"type":        "string",
+						"description": "Model image edit, default dari config image_model",
+					},
+					"output_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path output opsional, misalnya /tmp/edited.png",
+					},
+					"size": map[string]interface{}{
+						"type":        "string",
+						"description": "Ukuran gambar opsional, misalnya 1024x1024",
+					},
+					"quality": map[string]interface{}{
+						"type":        "string",
+						"description": "Kualitas gambar opsional: low, medium, high, auto",
+					},
+				},
+				"required": []string{"image_path", "prompt"},
+			},
+		},
+		{
 			Name:        "analyze_workspace",
 			Description: "Menganalisis struktur proyek saat ini untuk mendapatkan gambaran umum file dan folder penting.",
 			Parameters: map[string]interface{}{
@@ -256,6 +290,8 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	switch toolName {
 	case "generate_image":
 		return executeGenerateImageTool(args)
+	case "edit_image":
+		return executeEditImageTool(args)
 
 	case "run_command":
 		cmdStr, ok := args["command"].(string)
@@ -485,6 +521,9 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		path, _ := args["path"].(string)
 		oldContent, _ := args["old_content"].(string)
 		newContent, _ := args["new_content"].(string)
+		if oldContent == "" {
+			return "", fmt.Errorf("old_content tidak boleh kosong. Gunakan view_file untuk mengambil teks yang tepat.")
+		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -493,27 +532,49 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 		lines := strings.Split(string(data), "\n")
 		startLine := 1
-		if sl, ok := args["start_line"].(float64); ok {
+		hasStartLine := false
+		if sl, ok := args["start_line"].(float64); ok && sl > 0 {
 			startLine = int(sl)
+			hasStartLine = true
 		}
 		endLine := len(lines)
-		if el, ok := args["end_line"].(float64); ok {
+		hasEndLine := false
+		if el, ok := args["end_line"].(float64); ok && el > 0 {
 			endLine = int(el)
+			hasEndLine = true
 		}
 
 		// Jika start_line/end_line diberikan, cari hanya di range tersebut
 		content := string(data)
-		if okStart, okEnd := args["start_line"] != nil, args["end_line"] != nil; okStart || okEnd {
+		if hasStartLine || hasEndLine {
 			if startLine < 1 {
 				startLine = 1
 			}
 			if endLine > len(lines) {
 				endLine = len(lines)
 			}
+			if startLine > len(lines) {
+				return "", fmt.Errorf("start_line %d melebihi jumlah baris file (%d). Pakai view_file untuk verifikasi.", startLine, len(lines))
+			}
+			if endLine < startLine {
+				return "", fmt.Errorf("range tidak valid: end_line (%d) < start_line (%d)", endLine, startLine)
+			}
 
 			subContent := strings.Join(lines[startLine-1:endLine], "\n")
 			if !strings.Contains(subContent, oldContent) {
-				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d. Gunakan view_file untuk verifikasi.", startLine, endLine)
+				count := strings.Count(content, oldContent)
+				if count == 1 {
+					newContentStr := strings.Replace(content, oldContent, newContent, 1)
+					err = os.WriteFile(path, []byte(newContentStr), 0644)
+					if err != nil {
+						return "", fmt.Errorf("gagal menulis file: %w", err)
+					}
+					return fmt.Sprintf("File %s berhasil diperbarui. Catatan: range baris %d-%d tidak cocok, jadi Smara mengganti satu kemunculan unik old_content di lokasi aktual file.", path, startLine, endLine), nil
+				}
+				if count > 1 {
+					return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d, tetapi muncul %d kali di luar range tersebut. Gunakan view_file untuk memilih start_line dan end_line yang tepat.", startLine, endLine, count)
+				}
+				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d atau di seluruh file. Gunakan view_file untuk verifikasi isi terbaru.", startLine, endLine)
 			}
 
 			// Lakukan penggantian hanya di bagian tersebut

@@ -49,6 +49,11 @@ type ImageGenerator interface {
 	GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error)
 }
 
+// ImageEditor is implemented by providers that support image-to-image edits.
+type ImageEditor interface {
+	EditImage(imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error)
+}
+
 // ProviderInfo describes an available provider.
 type ProviderInfo struct {
 	Name        string

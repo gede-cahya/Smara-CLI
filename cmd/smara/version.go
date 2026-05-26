@@ -7,7 +7,11 @@ import (
 )
 
 // Version is set during release builds.
+<<<<<<< Updated upstream
 var version = "__PARAM__version"
+=======
+var version = "1.20.12"
+>>>>>>> Stashed changes
 
 var versionCmd = &cobra.Command{
 	Use:   "version",

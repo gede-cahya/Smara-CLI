@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -22,10 +23,11 @@ type SQLiteStore struct {
 
 // NewSQLiteStore creates a new SQLite-backed memory store.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("gagal membuka database: %w", err)
 	}
+	configureSQLiteDB(db)
 
 	store := &SQLiteStore{db: db, dbPath: dbPath}
 	if err := store.Init(); err != nil {
@@ -34,6 +36,48 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	}
 
 	return store, nil
+}
+
+func sqliteDSN(dbPath string) string {
+	separator := "?"
+	if strings.Contains(dbPath, "?") {
+		separator = "&"
+	}
+	return dbPath + separator + "_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)&_pragma=synchronous(NORMAL)"
+}
+
+func configureSQLiteDB(db *sql.DB) {
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	_, _ = db.Exec("PRAGMA journal_mode=WAL")
+	_, _ = db.Exec("PRAGMA busy_timeout=30000")
+	_, _ = db.Exec("PRAGMA synchronous=NORMAL")
+}
+
+func execWithSQLiteRetry(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
+	var err error
+	for attempt := 0; attempt < 20; attempt++ {
+		var result sql.Result
+		result, err = db.Exec(query, args...)
+		if err == nil || !isSQLiteBusyErr(err) {
+			return result, err
+		}
+		delay := time.Duration(attempt+1) * 250 * time.Millisecond
+		if delay > 2*time.Second {
+			delay = 2 * time.Second
+		}
+		time.Sleep(delay)
+	}
+	return nil, err
+}
+
+func isSQLiteBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "sqlite_busy") || strings.Contains(msg, "sqlite_locked") || strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked") || strings.Contains(msg, "database is busy")
 }
 
 // Init creates the database schema if it doesn't exist.
@@ -151,7 +195,7 @@ func (s *SQLiteStore) Save(content, tags, source string, workspaceID int64, embe
 		wID = nil
 	}
 
-	result, err := s.db.Exec(
+	result, err := execWithSQLiteRetry(s.db,
 		"INSERT INTO memories (content, embedding, tags, source, workspace_id) VALUES (?, ?, ?, ?, ?)",
 		content, embBlob, tags, source, wID,
 	)

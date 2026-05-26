@@ -158,10 +158,11 @@ func runProviderTest() error {
 
 	// Build provider config
 	providerCfg := llm.ProviderConfig{
-		Name:   cfg.Provider,
-		Model:  cfg.Model,
-		Host:   cfg.OllamaHost,
-		APIKey: getAPIKeyForProvider(cfg.Provider, cfg),
+		Name:            cfg.Provider,
+		Model:           cfg.Model,
+		Host:            cfg.OllamaHost,
+		APIKey:          getAPIKeyForProvider(cfg.Provider, cfg),
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
 	// Get correct host for cloud providers

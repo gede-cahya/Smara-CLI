@@ -20,6 +20,10 @@ const (
 	// verifying behavior, and fixing bugs based on test failures.
 	ModeTest Mode = "test"
 
+	// ModeImage is a visual generation/editing focused mode. It prioritizes
+	// image prompts, image analysis, and safe image-to-image routing.
+	ModeImage Mode = "image"
+
 	// ModeWorkflow is the multi-agent workflow mode.
 	ModeWorkflow Mode = "workflow"
 )
@@ -92,11 +96,20 @@ Dalam mode PLAN, kamu WAJIB:
    - Context: problem, alasan perubahan, dan outcome yang dituju.
    - Assumptions / open questions: hal yang diasumsikan atau perlu keputusan user.
    - Recommended approach: hanya pendekatan yang direkomendasikan, bukan semua alternatif.
+   - Roadmap table: tabel markdown dengan kolom No, Langkah, Output, Status.
+   - Flow diagram: blok mermaid flowchart yang menggambarkan alur rencana.
    - Steps: langkah implementasi berurutan.
    - Files/tools likely needed: file, command, atau tool yang kemungkinan dipakai.
    - Verification: cara menguji end-to-end, termasuk tes otomatis dan manual bila relevan.
    - Risks / rollback: risiko utama dan cara membatalkan/mitigasi.
-6. Tutup dengan pertanyaan approval eksplisit sebelum eksekusi, misalnya "Lanjutkan eksekusi? (ya/tidak)".
+6. Tutup dengan approval quest agar UI Web/CLI menampilkan tombol lanjut/tidak. Approval ini setara dengan pertanyaan "Lanjutkan eksekusi? (ya/tidak)":
+  [[SMARA_PLAN_QUEST]]
+  title: Lanjutkan eksekusi rencana ini?
+  options:
+  - Ya, lanjutkan
+  - Tidak, revisi dulu
+  allow_custom: true
+  [[/SMARA_PLAN_QUEST]]
 7. Setelah user menyetujui dengan "ya", "ok", "lanjut", atau instruksi setara, eksekusi rencana secara bertahap dan laporkan progres ringkas.
 - Jika requirement belum jelas dan cocok dijawab dengan pilihan, buat quest terstruktur agar UI Web/CLI bisa menampilkan button/opsi klik:
   [[SMARA_PLAN_QUEST]]
@@ -107,7 +120,7 @@ Dalam mode PLAN, kamu WAJIB:
   - Opsi 3
   allow_custom: true
   [[/SMARA_PLAN_QUEST]]
-- Gunakan quest hanya untuk pertanyaan klarifikasi di mode PLAN. Beri 2-5 opsi praktis dan allow_custom: true jika user mungkin punya jawaban lain. Jangan membuat terlalu banyak quest sekaligus.
+- Gunakan quest untuk pertanyaan klarifikasi atau approval eksekusi di mode PLAN. Beri 2-5 opsi praktis dan allow_custom: true jika user mungkin punya jawaban lain. Jangan membuat terlalu banyak quest sekaligus.
 - Manfaatkan memori jangka panjang (remember/search_memories) untuk konteks yang lebih baik.
 - Kamu memiliki akses ke VPS/Server via SSH (ssh_exec, ssh_view_file, ssh_list_dir, ssh_manage). Host yang tersimpan otomatis diingat lintas sesi.
 - Jika user menyebut "vps", "server", "remote", atau nama host, pilih host yang paling cocok dari daftar tersimpan.
@@ -129,6 +142,22 @@ Dalam mode TEST, tugas utamamu adalah memastikan kode berfungsi dengan benar mel
 - Simpan pola error atau preferensi testing user ke memori menggunakan tool "remember".
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
+		{
+			Name:        ModeImage,
+			Label:       "Image",
+			Emoji:       "🎨",
+			Description: "Mode visual khusus untuk generate gambar, prompt desain, dan analisis/edit gambar",
+			SystemPrompt: `Kamu adalah Smara, agen AI spesialis IMAGE / VISUAL.
+Dalam mode IMAGE, fokus utamamu adalah membantu tugas visual:
+- Untuk request membuat gambar/logo/poster/ilustrasi dari teks, langsung gunakan tool generate_image maksimal satu kali dengan prompt final yang detail, profesional, dan siap dipakai image model.
+- Jika prompt user singkat, kembangkan menjadi brief visual lengkap: subjek, gaya, komposisi, warna, pencahayaan, rasio/size bila relevan, kualitas, dan batasan seperti tanpa watermark.
+- Jika user menyertakan [image:/path] dan meminta analisis/teks/metadata, gunakan analyze_image.
+- Jika user menyertakan [image:/path] dan meminta edit/ubah/style transfer/image-to-image, gunakan tool edit_image langsung maksimal satu kali dengan image_path dan prompt edit yang detail; jangan melakukan loop analyze_image -> generate_image.
+- Jangan menganggap permintaan membuat fitur image pada codebase sebagai request generate gambar; perlakukan sebagai tugas coding.
+- Kamu memiliki akses ke VPS/Server via SSH (ssh_exec, ssh_view_file, ssh_list_dir, ssh_manage) jika aset visual/output perlu dicek di server. Jika user menyebut vps/server/remote, pilih host yang cocok.
+- Jawab dalam bahasa yang sama dengan pertanyaan user.`,
+		},
+
 		{
 			Name:        ModeWorkflow,
 			Label:       "Workflow",
@@ -162,7 +191,7 @@ func GetModeInfo(mode Mode) ModeInfo {
 // ValidMode checks if a mode string is valid.
 func ValidMode(s string) bool {
 	switch Mode(s) {
-	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeWorkflow:
+	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow:
 		return true
 	}
 	return false

@@ -23,79 +23,86 @@ type Step struct {
 }
 
 // LineageEntry records a previous version of a skill after refinement.
-// When a skill is refined, the prior version's description, tags and a
-// short summary of the steps are appended to Lineage so the history is
-// preserved even though the JSON file is overwritten.
 type LineageEntry struct {
 	Version     int       `json:"version"`
 	Description string    `json:"description,omitempty"`
 	Tags        []string  `json:"tags,omitempty"`
 	StepCount   int       `json:"step_count"`
 	RefinedAt   time.Time `json:"refined_at"`
-	RefinedFrom string    `json:"refined_from,omitempty"` // "auto", "manual", "feedback"
+	RefinedFrom string    `json:"refined_from,omitempty"`
+	Snapshot    string    `json:"snapshot,omitempty"`
 }
 
 // Skill is a reusable automation recipe.
 type Skill struct {
-	Name         string         `json:"name"`
-	Description  string         `json:"description"`
-	Steps        []Step         `json:"steps"`
-	Version      int            `json:"version"`
-	Tags         []string       `json:"tags,omitempty"`
-	Author       string         `json:"author,omitempty"`
-	SourceURL    string         `json:"source_url,omitempty"`
-	Params       []ParamDef     `json:"params,omitempty"`
-	ParentID     string         `json:"parent_id,omitempty"`
-	CategoryPath []string       `json:"category_path,omitempty"`
-	Dependencies []string       `json:"dependencies,omitempty"`
-	Lineage      []LineageEntry `json:"lineage,omitempty"`  // history of prior versions
-	Children     []string       `json:"children,omitempty"` // derived, not persisted
+	Name               string              `json:"name"`
+	Description        string              `json:"description"`
+	Steps              []Step              `json:"steps"`
+	Version            int                 `json:"version"`
+	Tags               []string            `json:"tags,omitempty"`
+	Author             string              `json:"author,omitempty"`
+	SourceURL          string              `json:"source_url,omitempty"`
+	Trigger            string              `json:"trigger,omitempty"`
+	Params             []ParamDef          `json:"params,omitempty"`
+	ParentID           string              `json:"parent_id,omitempty"`
+	CategoryPath       []string            `json:"category_path,omitempty"`
+	Dependencies       []string            `json:"dependencies,omitempty"`
+	DependencyWorkflow *DependencyWorkflow `json:"dependency_workflow,omitempty"`
+	Risk               *RiskMetadata       `json:"risk,omitempty"`
+	Lineage            []LineageEntry      `json:"lineage,omitempty"`
+	Children           []string            `json:"children,omitempty"`
+}
+
+func cloneRiskMetadata(r *RiskMetadata) *RiskMetadata {
+	if r == nil {
+		return nil
+	}
+	return &RiskMetadata{
+		Level:            r.Level,
+		Categories:       append([]string(nil), r.Categories...),
+		Reasons:          append([]string(nil), r.Reasons...),
+		RequiresApproval: r.RequiresApproval,
+	}
+}
+
+func cloneDependencyWorkflow(w *DependencyWorkflow) *DependencyWorkflow {
+	if w == nil {
+		return nil
+	}
+	return &DependencyWorkflow{
+		Requires:  append([]string(nil), w.Requires...),
+		Suggests:  append([]string(nil), w.Suggests...),
+		Precheck:  append([]string(nil), w.Precheck...),
+		Postcheck: append([]string(nil), w.Postcheck...),
+	}
 }
 
 // WithArgs returns a copy of the skill with parameter substitution applied.
-// Runtime args override default skill args, and param defaults are applied.
 func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
 	if len(runtimeArgs) == 0 && len(s.Params) == 0 {
 		return s
 	}
-
-	// Build merged args: param defaults -> skill step args -> runtime args
 	merged := make(map[string]interface{})
-
-	// Apply param defaults
 	for _, p := range s.Params {
 		if p.Default != nil {
 			merged[p.Name] = p.Default
 		}
 	}
-
-	// Override with runtime args
 	for k, v := range runtimeArgs {
 		merged[k] = v
 	}
-
-	// Create a deep copy of the skill with substituted args
 	newSkill := &Skill{
-		Name:         s.Name,
-		Description:  s.Description,
-		Steps:        make([]Step, len(s.Steps)),
-		Version:      s.Version,
-		Tags:         append([]string(nil), s.Tags...),
-		Author:       s.Author,
-		SourceURL:    s.SourceURL,
-		Params:       append([]ParamDef(nil), s.Params...),
-		ParentID:     s.ParentID,
-		CategoryPath: append([]string(nil), s.CategoryPath...),
-		Dependencies: append([]string(nil), s.Dependencies...),
-		Lineage:      append([]LineageEntry(nil), s.Lineage...),
+		Name: s.Name, Description: s.Description, Steps: make([]Step, len(s.Steps)), Version: s.Version,
+		Tags: append([]string(nil), s.Tags...), Author: s.Author, SourceURL: s.SourceURL, Trigger: s.Trigger,
+		Params: append([]ParamDef(nil), s.Params...), ParentID: s.ParentID, CategoryPath: append([]string(nil), s.CategoryPath...),
+		Dependencies: append([]string(nil), s.Dependencies...), DependencyWorkflow: cloneDependencyWorkflow(s.DependencyWorkflow), Risk: cloneRiskMetadata(s.Risk), Lineage: append([]LineageEntry(nil), s.Lineage...),
+		Children: append([]string(nil), s.Children...),
 	}
-
 	for i, step := range s.Steps {
 		newArgs := make(map[string]interface{})
 		for k, v := range step.Args {
 			newArgs[k] = substituteParamValue(v, merged)
 		}
-		// Override with merged runtime args where keys match (exact key replacement)
 		for k, v := range merged {
 			if _, exists := newArgs[k]; exists {
 				newArgs[k] = substituteParamValue(v, merged)
@@ -103,11 +110,9 @@ func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
 		}
 		newSkill.Steps[i] = Step{Tool: step.Tool, Args: newArgs}
 	}
-
 	return newSkill
 }
 
-// substituteParamValue replaces __PARAM__name placeholders recursively in strings, maps, and slices.
 func substituteParamValue(v interface{}, params map[string]interface{}) interface{} {
 	switch val := v.(type) {
 	case string:
@@ -145,12 +150,8 @@ func substituteParamValue(v interface{}, params map[string]interface{}) interfac
 	}
 }
 
-// ToJSON serializes the skill.
-func (s *Skill) ToJSON() ([]byte, error) {
-	return json.MarshalIndent(s, "", "  ")
-}
+func (s *Skill) ToJSON() ([]byte, error) { return json.MarshalIndent(s, "", "  ") }
 
-// FromJSON deserializes a skill.
 func FromJSON(data []byte) (*Skill, error) {
 	var s Skill
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -159,7 +160,6 @@ func FromJSON(data []byte) (*Skill, error) {
 	return &s, nil
 }
 
-// Validate checks basic correctness.
 func (s *Skill) Validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("skill name is required")

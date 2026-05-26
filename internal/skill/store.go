@@ -64,7 +64,14 @@ func Load(name string) (*Skill, error) {
 		return ParseMarkdownSkill(data)
 	}
 
-	return nil, fmt.Errorf("skill '%s' not found (tried .json and .md): %w", name, err)
+	// Codex-style folder skill: ~/.smara/skills/<name>/SKILL.md.
+	skillDir := filepath.Join(dir, name)
+	data, err = os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+	if err == nil {
+		return ParseCodexSkillMarkdown(data, name, skillDir)
+	}
+
+	return nil, fmt.Errorf("skill '%s' not found (tried .json, .md, and folder SKILL.md): %w", name, err)
 }
 
 // SaveAsMarkdown stores a skill as a markdown-with-frontmatter file.
@@ -120,6 +127,10 @@ func List() ([]string, error) {
 	var names []string
 	for _, e := range entries {
 		if e.IsDir() {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err == nil {
+				seen[e.Name()] = true
+				names = append(names, e.Name())
+			}
 			continue
 		}
 		ext := filepath.Ext(e.Name())

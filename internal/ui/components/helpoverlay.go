@@ -61,7 +61,7 @@ var nodeGraphShortcuts = []shortcut{
 
 var commandShortcuts = []shortcut{
 	{"/help", "Show available commands"},
-	{"/mode [ask|rush|plan|test]", "Change agent mode"},
+	{"/mode [ask|rush|plan|test|image|workflow]", "Change agent mode"},
 	{"/model [provider] [model]", "Change LLM provider/model"},
 	{"/memory", "View saved memories"},
 	{"/mcp", "View MCP servers and tools"},

@@ -74,6 +74,20 @@
     outline: 2px solid rgba(190, 242, 100, 0.55);
     outline-offset: 5px;
   }
+
+  .react-flow__node.selected .image-flow-node {
+    border-color: rgba(190, 242, 100, 0.54);
+    box-shadow: 0 0 0 4px rgba(190, 242, 100, 0.08), 0 18px 42px rgba(0, 0, 0, 0.36);
+  }
+
+  .react-flow__handle {
+    transition: transform 160ms ease-out, filter 160ms ease-out;
+  }
+
+  .react-flow__handle:hover {
+    transform: scale(1.18);
+    filter: brightness(1.18);
+  }
 }
 
 @keyframes smara-float {

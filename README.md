@@ -1,5 +1,5 @@
 # Smara CLI 🌀
-**Autonomous Multi-Agent Terminal v1.19.2**
+**Autonomous Multi-Agent Terminal v1.20.11**
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/gede-cahya/Smara-CLI)](https://golang.org)
 [![License](https://img.shields.io/github/license/gede-cahya/Smara-CLI)](LICENSE)
@@ -264,6 +264,18 @@ smara skill search "deploy"
 # Info detail skill
 smara skill info deploy-backend
 
+# Lint/validasi skill lokal (exit code non-zero saat error)
+smara skill lint
+smara skill lint deploy-backend --format json
+smara skill validate deploy-backend --allow-tool my_mcp_tool
+smara skill validate --tool-registry ./tools.json
+
+# Preview/diff/apply refinement skill dengan auto-lint
+smara skill refine deploy-backend --preview
+smara skill refine deploy-backend --diff
+smara skill refine deploy-backend --proposal ./proposal.json --apply
+smara skill refine deploy-backend --proposal ./proposal.json --preview --format json
+
 # Publikasikan ke registry
 smara skill publish deploy-backend
 
@@ -273,7 +285,7 @@ smara skill registry sync
 # Skill Tree & Analytics
 smara skill tree                    # Tampilkan hierarki skill tree
 smara skill stats deploy-backend    # Statistik eksekusi skill
-smara skill refine deploy-backend   # Trigger manual refinement
+smara skill refine deploy-backend   # Generate proposal refinement via LLM
 smara skill analytics               # Global skill analytics
 ```
 

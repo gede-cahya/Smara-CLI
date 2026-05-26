@@ -315,6 +315,20 @@ func sanitizeFilename(name string) string {
 //
 // Mirrors the behavior of the TUI's processImageRefs / processFileMentions
 // without surfacing UI side-effects (the front-end already shows previews).
+func looksLikeImageEditPrompt(lower string) bool {
+	editSignals := []string{
+		"ubah", "edit", "jadikan", "jadi", "transform", "convert", "konversi", "ganti", "modif", "modifikasi",
+		"style", "stylize", "restyle", "retouch", "replace", "remove", "hapus", "tambahkan", "add",
+		"kartun", "cartoon", "carton", "anime", "manga", "ghibli", "pixar", "disney", "vector", "vektor", "sketsa", "sketch",
+	}
+	for _, s := range editSignals {
+		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
 func injectAttachmentSteer(prompt string) string {
 	hasImage := strings.Contains(prompt, "[image:")
 	hasFile := strings.Contains(prompt, "[file:")
@@ -323,7 +337,12 @@ func injectAttachmentSteer(prompt string) string {
 	}
 	var hints []string
 	if hasImage {
-		hints = append(hints, "untuk gambar pakai tool analyze_image dengan path tersebut")
+		lower := strings.ToLower(prompt)
+		if looksLikeImageEditPrompt(lower) {
+			hints = append(hints, "pesan ini terlihat seperti permintaan edit/ubah gambar atau image-to-image. Gunakan tool edit_image langsung dengan image_path dari token [image:/path] dan prompt edit user. Jangan pakai analyze_image hanya untuk style transfer dan jangan fallback ke generate_image tanpa input gambar")
+		} else {
+			hints = append(hints, "untuk gambar pakai tool analyze_image dengan path tersebut")
+		}
 	}
 	if hasFile {
 		hints = append(hints, "untuk dokumen (PDF/DOCX/TXT/dll) pakai tool read_document — JANGAN pakai read_file untuk file biner karena akan mengembalikan byte mentah dan merusak konteks")

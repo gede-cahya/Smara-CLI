@@ -263,6 +263,15 @@ export interface SkillItem {
   lineage?: SkillLineageEntry[]
 }
 
+export interface SkillRefineResponse {
+  status: 'proposed' | 'applied'
+  name?: string
+  prompt?: string
+  proposal?: string
+  applied: boolean
+  skill?: SkillItem
+}
+
 export interface ModeInfo {
   Name: string
   Label: string

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -45,8 +46,32 @@ type Streamer interface {
 	ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error)
 }
 
+// ContextStreamer is implemented by streaming providers that can cancel
+// in-flight HTTP/SSE requests when the agent turn times out.
+type ContextStreamer interface {
+	ChatStreamWithContext(ctx context.Context, messages []Message, callback StreamCallback) (*ChatResponse, error)
+	ChatStreamWithToolsWithContext(ctx context.Context, messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error)
+}
+
 type ImageGenerator interface {
 	GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error)
+}
+
+// ImageGeneratorWithContext is optionally implemented by image providers that can
+// cancel in-flight HTTP requests via context cancellation.
+type ImageGeneratorWithContext interface {
+	GenerateImageWithContext(ctx context.Context, prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error)
+}
+
+// ImageEditor is implemented by providers that support image-to-image edits.
+type ImageEditor interface {
+	EditImage(imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error)
+}
+
+// ImageEditorWithContext is optionally implemented by image providers that can
+// cancel in-flight HTTP requests via context cancellation.
+type ImageEditorWithContext interface {
+	EditImageWithContext(ctx context.Context, imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error)
 }
 
 // ProviderInfo describes an available provider.
@@ -95,10 +120,11 @@ func AvailableProviders() map[string]ProviderInfo {
 
 // ProviderConfig holds the parameters to create a provider.
 type ProviderConfig struct {
-	Name   string
-	Model  string
-	Host   string
-	APIKey string
+	Name            string
+	Model           string
+	Host            string
+	APIKey          string
+	ReasoningEffort string
 }
 
 // NewProvider creates an LLM provider based on the given configuration.
@@ -110,12 +136,12 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("OpenAI memerlukan API key — jalankan 'smara login --provider openai'")
 		}
-		return NewOpenAIProvider(cfg.APIKey, cfg.Model, cfg.Host), nil
+		return NewOpenAIProvider(cfg.APIKey, cfg.Model, cfg.Host, cfg.ReasoningEffort), nil
 	case "openrouter":
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("OpenRouter memerlukan API key — jalankan 'smara login --provider openrouter'")
 		}
-		return NewOpenRouterProvider(cfg.APIKey, cfg.Model, cfg.Host), nil
+		return NewOpenRouterProvider(cfg.APIKey, cfg.Model, cfg.Host, cfg.ReasoningEffort), nil
 	case "anthropic":
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("Anthropic memerlukan API key — jalankan 'smara login --provider anthropic'")
@@ -125,7 +151,7 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 		if cfg.APIKey == "" || cfg.Host == "" {
 			return nil, fmt.Errorf("Custom provider memerlukan API key dan base URL — jalankan 'smara login --custom'")
 		}
-		return NewCustomProvider("custom", cfg.APIKey, cfg.Model, cfg.Host), nil
+		return NewCustomProvider("custom", cfg.APIKey, cfg.Model, cfg.Host, cfg.ReasoningEffort), nil
 	default:
 		return nil, fmt.Errorf("provider tidak dikenali: %s (tersedia: ollama, openai, openrouter, anthropic, custom)", cfg.Name)
 	}

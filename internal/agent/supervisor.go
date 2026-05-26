@@ -29,6 +29,20 @@ const (
 	toolResultHeadChars = 26000
 )
 
+// postToolLLMTimeout controls how long we wait for the LLM to compose its
+// final response after tool calls. 0 = no post-tool shortcut; rely on the
+// request/session context so Smara can keep working until the task completes.
+var postToolLLMTimeout time.Duration
+var postToolQuickFinishTimeout = 4 * time.Second
+
+const needMoreToolsMarker = "SMARA_NEED_MORE_TOOLS"
+
+type llmTurnResult struct {
+	resp      *llm.ChatResponse
+	toolCalls []llm.ToolCall
+	err       error
+}
+
 // MCPServerInfo holds detailed MCP server information.
 type MCPServerInfo struct {
 	Name      string
@@ -463,8 +477,9 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// 1. Add built-in agentic tools
-	tools := GetBuiltinTools()
+	// 1. Add built-in agentic tools (filtered by disabled_tool_groups config)
+	cfg := config.Get()
+	tools := GetBuiltinToolsFiltered(cfg.DisabledToolGroups)
 
 	// 2. If Plan Mode with safety engine, filter to read-only tools
 	if s.mode == ModePlan && s.safetyEngine != nil {
@@ -502,6 +517,10 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
+	if tc.Function == "generate_image" && s.mode != ModeImage {
+		return "Tool generate_image hanya tersedia di mode image. Ganti mode ke image untuk membuat gambar.", nil
+	}
+
 	// Safety engine enforcement: block write/execute/delete tools in Plan Mode
 	if s.safetyEngine != nil {
 		ok, reason := s.safetyEngine.CanExecute(tc.Function)
@@ -1163,11 +1182,39 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 
 	startTime := time.Now()
 
+	// Fast-path image-edit / image-to-image prompts before the normal attachment
+	// steering asks the model to analyze the image. In image mode, call edit_image
+	// directly to prevent analyze_image -> generate_image loops.
+	if hasImageAttachment(userPrompt) && isImageEditRequest(userPrompt) {
+		if s.mode == ModeImage {
+			imagePath := firstImageAttachmentPath(userPrompt)
+			result, err := ExecuteBuiltinTool("edit_image", map[string]interface{}{
+				"image_path": imagePath,
+				"prompt":     userPrompt,
+				"size":       "1024x1024",
+				"quality":    "high",
+			}, nil)
+			if err != nil {
+				result = fmt.Sprintf("Error: %s", err)
+			}
+			return &PromptResult{
+				Response:      result,
+				ToolsExecuted: []string{"edit_image"},
+				Duration:      time.Since(startTime),
+			}, nil
+		}
+		return &PromptResult{
+			Response:      imageEditUnsupportedResponse(),
+			ToolsExecuted: []string{},
+			Duration:      time.Since(startTime),
+		}, nil
+	}
+
 	// Direct fast-path for image/logo requests. Some chat models fail to emit a
 	// native tool call for very short prompts (e.g. "buatkan logo smara") and keep
 	// cycling until the iteration budget is exhausted. If the user's intent is
 	// clearly image generation, run the image tool directly and return its result.
-	if isDirectImageGenerationRequest(userPrompt) {
+	if s.mode == ModeImage && isDirectImageGenerationRequest(userPrompt) {
 		result, err := ExecuteBuiltinTool("generate_image", map[string]interface{}{
 			"prompt":  enhanceImagePrompt(userPrompt),
 			"size":    "1024x1024",
@@ -1176,11 +1223,13 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		if err != nil {
 			result = fmt.Sprintf("Error: %s", err)
 		}
-		return &PromptResult{
+		promptResult := &PromptResult{
 			Response:      result,
 			ToolsExecuted: []string{"generate_image"},
 			Duration:      time.Since(startTime),
-		}, nil
+		}
+		s.captureChangeJournalAsync(userPrompt, promptResult)
+		return promptResult, nil
 	}
 
 	modeInfo := GetModeInfo(s.mode)
@@ -1195,7 +1244,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	}
 
 	// 2. Build messages with mode-specific system prompt
-	sysPrompt := modeInfo.SystemPrompt
+	sysPrompt := modeInfo.SystemPrompt + buildTaskBreakdownPolicy(s.mode)
 	if hostCtx, err := smarassh.AllHosts(); err == nil && hostCtx != "(tidak ada host SSH tersimpan)" {
 		sysPrompt += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx
 	}
@@ -1283,7 +1332,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	var finalToolsExecuted []string
 
 	// Use agentic loop if tools are available, regardless of mode (with different behavior)
-	tools := s.ConvertMCPToolsToToolFunctions()
+	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
 
 	if len(tools) > 0 {
 		resp, thinking, thoughts, executed, err := s.RunAgenticLoop(ctx, userPrompt)
@@ -1297,10 +1346,21 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	} else {
 		var resp *llm.ChatResponse
 		var err error
-		if streamer, ok := s.provider.(llm.Streamer); ok {
+		var useStream = false
+		if _, ok := s.provider.(llm.Streamer); ok {
+			if s.providerConfig.Name == "custom" && config.Get().CustomDisableStream {
+				useStream = false
+			} else {
+				useStream = true
+			}
+		}
+
+		if useStream {
+			streamer := s.provider.(llm.Streamer)
 			// Emit initial Thinking phase before stream starts
 			if s.callback.OnPhaseChange != nil {
 				s.callback.OnPhaseChange("Thinking", "Analyzing the request and planning approach...")
+				s.callback.OnPhaseChange("Waiting", "Waiting for provider response...")
 			}
 			// Wrap stream callback to emit phase changes
 			streamCb := func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
@@ -1316,6 +1376,9 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 			}
 			resp, err = streamer.ChatStream(messages, streamCb)
 		} else {
+			if s.callback.OnPhaseChange != nil {
+				s.callback.OnPhaseChange("Waiting", "Waiting for provider response...")
+			}
 			resp, err = s.provider.Chat(messages)
 		}
 
@@ -1382,6 +1445,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		embedding, _ := s.provider.GenerateEmbedding(content)
 		s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
 	}
+	s.captureChangeJournalAsync(userPrompt, result)
 
 	// 7. Auto-skill detection: record trace and capture if a repeating pattern
 	// has been observed. Runs asynchronously so it never blocks the reply.
@@ -1416,7 +1480,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	}
 
 	// 2. Build initial messages
-	sysPrompt2 := modeInfo.SystemPrompt
+	sysPrompt2 := modeInfo.SystemPrompt + buildTaskBreakdownPolicy(s.mode)
 	if hostCtx2, err := smarassh.AllHosts(); err == nil && hostCtx2 != "(tidak ada host SSH tersimpan)" {
 		sysPrompt2 += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx2
 	}
@@ -1476,11 +1540,12 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	})
 
 	// 3. Get available tools
-	tools := s.ConvertMCPToolsToToolFunctions()
+	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
 
 	var allThinking []string
 	var toolsExecuted []string
 	var thoughts []string
+	var observedToolOutputs []string
 
 	// Emit initial Thinking phase
 	if s.callback.OnPhaseChange != nil {
@@ -1517,66 +1582,100 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		var toolCalls []llm.ToolCall
 		var err error
 
-		// Wrap stream callback to emit phase changes (skip if context cancelled).
+		postToolCall := len(observedToolOutputs) > 0
+
 		// Snapshot user callbacks INTO LOCAL VARS so a concurrent SetCallback
 		// (e.g. handleWSChat clearing callbacks after ProcessPrompt returns)
 		// does not race with in-flight streaming chunks. Without this snapshot,
 		// `s.callback.OnPhaseChange` could be non-nil at the outer `if` check
 		// and become nil by the time the inner stream handler fires — that's
 		// the panic at supervisor.go:1471 we observed in production.
-		var streamCb llm.StreamCallback
 		cbSnap := s.snapshotCallback()
 		onPhase := cbSnap.OnPhaseChange
 		onStream := cbSnap.OnStream
-		if onPhase != nil {
-			streamCb = func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
-				defer func() {
-					if r := recover(); r != nil {
-						// Stream callback panic must not kill the LLM goroutine.
-						// Drop the chunk; the agent will still get the final response.
-					}
-				}()
-				if ctx.Err() != nil {
-					return
-				}
-				phaseName := phaseNameFromHint(phaseHint)
-				if phaseName != "" && onPhase != nil {
-					onPhase(phaseName, phaseDescFromHint(phaseHint))
-				}
-				if onStream != nil {
-					onStream(chunk, isThinking)
-				}
-			}
-		} else {
-			streamCb = func(chunk string, isThinking bool, _ llm.PhaseHint) {
-				defer func() {
-					if r := recover(); r != nil {
-					}
-				}()
-				if ctx.Err() != nil {
-					return
-				}
-				if onStream != nil {
-					onStream(chunk, isThinking)
-				}
+
+		var useStream = false
+		if _, ok := s.provider.(llm.Streamer); ok {
+			if s.providerConfig.Name == "custom" && config.Get().CustomDisableStream {
+				useStream = false
+			} else {
+				useStream = true
 			}
 		}
 
-		if streamer, ok := s.provider.(llm.Streamer); ok {
-			if len(tools) > 0 {
-				resp, toolCalls, err = streamer.ChatStreamWithTools(messages, tools, streamCb)
-			} else {
-				resp, err = streamer.ChatStream(messages, streamCb)
+		attempts := 1
+		if postToolCall && postToolLLMTimeout > 0 {
+			attempts = 2
+		}
+		for attempt := 1; attempt <= attempts; attempt++ {
+			callCtx := ctx
+			cancelCall := func() {}
+			if postToolCall && postToolLLMTimeout > 0 {
+				callCtx, cancelCall = context.WithTimeout(ctx, postToolLLMTimeout)
 			}
-		} else {
-			if len(tools) > 0 {
-				resp, toolCalls, err = s.provider.ChatWithTools(messages, tools)
-			} else {
-				resp, err = s.provider.Chat(messages)
+			streamCb := buildStreamCallback(callCtx, onPhase, onStream)
+			done := make(chan llmTurnResult, 1)
+			attemptMessages := append([]llm.Message(nil), messages...)
+			attemptTools := toolsForTurn(tools, postToolCall)
+			if onPhase != nil {
+				desc := "Waiting for provider response..."
+				if attempt > 1 {
+					desc = fmt.Sprintf("Retrying provider response (%d/%d)...", attempt, attempts)
+				}
+				onPhase("Waiting", desc)
 			}
+			go func() {
+				var out llmTurnResult
+				if useStream {
+					if ctxStreamer, ok := s.provider.(llm.ContextStreamer); ok {
+						if len(attemptTools) > 0 {
+							out.resp, out.toolCalls, out.err = ctxStreamer.ChatStreamWithToolsWithContext(callCtx, attemptMessages, attemptTools, streamCb)
+						} else {
+							out.resp, out.err = ctxStreamer.ChatStreamWithContext(callCtx, attemptMessages, streamCb)
+						}
+					} else {
+						streamer := s.provider.(llm.Streamer)
+						if len(attemptTools) > 0 {
+							out.resp, out.toolCalls, out.err = streamer.ChatStreamWithTools(attemptMessages, attemptTools, streamCb)
+						} else {
+							out.resp, out.err = streamer.ChatStream(attemptMessages, streamCb)
+						}
+					}
+				} else {
+					if len(attemptTools) > 0 {
+						out.resp, out.toolCalls, out.err = s.provider.ChatWithTools(attemptMessages, attemptTools)
+					} else {
+						out.resp, out.err = s.provider.Chat(attemptMessages)
+					}
+				}
+				done <- out
+			}()
+
+			select {
+			case out := <-done:
+				resp, toolCalls, err = out.resp, out.toolCalls, out.err
+			case <-callCtx.Done():
+				if ctx.Err() != nil {
+					err = ctx.Err()
+				} else {
+					err = fmt.Errorf("final response timeout after %s", postToolLLMTimeout.Round(time.Second))
+				}
+			}
+			cancelCall()
+			if err == nil || !postToolCall || attempt == attempts {
+				break
+			}
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleSystem,
+				Content: "Panggilan final sebelumnya timeout. Jangan panggil tool lagi kecuali benar-benar perlu. Jawab ringkas berdasarkan hasil tool yang sudah tersedia.",
+			})
 		}
 
 		if err != nil {
+			if postToolCall && len(observedToolOutputs) > 0 {
+				fallback := synthesizeFallbackSummaryFromOutputs(thoughts, toolsExecuted, observedToolOutputs, err)
+				return fallback, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+			}
 			return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
 		}
 
@@ -1671,6 +1770,8 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				toolOutput = fmt.Sprintf("Error: %s", err)
 			}
 			toolOutput = truncateToolResultForContext(toolOutput)
+			formattedToolOutput := fmt.Sprintf("%s: %s", tc.Function, toolOutput)
+			observedToolOutputs = append(observedToolOutputs, formattedToolOutput)
 			// Image generation is a terminal user-facing action: return its result
 			// immediately (success or error) instead of asking the LLM to reason
 			// about it again. This prevents repeated generate_image calls from
@@ -1695,6 +1796,16 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		if len(imageToolOutputs) > 0 {
 			return strings.Join(imageToolOutputs, "\n\n"), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+		}
+
+		if s.callback.OnPhaseChange != nil {
+			s.callback.OnPhaseChange("Generating", "Reviewing tool results and composing final response...")
+		}
+
+		if shouldAttemptQuickFinish(toolsExecuted) {
+			if finalContent, ok := s.tryQuickFinishFromToolOutputs(ctx, userPrompt, observedToolOutputs, toolsExecuted); ok {
+				return finalContent, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+			}
 		}
 
 		// Stuck-loop bailout: if we detect the same tool+args repeating,
@@ -1776,6 +1887,167 @@ func truncateToolResultForContext(output string) string {
 	return output[:toolResultHeadChars] + fmt.Sprintf("\n\n[... %d characters omitted from tool result to keep the LLM context within limits ...]\n\n", omitted) + output[len(output)-tailChars:]
 }
 
+func buildStreamCallback(ctx context.Context, onPhase func(phase, description string), onStream func(chunk string, isThinking bool)) llm.StreamCallback {
+	return func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
+		defer func() {
+			if r := recover(); r != nil {
+				// Stream callback panic must not kill the LLM goroutine.
+			}
+		}()
+		if ctx.Err() != nil {
+			return
+		}
+		if onPhase != nil {
+			phaseName := phaseNameFromHint(phaseHint)
+			if phaseName != "" {
+				onPhase(phaseName, phaseDescFromHint(phaseHint))
+			}
+		}
+		if onStream != nil {
+			onStream(chunk, isThinking)
+		}
+	}
+}
+
+func toolsForTurn(tools []llm.ToolFunction, postToolCall bool) []llm.ToolFunction {
+	if !postToolCall || len(tools) == 0 {
+		return tools
+	}
+	allowed := map[string]bool{
+		"run_command":       true,
+		"view_file":         true,
+		"edit_file":         true,
+		"write_file":        true,
+		"delete_file":       true,
+		"list_dir":          true,
+		"grep_search":       true,
+		"get_cwd":           true,
+		"analyze_workspace": true,
+	}
+	filtered := make([]llm.ToolFunction, 0, len(allowed))
+	for _, tool := range tools {
+		if allowed[tool.Name] {
+			filtered = append(filtered, tool)
+		}
+	}
+	if len(filtered) == 0 {
+		return tools
+	}
+	return filtered
+}
+
+func shouldAttemptQuickFinish(toolsExecuted []string) bool {
+	if len(toolsExecuted) == 0 {
+		return false
+	}
+	switch toolsExecuted[len(toolsExecuted)-1] {
+	case "run_command", "edit_file", "write_file", "delete_file", "get_cwd", "list_dir", "grep_search", "view_file", "analyze_workspace":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Supervisor) tryQuickFinishFromToolOutputs(ctx context.Context, userPrompt string, toolOutputs, toolsExecuted []string) (string, bool) {
+	if len(toolOutputs) == 0 || postToolQuickFinishTimeout <= 0 {
+		return "", false
+	}
+	callCtx, cancel := context.WithTimeout(ctx, postToolQuickFinishTimeout)
+	defer cancel()
+
+	messages := []llm.Message{
+		{
+			Role: llm.RoleSystem,
+			Content: "Kamu adalah Smara. Tulis jawaban final singkat berdasarkan hasil tool yang sudah tersedia. " +
+				"Jangan panggil tool. Jangan sebut timeout, fallback, atau mekanisme internal. " +
+				"Kalau hasil tool belum cukup untuk menjawab atau tugas masih perlu tool lain, balas tepat: " + needMoreToolsMarker,
+		},
+		{
+			Role: llm.RoleUser,
+			Content: fmt.Sprintf("Prompt user:\n%s\n\nTools dijalankan:\n%s\n\nHasil tool terakhir:\n%s",
+				userPrompt, compactToolList(toolsExecuted), compactToolOutputs(toolOutputs)),
+		},
+	}
+
+	done := make(chan llmTurnResult, 1)
+	go func() {
+		if ctxStreamer, ok := s.provider.(llm.ContextStreamer); ok {
+			resp, err := ctxStreamer.ChatStreamWithContext(callCtx, messages, func(string, bool, llm.PhaseHint) {})
+			done <- llmTurnResult{resp: resp, err: err}
+			return
+		}
+		resp, err := s.provider.Chat(messages)
+		done <- llmTurnResult{resp: resp, err: err}
+	}()
+
+	select {
+	case result := <-done:
+		if result.err != nil || result.resp == nil {
+			return "", false
+		}
+		_, cleaned := llm.ExtractToolCallsFromContent(result.resp.Content)
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned == "" || strings.Contains(cleaned, needMoreToolsMarker) {
+			return "", false
+		}
+		return cleaned, true
+	case <-callCtx.Done():
+		return "", false
+	}
+}
+
+func compactToolList(toolsExecuted []string) string {
+	if len(toolsExecuted) == 0 {
+		return "none"
+	}
+	seen := map[string]bool{}
+	var list []string
+	for _, toolName := range toolsExecuted {
+		if seen[toolName] {
+			continue
+		}
+		seen[toolName] = true
+		list = append(list, toolName)
+		if len(list) >= 12 {
+			break
+		}
+	}
+	return strings.Join(list, ", ")
+}
+
+func compactToolOutputs(toolOutputs []string) string {
+	start := len(toolOutputs) - 4
+	if start < 0 {
+		start = 0
+	}
+	parts := make([]string, 0, len(toolOutputs)-start)
+	for _, output := range toolOutputs[start:] {
+		output = strings.TrimSpace(output)
+		if output == "" {
+			continue
+		}
+		if len(output) > 6000 {
+			output = output[:6000] + "\n[... output dipotong untuk quick final answer ...]"
+		}
+		parts = append(parts, output)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func buildTaskBreakdownPolicy(mode Mode) string {
+	if mode == ModePlan || mode == ModeWorkflow {
+		return ""
+	}
+	return `
+
+KEBIJAKAN PEMECAHAN TUGAS:
+- Untuk task yang butuh lebih dari 2 tool call, beberapa file, atau beberapa fase, pecah dulu menjadi checklist 3-7 subtask sebelum eksekusi.
+- Kerjakan satu subtask sampai selesai sebelum lanjut ke subtask berikutnya; jangan eksplorasi acak tanpa tujuan subtask yang jelas.
+- Setelah tiap subtask besar selesai, beri progress singkat: selesai, sedang dikerjakan, atau diblokir.
+- Jika konteks belum cukup setelah eksplorasi awal, berhenti dan tanyakan klarifikasi spesifik daripada menghabiskan iterasi.
+- Jika mendekati batas iterasi, buat jawaban final parsial dengan status, hasil tool terakhir, dan subtask berikutnya yang paling aman.`
+}
+
 // synthesizeFallbackSummary builds a human-readable recap when the LLM
 // couldn't produce a clean final answer. Uses any plaintext intermediate
 // thoughts plus the list of tools it ran so the user at least knows what
@@ -1829,8 +2101,70 @@ func synthesizeFallbackSummary(thoughts, toolsExecuted []string) string {
 		}
 	}
 
-	sb.WriteString("\n\nSaran: pecah tugas jadi langkah lebih kecil atau kirim pertanyaan baru yang lebih spesifik.")
+	sb.WriteString("\n\nSaran: lanjutkan dengan satu subtask paling dekat dari hasil di atas. Untuk task besar, minta Smara membuat checklist 3-7 langkah terlebih dahulu atau gunakan mode PLAN/WORKFLOW.")
 	return sb.String()
+}
+
+func synthesizeFallbackSummaryFromOutputs(thoughts, toolsExecuted, toolOutputs []string, cause error) string {
+	var sb strings.Builder
+	sb.WriteString("⚠ Provider LLM timeout saat menyusun jawaban final, jadi Smara merangkum hasil tool yang sudah tersedia.\n")
+	if cause != nil {
+		sb.WriteString(fmt.Sprintf("Penyebab: %v\n", cause))
+	}
+
+	if len(toolsExecuted) > 0 {
+		sb.WriteString(fmt.Sprintf("\n🔧 Tools dijalankan (%d): %s\n", len(toolsExecuted), compactToolList(toolsExecuted)))
+	}
+
+	if len(toolOutputs) > 0 {
+		sb.WriteString("\n📌 Hasil tool terakhir:\n")
+		for _, output := range lastNStrings(toolOutputs, 3) {
+			trimmed := strings.TrimSpace(output)
+			if trimmed == "" {
+				continue
+			}
+			if len(trimmed) > 1200 {
+				trimmed = trimmed[:1200] + "…"
+			}
+			sb.WriteString("\n```\n" + trimmed + "\n```\n")
+		}
+	}
+
+	if len(thoughts) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(synthesizeFallbackSummary(thoughts, toolsExecuted))
+	} else {
+		sb.WriteString("\nSaran: jalankan lagi prompt yang sama untuk melanjutkan dari hasil tool terakhir, atau gunakan provider/proxy lain jika timeout berulang.")
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+func lastNStrings(values []string, n int) []string {
+	if n <= 0 || len(values) <= n {
+		return values
+	}
+	return values[len(values)-n:]
+}
+
+func includesFileMutationTool(tools []string) bool {
+	for _, toolName := range tools {
+		switch toolName {
+		case "edit_file", "write_file", "delete_file":
+			return true
+		}
+	}
+	return false
+}
+
+func includesToolError(outputs []string) bool {
+	for _, output := range outputs {
+		lower := strings.ToLower(strings.TrimSpace(output))
+		if strings.HasPrefix(lower, "error:") || strings.Contains(lower, ": error:") {
+			return true
+		}
+	}
+	return false
 }
 
 // ClearHistory clears the conversation history and session registry history.

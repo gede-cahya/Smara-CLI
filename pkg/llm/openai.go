@@ -42,6 +42,11 @@ func (o *OpenAIProvider) GenerateImage(prompt string, opts ImageGenerationOption
 	return generateOpenAIImage(o.client, o.host, o.apiKey, o.model, opts)
 }
 
+func (o *OpenAIProvider) EditImage(imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error) {
+	opts.Prompt = prompt
+	return editOpenAIImage(o.client, o.host, o.apiKey, o.model, imagePath, opts)
+}
+
 func (o *OpenAIProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
 		Model:    o.model,

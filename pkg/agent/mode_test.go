@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestModeImage_Constant(t *testing.T) {
+	assert.Equal(t, Mode("image"), ModeImage)
+}
+
 func TestModeWorkflow_Constant(t *testing.T) {
 	assert.Equal(t, Mode("workflow"), ModeWorkflow)
 }
@@ -17,7 +21,16 @@ func TestAllModes_IncludesWorkflow(t *testing.T) {
 		names = append(names, m.Name)
 	}
 	assert.Contains(t, names, ModeWorkflow)
-	assert.Len(t, names, 5)
+	assert.Len(t, names, 6)
+}
+
+func TestGetModeInfo_Image(t *testing.T) {
+	info := GetModeInfo(ModeImage)
+	assert.Equal(t, ModeImage, info.Name)
+	assert.Equal(t, "Image", info.Label)
+	assert.Equal(t, "🎨", info.Emoji)
+	assert.Contains(t, info.SystemPrompt, "generate_image")
+	assert.Contains(t, info.SystemPrompt, "edit_image")
 }
 
 func TestGetModeInfo_Workflow(t *testing.T) {
@@ -41,6 +54,7 @@ func TestModePlan_SystemPromptStructure(t *testing.T) {
 
 func TestValidMode_Workflow(t *testing.T) {
 	assert.True(t, ValidMode("workflow"))
+	assert.True(t, ValidMode("image"))
 	assert.False(t, ValidMode("WORKFLOW")) // case sensitive
 	assert.False(t, ValidMode("unknown"))
 }

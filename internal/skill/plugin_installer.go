@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -115,12 +116,29 @@ func installFromLocalPlugin(source string, opts PluginInstallOptions) ([]*Skill,
 		}
 		return installSkillsFromBytes(data, path, opts)
 	}
+	if data, err := os.ReadFile(filepath.Join(path, "SKILL.md")); err == nil {
+		sk, err := ParseCodexSkillMarkdown(data, opts.Alias, path)
+		if err != nil {
+			return nil, err
+		}
+		if opts.Alias != "" {
+			sk.Name = opts.Alias
+		}
+		sk.SourceURL = path
+		if err := saveInstructionSkillFolder(sk, data, path, opts.Overwrite); err != nil {
+			return nil, err
+		}
+		return []*Skill{sk}, nil
+	}
 	for _, candidate := range pluginManifestCandidates() {
 		p := filepath.Join(path, candidate)
 		data, err := os.ReadFile(p)
 		if err == nil {
 			return installSkillsFromBytes(data, p, opts)
 		}
+	}
+	if skills, err := installExternalMarkdownTree(path, opts); err == nil && len(skills) > 0 {
+		return skills, nil
 	}
 	return nil, fmt.Errorf("no skill manifest found in %s", path)
 }
@@ -172,14 +190,24 @@ func fetchLimited(url string) ([]byte, error) {
 func installSkillsFromBytes(data []byte, source string, opts PluginInstallOptions) ([]*Skill, error) {
 	if IsMarkdownSkill(data) || strings.HasSuffix(strings.ToLower(source), ".md") {
 		sk, err := ParseMarkdownSkill(data)
+		markdownIsNative := err == nil
 		if err != nil {
-			return nil, err
+			sk, err = ParseExternalInstructionMarkdown(data, opts.Alias, source)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if opts.Alias != "" {
 			sk.Name = opts.Alias
 		}
 		sk.SourceURL = source
-		if err := saveInstalledSkill(sk, opts.Overwrite, true); err != nil {
+		if markdownIsNative {
+			if err := saveInstalledSkill(sk, opts.Overwrite, true); err != nil {
+				return nil, err
+			}
+			return []*Skill{sk}, nil
+		}
+		if err := saveInstructionSkillFolder(sk, data, "", opts.Overwrite); err != nil {
 			return nil, err
 		}
 		return []*Skill{sk}, nil
@@ -227,6 +255,60 @@ func installSkillsFromBytes(data []byte, source string, opts PluginInstallOption
 	return installed, nil
 }
 
+func installExternalMarkdownTree(root string, opts PluginInstallOptions) ([]*Skill, error) {
+	candidates := []string{
+		filepath.Join(".claude", "agents"),
+		filepath.Join(".claude", "commands"),
+		"agents",
+		"commands",
+		filepath.Join(".antigravity", "agents"),
+		filepath.Join(".antigravity", "rules"),
+		"rules",
+		"skills",
+	}
+	var files []string
+	for _, rel := range candidates {
+		dir := filepath.Join(root, rel)
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || strings.ToLower(filepath.Ext(path)) != ".md" {
+				return nil
+			}
+			files = append(files, path)
+			return nil
+		})
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no external markdown agents/commands found")
+	}
+	if opts.Alias != "" && len(files) > 1 {
+		return nil, fmt.Errorf("alias can only be used when installing a single markdown skill")
+	}
+	installed := make([]*Skill, 0, len(files))
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, err
+		}
+		sk, err := ParseExternalInstructionMarkdown(data, opts.Alias, file)
+		if err != nil {
+			return nil, err
+		}
+		if opts.Alias != "" {
+			sk.Name = opts.Alias
+		}
+		sk.SourceURL = file
+		if err := saveInstructionSkillFolder(sk, data, "", opts.Overwrite); err != nil {
+			return nil, err
+		}
+		installed = append(installed, sk)
+	}
+	return installed, nil
+}
+
 func saveInstalledSkill(sk *Skill, overwrite bool, markdown bool) error {
 	if err := sk.Validate(); err != nil {
 		return err
@@ -238,6 +320,84 @@ func saveInstalledSkill(sk *Skill, overwrite bool, markdown bool) error {
 		return SaveAsMarkdown(sk, nil)
 	}
 	return Save(sk, nil)
+}
+
+func saveInstructionSkillFolder(sk *Skill, originalMarkdown []byte, sourceDir string, overwrite bool) error {
+	if err := sk.Validate(); err != nil {
+		return err
+	}
+	if existing, _ := Load(sk.Name); existing != nil && !overwrite {
+		return fmt.Errorf("skill '%s' already exists (use --overwrite to replace)", sk.Name)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dstDir := filepath.Join(home, skillsDir, sk.Name)
+	if overwrite {
+		_ = os.RemoveAll(dstDir)
+	}
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		return err
+	}
+	if sourceDir != "" {
+		if err := copySkillDir(sourceDir, dstDir); err != nil {
+			return err
+		}
+	}
+	if !bytes.HasPrefix(bytes.TrimSpace(originalMarkdown), []byte("---")) || sourceDir != "" {
+		originalMarkdown = renderInstructionSkillMarkdown(sk, skillInstructions(sk, string(originalMarkdown)))
+	}
+	return os.WriteFile(filepath.Join(dstDir, "SKILL.md"), originalMarkdown, 0644)
+}
+
+func copySkillDir(srcDir, dstDir string) error {
+	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		dst := filepath.Join(dstDir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0644)
+	})
+}
+
+func renderInstructionSkillMarkdown(sk *Skill, body string) []byte {
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.WriteString("name: " + sk.Name + "\n")
+	b.WriteString("description: " + strconvQuote(sk.Description) + "\n")
+	if sk.Trigger != "" {
+		b.WriteString("trigger: " + sk.Trigger + "\n")
+	}
+	b.WriteString("---\n\n")
+	b.WriteString(strings.TrimSpace(body))
+	b.WriteString("\n")
+	return []byte(b.String())
+}
+
+func skillInstructions(sk *Skill, fallback string) string {
+	if len(sk.Steps) > 0 {
+		if raw, ok := sk.Steps[0].Args["instructions"].(string); ok && strings.TrimSpace(raw) != "" {
+			return raw
+		}
+	}
+	return fallback
+}
+
+func strconvQuote(s string) string {
+	data, _ := json.Marshal(s)
+	return string(data)
 }
 
 func pluginManifestCandidates() []string {

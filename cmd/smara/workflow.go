@@ -257,10 +257,11 @@ func executeCustomWorkflow(name, projectDir string) (*workflow.CustomWorkflowRes
 func providerFromConfig() (llm.Provider, error) {
 	cfg := config.Get()
 	providerCfg := llm.ProviderConfig{
-		Name:   cfg.Provider,
-		Model:  cfg.Model,
-		Host:   cfg.OllamaHost,
-		APIKey: "",
+		Name:            cfg.Provider,
+		Model:           cfg.Model,
+		Host:            cfg.OllamaHost,
+		APIKey:          "",
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 	switch cfg.Provider {
 	case "openai":

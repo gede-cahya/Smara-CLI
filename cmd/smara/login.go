@@ -122,6 +122,8 @@ func getAPIKeyForProvider(name string, cfg *config.SmaraConfig) string {
 		return cfg.OpenRouterAPIKey
 	case "anthropic":
 		return cfg.AnthropicAPIKey
+	case "custom":
+		return cfg.CustomAPIKey
 	}
 	return ""
 }

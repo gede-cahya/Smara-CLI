@@ -20,6 +20,10 @@ const (
 	// verifying behavior, and fixing bugs based on test failures.
 	ModeTest Mode = "test"
 
+	// ModeImage is a visual generation/editing focused mode. It prioritizes
+	// image prompts, image analysis, and safe image-to-image routing.
+	ModeImage Mode = "image"
+
 	// ModeWorkflow is the multi-agent workflow mode. The agent acts as an
 	// orchestrator that spawns specialized worker agents to build complete projects.
 	ModeWorkflow Mode = "workflow"
@@ -104,6 +108,21 @@ Dalam mode TEST, tugas utamamu adalah memastikan kode berfungsi dengan benar mel
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 		{
+			Name:        ModeImage,
+			Label:       "Image",
+			Emoji:       "🎨",
+			Description: "Mode visual khusus untuk generate gambar, prompt desain, dan analisis/edit gambar",
+			SystemPrompt: `Kamu adalah Smara, agen AI spesialis IMAGE / VISUAL.
+Dalam mode IMAGE, fokus utamamu adalah membantu tugas visual:
+- Untuk request membuat gambar/logo/poster/ilustrasi dari teks, langsung gunakan tool generate_image maksimal satu kali dengan prompt final yang detail, profesional, dan siap dipakai image model.
+- Jika prompt user singkat, kembangkan menjadi brief visual lengkap: subjek, gaya, komposisi, warna, pencahayaan, rasio/size bila relevan, kualitas, dan batasan seperti tanpa watermark.
+- Jika user menyertakan [image:/path] dan meminta analisis/teks/metadata, gunakan analyze_image.
+- Jika user menyertakan [image:/path] dan meminta edit/ubah/style transfer/image-to-image, gunakan tool edit_image langsung maksimal satu kali dengan image_path dan prompt edit yang detail; jangan melakukan loop analyze_image -> generate_image.
+- Jangan menganggap permintaan membuat fitur image pada codebase sebagai request generate gambar; perlakukan sebagai tugas coding.
+- Jawab dalam bahasa yang sama dengan pertanyaan user.`,
+		},
+
+		{
 			Name:        ModeWorkflow,
 			Label:       "Workflow",
 			Emoji:       "🔄",
@@ -134,7 +153,7 @@ func GetModeInfo(mode Mode) ModeInfo {
 // ValidMode checks if a mode string is valid.
 func ValidMode(s string) bool {
 	switch Mode(s) {
-	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeWorkflow:
+	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow:
 		return true
 	}
 	return false

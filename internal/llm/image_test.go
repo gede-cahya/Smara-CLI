@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,11 +26,7 @@ func TestCustomProviderGenerateImage(t *testing.T) {
 		assert.Equal(t, "1024x1024", req.Size)
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(openAIImageResponse{Data: []struct {
-			B64JSON       string `json:"b64_json"`
-			URL           string `json:"url,omitempty"`
-			RevisedPrompt string `json:"revised_prompt,omitempty"`
-		}{
+		_ = json.NewEncoder(w).Encode(openAIImageResponse{Data: []openAIImageDataItem{
 			{B64JSON: base64.StdEncoding.EncodeToString(png), RevisedPrompt: "revised"},
 		}})
 	}))
@@ -49,4 +46,37 @@ func TestCustomProviderGenerateImageEmptyPrompt(t *testing.T) {
 	_, err := provider.GenerateImage(" ", ImageGenerationOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prompt gambar kosong")
+}
+
+func TestCustomProviderEditImage(t *testing.T) {
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52}
+	input := t.TempDir() + "/input.png"
+	require.NoError(t, os.WriteFile(input, png, 0o644))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/images/edits", r.URL.Path)
+		assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		require.NoError(t, r.ParseMultipartForm(10<<20))
+		assert.Equal(t, "gpt-image-2", r.FormValue("model"))
+		assert.Equal(t, "make it cyberpunk", r.FormValue("prompt"))
+		assert.Equal(t, "b64_json", r.FormValue("response_format"))
+		assert.Equal(t, "1024x1024", r.FormValue("size"))
+		file, _, err := r.FormFile("image")
+		require.NoError(t, err)
+		defer file.Close()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openAIImageResponse{Data: []openAIImageDataItem{
+			{B64JSON: base64.StdEncoding.EncodeToString(png), RevisedPrompt: "edited"},
+		}})
+	}))
+	defer server.Close()
+
+	provider := NewCustomProvider("custom", "test-key", "deepseek-v4-pro", server.URL)
+	result, err := provider.EditImage(input, "make it cyberpunk", ImageEditOptions{Model: "gpt-image-2", Size: "1024x1024"})
+	require.NoError(t, err)
+	assert.Equal(t, png, result.Data)
+	assert.Equal(t, "gpt-image-2", result.Model)
+	assert.Equal(t, "edited", result.RevisedPrompt)
+	assert.Equal(t, ".png", result.Extension)
 }

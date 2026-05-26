@@ -10,7 +10,7 @@ export default function RemoteDesktop() {
   const [name, setName] = useState('local-desktop')
   const [url, setUrl] = useState('http://127.0.0.1:8765')
   const [token, setToken] = useState('')
-  const [selected, setSelected] = useState('local-desktop')
+  const [selected, setSelected] = useState('')
   const [instruction, setInstruction] = useState('Buka browser lalu cari dokumentasi Go terbaru')
   const [maxSteps, setMaxSteps] = useState(10)
   const [status, setStatus] = useState<string>('idle')
@@ -19,8 +19,10 @@ export default function RemoteDesktop() {
 
   const load = async () => {
     const r = await fetchJSON<{ devices: Device[] }>('/api/remote-desktop/devices')
-    setDevices(r.devices || [])
-    if ((r.devices || []).length && !r.devices.find(d => d.id === selected)) setSelected(r.devices[0].id)
+    const nextDevices = r.devices || []
+    setDevices(nextDevices)
+    if (nextDevices.length && !nextDevices.find(d => d.id === selected)) setSelected(nextDevices[0].id)
+    if (nextDevices.length === 0) setSelected('')
   }
   useEffect(() => { load().catch(e => setStatus(e.message)) }, [])
 
@@ -30,13 +32,17 @@ export default function RemoteDesktop() {
     setSelected(d.id); setStatus('paired'); await load()
   }
   const proxy = async (action: string, payload?: any) => {
+    if (!selected) {
+      setStatus('pair desktop-agent dulu')
+      return
+    }
     setStatus(action + '...')
     const r = await fetchJSON<ProxyResult>('/api/remote-desktop/proxy', { method: 'POST', body: JSON.stringify({ device_id: selected, action, payload }) })
     setResult(r); setStatus(r.ok ? 'ok' : (r.error || 'error'))
     if (action === 'observe' || action === 'task') setShotTick(Date.now())
   }
 
-  const screenshotURL = `/api/remote-desktop/screenshot?device_id=${encodeURIComponent(selected)}&t=${shotTick}`
+  const screenshotURL = selected ? `/api/remote-desktop/screenshot?device_id=${encodeURIComponent(selected)}&t=${shotTick}` : ''
 
   return <div className="h-full overflow-y-auto p-6 space-y-5">
     <div className="flex items-center justify-between">
@@ -58,6 +64,7 @@ export default function RemoteDesktop() {
         <div className="rounded-3xl border border-neutral-800/70 bg-slate-950/25 p-5 space-y-3">
           <div className="text-sm font-semibold">Devices</div>
           <select value={selected} onChange={e=>setSelected(e.target.value)} className="w-full rounded-2xl bg-slate-950/40 border border-neutral-800/70 p-3 text-sm outline-none">
+            {devices.length === 0 && <option value="">Belum ada device</option>}
             {devices.map(d => <option key={d.id} value={d.id}>{d.name} — {d.url}</option>)}
           </select>
           <div className="grid grid-cols-2 gap-2">
@@ -78,7 +85,11 @@ export default function RemoteDesktop() {
         </div>
         <div className="rounded-3xl border border-neutral-800/70 bg-slate-950/25 p-4">
           <div className="flex items-center gap-2 text-sm font-semibold mb-3"><ShieldCheck className="w-4 h-4 text-emerald-300"/> Live desktop observation</div>
-          <img src={screenshotURL} onError={(e)=>{(e.currentTarget.style.display='none')}} onLoad={(e)=>{(e.currentTarget.style.display='block')}} className="w-full rounded-2xl border border-neutral-800/70 bg-slate-950/40" />
+          {screenshotURL ? (
+            <img src={screenshotURL} onError={(e)=>{(e.currentTarget.style.display='none')}} onLoad={(e)=>{(e.currentTarget.style.display='block')}} className="w-full rounded-2xl border border-neutral-800/70 bg-slate-950/40" />
+          ) : (
+            <div className="rounded-2xl border border-neutral-800/70 bg-slate-950/40 p-6 text-center text-sm text-gray-500">Pair desktop-agent untuk melihat screenshot.</div>
+          )}
         </div>
         <pre className="rounded-3xl border border-neutral-800/70 bg-slate-950/40 p-4 text-xs text-gray-300 overflow-auto max-h-72">{result ? JSON.stringify(result, null, 2) : 'Belum ada result.'}</pre>
       </div>

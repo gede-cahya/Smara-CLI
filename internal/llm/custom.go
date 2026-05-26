@@ -2,36 +2,49 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // CustomProvider implements the Provider interface for custom OpenAI-compatible APIs.
 type CustomProvider struct {
-	name    string
-	apiKey  string
-	model   string
-	baseURL string
-	client  *http.Client
+	name            string
+	apiKey          string
+	model           string
+	baseURL         string
+	reasoningEffort string
+	client          *http.Client
+
+	// embDisabled is set to 1 after the first embedding failure so we
+	// stop wasting HTTP round-trips on providers that don't support them.
+	embDisabled atomic.Int32
 }
 
 // NewCustomProvider creates a new custom provider.
-func NewCustomProvider(name, apiKey, model, baseURL string) *CustomProvider {
+func NewCustomProvider(name, apiKey, model, baseURL string, reasoningEffort ...string) *CustomProvider {
 	if model == "" {
 		model = "gpt-4o"
 	}
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
+	effort := ""
+	if len(reasoningEffort) > 0 {
+		effort = normalizeReasoningEffort(reasoningEffort[0])
+	}
 	return &CustomProvider{
-		name:    name,
-		apiKey:  apiKey,
-		model:   model,
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 15 * time.Minute},
+		name:            name,
+		apiKey:          apiKey,
+		model:           model,
+		baseURL:         baseURL,
+		reasoningEffort: effort,
+		client:          &http.Client{Timeout: 15 * time.Minute},
 	}
 }
 
@@ -40,15 +53,29 @@ func (c *CustomProvider) Name() string {
 }
 
 func (c *CustomProvider) GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
+	return c.GenerateImageWithContext(context.Background(), prompt, opts)
+}
+
+func (c *CustomProvider) GenerateImageWithContext(ctx context.Context, prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
 	opts.Prompt = prompt
-	return generateOpenAIImage(c.client, c.baseURL, c.apiKey, c.model, opts)
+	return generateOpenAIImageWithContext(ctx, c.client, c.baseURL, c.apiKey, c.model, opts)
+}
+
+func (c *CustomProvider) EditImage(imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error) {
+	return c.EditImageWithContext(context.Background(), imagePath, prompt, opts)
+}
+
+func (c *CustomProvider) EditImageWithContext(ctx context.Context, imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error) {
+	opts.Prompt = prompt
+	return editOpenAIImageWithContext(ctx, c.client, c.baseURL, c.apiKey, c.model, imagePath, opts)
 }
 
 func (c *CustomProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
-		Model:    c.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Stream:   false,
+		Model:           c.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Stream:          false,
+		ReasoningEffort: c.reasoningEffort,
 	}
 
 	resp, err := c.doChat(req)
@@ -73,10 +100,11 @@ func (c *CustomProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 	}
 
 	req := openAIChatRequest{
-		Model:    c.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Tools:    openAITools,
-		Stream:   false,
+		Model:           c.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Tools:           openAITools,
+		Stream:          false,
+		ReasoningEffort: c.reasoningEffort,
 	}
 
 	body, err := c.doChat(req)
@@ -117,16 +145,25 @@ func (c *CustomProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 
 // ChatStream implements the Streamer interface.
 func (c *CustomProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	return c.ChatStreamWithContext(context.Background(), messages, callback)
+}
+
+func (c *CustomProvider) ChatStreamWithContext(ctx context.Context, messages []Message, callback StreamCallback) (*ChatResponse, error) {
 	req := openAIChatRequest{
-		Model:    c.model,
-		Messages: convertMessagesToOpenAI(messages),
+		Model:           c.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		ReasoningEffort: c.reasoningEffort,
 	}
-	resp, _, err := streamOpenAI(c.client, c.baseURL, c.apiKey, req, callback)
+	resp, _, err := streamOpenAIWithContext(ctx, c.client, c.baseURL, c.apiKey, req, callback)
 	return resp, err
 }
 
 // ChatStreamWithTools implements the Streamer interface.
 func (c *CustomProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	return c.ChatStreamWithToolsWithContext(context.Background(), messages, tools, callback)
+}
+
+func (c *CustomProvider) ChatStreamWithToolsWithContext(ctx context.Context, messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
 	openAITools := make([]openAITool, len(tools))
 	for i, t := range tools {
 		openAITools[i] = openAITool{
@@ -140,24 +177,36 @@ func (c *CustomProvider) ChatStreamWithTools(messages []Message, tools []ToolFun
 	}
 
 	req := openAIChatRequest{
-		Model:    c.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Tools:    openAITools,
+		Model:           c.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Tools:           openAITools,
+		ReasoningEffort: c.reasoningEffort,
 	}
-	return streamOpenAI(c.client, c.baseURL, c.apiKey, req, callback)
+	return streamOpenAIWithContext(ctx, c.client, c.baseURL, c.apiKey, req, callback)
 }
 
 func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
-	// Fallback mechanism for embedding model
-	model := "text-embedding-3-small"
-	if c.model == "minimax-auto" {
-		// If using the proxy auto-model, we might need a different embedding model
-		// or let the proxy handle it. For now, we try to be more generic.
-		model = "text-embedding-ada-002"
+	// Fast path: if a previous call already determined embeddings are
+	// unsupported by this provider/router, skip the HTTP call entirely.
+	if c.embDisabled.Load() != 0 {
+		return nil, nil
+	}
+
+	// Determine base embedding model name.
+	embModel := "text-embedding-3-small"
+	if strings.HasSuffix(c.model, "minimax-auto") {
+		embModel = "text-embedding-ada-002"
+	}
+
+	// If the chat model has a provider prefix (e.g. "cx/gpt-5.5"),
+	// apply the same prefix to the embedding model so the router/proxy
+	// routes it to the same provider instead of defaulting to openai.
+	if idx := strings.LastIndex(c.model, "/"); idx >= 0 {
+		embModel = c.model[:idx+1] + embModel
 	}
 
 	reqBody := openAIEmbedRequest{
-		Model: model,
+		Model: embModel,
 		Input: text,
 	}
 
@@ -175,13 +224,16 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gagal menghubungi provider: %w", err)
+		// Network error — don't permanently disable, might be transient.
+		return nil, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Log and return nil error to avoid breaking the chat flow if embeddings are not available
-		// This is common in custom/local providers
+		// Provider doesn't support embeddings (e.g. codex returns 400).
+		// Permanently disable for this session to avoid hammering the
+		// router with requests that will always fail.
+		c.embDisabled.Store(1)
 		return nil, nil
 	}
 

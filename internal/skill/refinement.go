@@ -89,6 +89,30 @@ func ApplyRefinement(proposedJSON []byte, db *sql.DB) (*Skill, error) {
 	return newSkill, nil
 }
 
+// ApplyNamedRefinement overwrites a specific skill with an approved proposal.
+// The proposal is allowed to omit or accidentally change the name; the stored
+// skill keeps the requested identity so web-driven refinement cannot fork the
+// tree by mistake.
+func ApplyNamedRefinement(name string, proposedJSON []byte, db *sql.DB, refinedFrom string) (*Skill, error) {
+	newSkill, err := FromJSON(proposedJSON)
+	if err != nil {
+		return nil, fmt.Errorf("proposed skill invalid: %w", err)
+	}
+	prior, err := Load(name)
+	if err != nil {
+		return nil, err
+	}
+	newSkill.Name = prior.Name
+	if newSkill.Version <= prior.Version {
+		newSkill.Version = prior.Version + 1
+	}
+	AttachLineage(newSkill, prior, refinedFrom)
+	if err := Save(newSkill, db); err != nil {
+		return nil, fmt.Errorf("failed to save refined skill: %w", err)
+	}
+	return newSkill, nil
+}
+
 // AttachLineage appends a snapshot of the prior skill version to the new
 // skill's Lineage array. Called whenever a skill is replaced by a refined
 // version so hierarchy/history views can display the chain.
@@ -101,6 +125,7 @@ func AttachLineage(next, prior *Skill, refinedFrom string) {
 	if len(prior.Lineage) > 0 {
 		next.Lineage = append(append([]LineageEntry(nil), prior.Lineage...), next.Lineage...)
 	}
+	priorJSON, _ := prior.ToJSON()
 	next.Lineage = append(next.Lineage, LineageEntry{
 		Version:     prior.Version,
 		Description: prior.Description,
@@ -108,6 +133,7 @@ func AttachLineage(next, prior *Skill, refinedFrom string) {
 		StepCount:   len(prior.Steps),
 		RefinedAt:   time.Now(),
 		RefinedFrom: refinedFrom,
+		Snapshot:    string(priorJSON),
 	})
 }
 

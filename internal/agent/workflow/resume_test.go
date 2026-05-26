@@ -327,5 +327,8 @@ func TestResumer_StateArtifactsReconstruction(t *testing.T) {
 
 	assert.Len(t, completed["backend"], 2)
 	assert.Len(t, completed["frontend"], 1)
-	assert.Equal(t, "API output", completed["backend"][0].Output)
+	
+	backendOutputs := []string{completed["backend"][0].Output, completed["backend"][1].Output}
+	assert.Contains(t, backendOutputs, "API output")
+	assert.Contains(t, backendOutputs, "More output")
 }

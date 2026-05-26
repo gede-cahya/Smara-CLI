@@ -1,13 +1,14 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	stdsync "sync"
-
-	"github.com/spf13/cobra"
+	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
@@ -15,6 +16,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
+	"github.com/spf13/cobra"
 )
 
 var skillCmd = &cobra.Command{
@@ -26,12 +28,46 @@ var skillCmd = &cobra.Command{
 var skillRunArgs string
 var skillInstallAlias string
 var skillInstallOverwrite bool
+var skillInstallReview bool
+var skillInstallApprove bool
+var skillInstallAllowInvalid bool
+var skillInstallAllowTools []string
+var skillInstallBlockTools []string
 var skillCreateFormat string
 var skillPluginAlias string
 var skillPluginOverwrite bool
+var skillLintFormat string
+var skillLintStrict bool
+var skillLintAllowTools []string
+var skillLintToolFile string
+var skillRefinePreview bool
+var skillRefineDiff bool
+var skillRefineApply bool
+var skillRefineProposalFile string
+var skillRefineAllowInvalid bool
+var skillRefineFormat string
+var skillHistoryFormat string
+var skillCompareFrom string
+var skillCompareTo string
+var skillCompareFormat string
+var skillRollbackTo string
+var skillRunDryRun bool
+var skillRunApprove bool
+var skillInspectRisk bool
+var skillInspectFormat string
+var skillSearchTag string
+var skillSearchLocal bool
+var skillTreeFormat string
+var skillStatsFormat string
+var skillStatsLimit int
+var skillStatsAll bool
+var skillAnalyticsFormat string
+var skillRecommendFormat string
+var skillRecommendLimit int
+var skillRecommendNoHistory bool
 
 var skillRunCmd = &cobra.Command{
-	Use:   "run [nama-skill]",
+	Use:   "run <name>",
 	Short: "Jalankan skill yang tersimpan",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,9 +83,19 @@ var skillRunCmd = &cobra.Command{
 			}
 			sk = sk.WithArgs(runtimeArgs)
 		}
+		assessment := skill.AssessRisk(sk)
+		if skillRunDryRun {
+			printRiskAssessment(assessment)
+			return nil
+		}
+		if assessment.RequiresApproval && !skillRunApprove {
+			printRiskAssessment(assessment)
+			return fmt.Errorf("skill '%s' berisiko %s dan membutuhkan approval eksplisit; jalankan ulang dengan --approve setelah review dry-run", sk.Name, assessment.Level)
+		}
+		if assessment.RequiresApproval && skillRunApprove {
+			fmt.Printf("Approval diterima untuk skill berisiko %s: %s\n", assessment.Level, sk.Name)
+		}
 		fmt.Printf("Menjalankan skill: %s\n", sk.Summary())
-
-		// Create lightweight supervisor for tool execution
 		supervisor, err := getSupervisorForSkill()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Gagal inisialisasi supervisor: %v\n", err)
@@ -57,13 +103,33 @@ var skillRunCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		defer supervisor.Close()
-
-		executor := supervisor.SkillExecutor()
-		result, err := sk.Run(executor)
-		if err != nil {
-			return fmt.Errorf("skill execution error: %w", err)
+		start := time.Now()
+		var result *skill.RunResult
+		if sk.HasWorkflowComposition() {
+			plan := sk.CompositionPlan()
+			fmt.Println("Execution plan:")
+			for i, st := range plan.Steps {
+				marker := ""
+				if st.Blocking {
+					marker = " blocking"
+				}
+				fmt.Printf("  %d. %s: %s%s\n", i+1, st.Kind, st.SkillName, marker)
+			}
+			if len(plan.Suggests) > 0 {
+				fmt.Printf("  Suggestions (tidak memblokir): %s\n", strings.Join(plan.Suggests, ", "))
+			}
+			composed, err := sk.RunComposed(func(depName string) (*skill.Skill, error) { return skill.Load(depName) }, supervisor.SkillExecutor())
+			if err != nil {
+				return fmt.Errorf("skill workflow execution error: %w", err)
+			}
+			result = composedRunToRunResult(sk.Name, composed)
+		} else {
+			var err error
+			result, err = sk.Run(supervisor.SkillExecutor())
+			if err != nil {
+				return fmt.Errorf("skill execution error: %w", err)
+			}
 		}
-
 		fmt.Println()
 		if result.Success {
 			fmt.Println("Skill berhasil dieksekusi!")
@@ -81,8 +147,21 @@ var skillRunCmd = &cobra.Command{
 			}
 			fmt.Printf("  Step %d: %s → %s\n    Output: %s\n", i+1, sr.Tool, status, out)
 		}
+		if err := logSkillRunToDefaultTracker(sk.Name, result, start); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: gagal menyimpan run history: %v\n", err)
+		}
 		return nil
 	},
+}
+
+func composedRunToRunResult(skillName string, composed *skill.ComposedRunResult) *skill.RunResult {
+	result := &skill.RunResult{SkillName: skillName, Success: composed.Success, Summary: composed.Summary}
+	for _, rr := range composed.Results {
+		for _, sr := range rr.StepResults {
+			result.StepResults = append(result.StepResults, sr)
+		}
+	}
+	return result
 }
 
 // getSupervisorForSkill creates a lightweight supervisor for CLI skill execution.
@@ -95,10 +174,11 @@ func getSupervisorForSkill() (*agent.Supervisor, error) {
 	var providerCfg llm.ProviderConfig
 	if cfg.Provider != "" {
 		providerCfg = llm.ProviderConfig{
-			Name:   cfg.Provider,
-			Model:  cfg.Model,
-			Host:   cfg.OllamaHost,
-			APIKey: "",
+			Name:            cfg.Provider,
+			Model:           cfg.Model,
+			Host:            cfg.OllamaHost,
+			APIKey:          "",
+			ReasoningEffort: cfg.ReasoningEffort,
 		}
 		switch cfg.Provider {
 		case "openai":
@@ -252,6 +332,88 @@ func getSupervisorForSkill() (*agent.Supervisor, error) {
 	return supervisor, nil
 }
 
+var skillHistoryCmd = &cobra.Command{
+	Use:   "history [nama-skill]",
+	Short: "Tampilkan riwayat versi skill",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		entries, current, err := skill.History(args[0])
+		if err != nil {
+			return err
+		}
+		if skillHistoryFormat == "json" {
+			data, _ := json.MarshalIndent(struct {
+				Current *skill.Skill         `json:"current"`
+				Lineage []skill.LineageEntry `json:"lineage"`
+			}{current, entries}, "", "  ")
+			fmt.Println(string(data))
+			return nil
+		}
+		fmt.Printf("History skill '%s' (current v%d):\n", current.Name, current.Version)
+		if len(entries) == 0 {
+			fmt.Println("  Belum ada lineage/history.")
+		} else {
+			for _, e := range entries {
+				when := e.RefinedAt.Format("2006-01-02 15:04:05")
+				fmt.Printf("  - v%d | %s | steps:%d | source:%s | %s\n", e.Version, when, e.StepCount, e.RefinedFrom, e.Description)
+			}
+		}
+		fmt.Printf("  - v%d | current | steps:%d | %s\n", current.Version, len(current.Steps), current.Description)
+		return nil
+	},
+}
+
+var skillCompareCmd = &cobra.Command{
+	Use:   "compare [nama-skill] --from v1 --to v2",
+	Short: "Bandingkan dua versi skill",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		from, err := skill.ResolveVersion(skillCompareFrom)
+		if err != nil {
+			return err
+		}
+		to, err := skill.ResolveVersion(skillCompareTo)
+		if err != nil {
+			return err
+		}
+		res, err := skill.CompareVersions(args[0], from, to)
+		if err != nil {
+			return err
+		}
+		if skillCompareFormat == "json" {
+			fmt.Println(res.JSON())
+			return nil
+		}
+		fmt.Printf("Compare skill '%s': v%d → v%d\n", res.Name, res.FromVersion, res.ToVersion)
+		if len(res.Changes) == 0 {
+			fmt.Println("  Tidak ada perubahan.")
+			return nil
+		}
+		for _, ch := range res.Changes {
+			fmt.Printf("  - %s berubah\n", ch.Field)
+		}
+		return nil
+	},
+}
+
+var skillRollbackCmd = &cobra.Command{
+	Use:   "rollback [nama-skill] --to v2",
+	Short: "Rollback skill ke versi lama dan simpan sebagai versi baru",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		to, err := skill.ResolveVersion(skillRollbackTo)
+		if err != nil {
+			return err
+		}
+		sk, err := skill.Rollback(args[0], to, nil)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Skill '%s' rollback ke v%d dan disimpan sebagai v%d. History lama tetap dipertahankan.\n", sk.Name, to, sk.Version)
+		return nil
+	},
+}
+
 var skillListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Daftar skill yang tersimpan",
@@ -274,6 +436,67 @@ var skillListCmd = &cobra.Command{
 				fmt.Printf("  - %s\n", n)
 			}
 		}
+	},
+}
+
+var skillRecommendCmd = &cobra.Command{
+	Use:   "recommend <query>",
+	Short: "Rekomendasikan skill terbaik berdasarkan query",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		query := strings.Join(args, " ")
+		skills, err := loadAllLocalSkills()
+		if err != nil {
+			return err
+		}
+		var stats skill.RecommendationStatsProvider
+		var closeFn func()
+		if !skillRecommendNoHistory {
+			tracker, closer, err := openDefaultSkillTracker()
+			if err == nil {
+				stats = tracker
+				closeFn = closer
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: history tracker tidak tersedia: %v\n", err)
+			}
+		}
+		if closeFn != nil {
+			defer closeFn()
+		}
+		recs := skill.RecommendSkills(query, skills, skill.RecommendationOptions{Limit: skillRecommendLimit, StatsProvider: stats})
+		if strings.EqualFold(skillRecommendFormat, "json") {
+			data, err := json.MarshalIndent(recs, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(data))
+			return nil
+		}
+		if len(recs) == 0 {
+			fmt.Println("Tidak ada skill yang cocok. Coba query yang lebih spesifik.")
+			return nil
+		}
+		fmt.Printf("Rekomendasi skill untuk: %q\n", query)
+		for i, rec := range recs {
+			clarify := ""
+			if rec.Clarify {
+				clarify = " (confidence rendah, perlu klarifikasi)"
+			}
+			fmt.Printf("%d. %s — score %.1f, confidence %s%s\n", i+1, rec.SkillName, rec.Score, rec.Confidence, clarify)
+			if len(rec.Reasons) > 0 {
+				fmt.Printf("   alasan: %s\n", strings.Join(rec.Reasons, "; "))
+			}
+		}
+		return nil
+	},
+}
+
+var skillSuggestCmd = &cobra.Command{
+	Use:   "suggest <query>",
+	Short: "Alias untuk skill recommend",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return skillRecommendCmd.RunE(cmd, args)
 	},
 }
 
@@ -419,9 +642,14 @@ var skillInstallCmd = &cobra.Command{
 			}
 			// Install the first matching marketplace skill
 			opts := skill.InstallOptions{
-				URL:       results[0].URL,
-				Alias:     skillInstallAlias,
-				Overwrite: skillInstallOverwrite,
+				URL:          results[0].URL,
+				Alias:        skillInstallAlias,
+				Overwrite:    skillInstallOverwrite,
+				ReviewOnly:   skillInstallReview,
+				Approve:      skillInstallApprove,
+				AllowInvalid: skillInstallAllowInvalid,
+				AllowedTools: skillInstallAllowTools,
+				BlockedTools: skillInstallBlockTools,
 			}
 			sk, err := skill.InstallFromURL(opts)
 			if err != nil {
@@ -437,9 +665,12 @@ var skillInstallCmd = &cobra.Command{
 		}
 
 		opts := skill.InstallOptions{
-			URL:       input,
-			Alias:     skillInstallAlias,
-			Overwrite: skillInstallOverwrite,
+			URL:          input,
+			Alias:        skillInstallAlias,
+			Overwrite:    skillInstallOverwrite,
+			ReviewOnly:   skillInstallReview,
+			Approve:      skillInstallApprove,
+			AllowInvalid: skillInstallAllowInvalid,
 		}
 
 		sk, err := skill.InstallFromURL(opts)
@@ -558,26 +789,148 @@ var skillInfoCmd = &cobra.Command{
 	},
 }
 
+var skillInspectCmd = &cobra.Command{
+	Use:   "inspect [nama-skill]",
+	Short: "Inspect detail skill termasuk metadata, dependency, lineage, dan risk assessment",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		sk, err := skill.Load(args[0])
+		if err != nil {
+			return fmt.Errorf("skill '%s' tidak ditemukan: %w", args[0], err)
+		}
+		if skillInspectFormat == "json" {
+			payload := struct {
+				Skill *skill.Skill         `json:"skill"`
+				Risk  skill.RiskAssessment `json:"risk"`
+			}{Skill: sk, Risk: skill.AssessRisk(sk)}
+			data, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Println(string(data))
+			return nil
+		}
+		fmt.Printf("Skill: %s\n", sk.Name)
+		fmt.Printf("  Deskripsi: %s\n", sk.Description)
+		fmt.Printf("  Versi: %d\n", sk.Version)
+		if sk.Author != "" {
+			fmt.Printf("  Author: %s\n", sk.Author)
+		}
+		if sk.SourceURL != "" {
+			fmt.Printf("  Source: %s\n", sk.SourceURL)
+		}
+		if len(sk.Tags) > 0 {
+			fmt.Printf("  Tags: %s\n", strings.Join(sk.Tags, ", "))
+		}
+		if len(sk.CategoryPath) > 0 {
+			fmt.Printf("  Category: %s\n", strings.Join(sk.CategoryPath, " > "))
+		}
+		if sk.ParentID != "" {
+			fmt.Printf("  Parent: %s\n", sk.ParentID)
+		}
+		if len(sk.Dependencies) > 0 {
+			fmt.Printf("  Dependencies: %s\n", strings.Join(sk.Dependencies, ", "))
+		}
+		if len(sk.Params) > 0 {
+			fmt.Println("  Parameters:")
+			for _, p := range sk.Params {
+				req := "optional"
+				if p.Required {
+					req = "required"
+				}
+				fmt.Printf("    - %s (%s, %s): %s\n", p.Name, p.Type, req, p.Description)
+			}
+		}
+		fmt.Printf("  Steps (%d):\n", len(sk.Steps))
+		for i, st := range sk.Steps {
+			fmt.Printf("    %d. %s\n", i+1, st.Tool)
+		}
+		if len(sk.Lineage) > 0 {
+			fmt.Printf("  Lineage versions: %d\n", len(sk.Lineage))
+		}
+		if skillInspectRisk {
+			printRiskAssessment(skill.AssessRisk(sk))
+		}
+		return nil
+	},
+}
+
+func printRiskAssessment(assessment skill.RiskAssessment) {
+	fmt.Printf("Risk assessment: %s\n", strings.ToUpper(assessment.Level))
+	fmt.Printf("  Requires approval: %t\n", assessment.RequiresApproval)
+	if len(assessment.Categories) > 0 {
+		fmt.Printf("  Categories: %s\n", strings.Join(assessment.Categories, ", "))
+	}
+	if len(assessment.Reasons) > 0 {
+		fmt.Println("  Reasons:")
+		for _, r := range assessment.Reasons {
+			fmt.Printf("    - %s\n", r)
+		}
+	}
+	if len(assessment.SimulationSummary) > 0 {
+		fmt.Println("  Dry-run summary:")
+		for _, s := range assessment.SimulationSummary {
+			fmt.Printf("    - %s\n", s)
+		}
+	}
+}
+
 var skillSearchQuery string
 var skillSearchRegistry string
 
 var skillSearchCmd = &cobra.Command{
 	Use:   "search [query/tag]",
-	Short: "Cari skill di bundled skills, Context7 registry, dan marketplace",
+	Short: "Cari skill lokal, bundled, Context7 registry, dan marketplace",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		query := ""
-		if len(args) > 0 {
+		query := strings.TrimSpace(skillSearchQuery)
+		if query == "" && len(args) > 0 {
 			query = args[0]
 		}
 
 		var allResults []string
+		q := strings.ToLower(query)
+		tagFilter := strings.ToLower(strings.TrimSpace(skillSearchTag))
+
+		localNames, err := skill.List()
+		if err == nil && len(localNames) > 0 {
+			var matches []string
+			for _, name := range localNames {
+				sk, err := skill.Load(name)
+				if err != nil || sk == nil {
+					continue
+				}
+				if q != "" && !strings.Contains(strings.ToLower(sk.Name), q) && !strings.Contains(strings.ToLower(sk.Description), q) && !tagsContain(sk.Tags, q) {
+					continue
+				}
+				if tagFilter != "" && !tagsContain(sk.Tags, tagFilter) {
+					continue
+				}
+				tags := ""
+				if len(sk.Tags) > 0 {
+					tags = fmt.Sprintf("  Tags: %s", strings.Join(sk.Tags, ", "))
+				}
+				matches = append(matches, fmt.Sprintf("  %s — %s (v%d)%s", sk.Name, sk.Description, sk.Version, tags))
+			}
+			if len(matches) > 0 {
+				allResults = append(allResults, "Local Skills:")
+				allResults = append(allResults, matches...)
+			}
+		}
+
+		if skillSearchLocal {
+			if len(allResults) == 0 {
+				fmt.Println("Tidak ada skill lokal yang cocok.")
+				return nil
+			}
+			fmt.Println(strings.Join(allResults, "\n"))
+			return nil
+		}
 
 		bundled, err := skill.ListBundledSkills()
 		if err == nil && len(bundled) > 0 {
 			var matches []string
-			q := strings.ToLower(query)
 			for _, b := range bundled {
 				if q != "" && !strings.Contains(strings.ToLower(b.Name), q) && !strings.Contains(strings.ToLower(b.Description), q) && !tagsContain(b.Tags, q) {
+					continue
+				}
+				if tagFilter != "" && !tagsContain(b.Tags, tagFilter) {
 					continue
 				}
 				tags := ""
@@ -734,11 +1087,19 @@ var skillRegistrySyncCmd = &cobra.Command{
 var skillTreeCmd = &cobra.Command{
 	Use:   "tree",
 	Short: "Tampilkan hierarki skill tree",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		tm, err := skill.BuildTree()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Gagal build tree: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("gagal build tree: %w", err)
+		}
+		if skillTreeFormat == "json" {
+			nodes, edges := tm.ToGraphJSON()
+			data, _ := json.MarshalIndent(struct {
+				Nodes []map[string]interface{} `json:"nodes"`
+				Edges []map[string]interface{} `json:"edges"`
+			}{nodes, edges}, "", "  ")
+			fmt.Println(string(data))
+			return nil
 		}
 		for name := range tm.AllNodes() {
 			fmt.Printf("- %s\n", name)
@@ -751,62 +1112,372 @@ var skillTreeCmd = &cobra.Command{
 				fmt.Printf("  <- unlocks: %s\n", n)
 			}
 		}
+		return nil
+	},
+}
+
+var skillRunsCmd = &cobra.Command{
+	Use:   "runs [nama-skill]",
+	Short: "Tampilkan run history skill",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tracker, closeFn, err := openDefaultSkillTracker()
+		if err != nil {
+			return err
+		}
+		defer closeFn()
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		}
+		runs, err := tracker.GetTimeline(name, skillStatsLimit)
+		if err != nil {
+			return err
+		}
+		if skillStatsFormat == "json" {
+			data, _ := json.MarshalIndent(runs, "", "  ")
+			fmt.Println(string(data))
+			return nil
+		}
+		if len(runs) == 0 {
+			fmt.Println("Belum ada run history.")
+			return nil
+		}
+		for _, r := range runs {
+			fmt.Printf("- %s | %s | %s | %dms", r.StartedAt.Format("2006-01-02 15:04:05"), r.SkillName, r.Status, r.DurationMs)
+			if r.FailedStep > 0 {
+				fmt.Printf(" | failed_step:%d", r.FailedStep)
+			}
+			if r.VersionID != "" {
+				fmt.Printf(" | version:%s", r.VersionID)
+			}
+			fmt.Println()
+			if r.ErrorMessage != "" {
+				fmt.Printf("  error: %s\n", r.ErrorMessage)
+			}
+		}
+		return nil
 	},
 }
 
 var skillStatsCmd = &cobra.Command{
 	Use:   "stats [nama-skill]",
 	Short: "Tampilkan statistik eksekusi skill",
-	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("Statistik skill '%s': (butuh DB tracker)\n", args[0])
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tracker, closeFn, err := openDefaultSkillTracker()
+		if err != nil {
+			return err
+		}
+		defer closeFn()
+		if len(args) == 0 || skillStatsAll {
+			top, err := tracker.GetTopSkills(skillStatsLimit)
+			if err != nil {
+				return err
+			}
+			if skillStatsFormat == "json" {
+				data, _ := json.MarshalIndent(top, "", "  ")
+				fmt.Println(string(data))
+				return nil
+			}
+			fmt.Println("Statistik skill global:")
+			for _, s := range top {
+				fmt.Printf("  - %s: %d run, success %.1f%%\n", s.Name, s.RunCount, s.SuccessRate)
+			}
+			return nil
+		}
+		total, successCount, avgMs, lastRun, err := tracker.GetStats(args[0])
+		if err != nil {
+			return err
+		}
+		payload := map[string]interface{}{"skill_name": args[0], "total_runs": total, "successful_runs": successCount, "failed_runs": total - successCount, "avg_duration_ms": avgMs}
+		if lastRun != nil {
+			payload["last_run"] = lastRun
+		}
+		if skillStatsFormat == "json" {
+			data, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Println(string(data))
+			return nil
+		}
+		rate := 0.0
+		if total > 0 {
+			rate = float64(successCount) / float64(total) * 100
+		}
+		fmt.Printf("Statistik skill '%s':\n", args[0])
+		fmt.Printf("  Total run: %d\n  Sukses: %d\n  Gagal: %d\n  Success rate: %.1f%%\n  Avg duration: %dms\n", total, successCount, total-successCount, rate, avgMs)
+		if lastRun != nil {
+			fmt.Printf("  Last run: %s\n", lastRun.Format("2006-01-02 15:04:05"))
+		}
+		return nil
 	},
 }
 
 var skillRefineCmd = &cobra.Command{
 	Use:   "refine [nama-skill]",
-	Short: "Trigger manual refinement untuk skill",
+	Short: "Preview, diff, atau apply refinement untuk skill",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
-		cfg := config.Get()
-		var provider llm.Provider
-		if cfg.Provider != "" {
-			pc := llm.ProviderConfig{
-				Name:   cfg.Provider,
-				Model:  cfg.Model,
-				Host:   cfg.OllamaHost,
-				APIKey: cfg.OpenAIAPIKey,
-			}
-			var err error
-			provider, err = llm.NewProvider(pc)
-			if err != nil {
-				provider = nil
-			}
+		if strings.TrimSpace(skillRefineProposalFile) == "" {
+			return fmt.Errorf("gunakan --proposal <file.json> untuk refine preview/diff/apply")
 		}
-		if provider == nil {
-			return fmt.Errorf("LLM provider tidak tersedia, konfigurasi provider terlebih dahulu")
-		}
-		prompt, sk, err := skill.BuildRefinementPromptFull(name, &skill.ExecutionTracker{}, nil)
-		if err != nil {
-			return err
-		}
-		resp, _, err := skill.RefineSkill(name, &skill.ExecutionTracker{}, nil, provider)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Prompt:\n%s\n\n", prompt)
-		fmt.Printf("Proposed refinement for '%s' (v%d):\n%s\n", sk.Name, sk.Version, resp)
-		return nil
+		return runSkillRefineWithProposal(args[0])
 	},
+}
+
+func runSkillRefineWithProposal(name string) error {
+	original, err := skill.Load(name)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(skillRefineProposalFile)
+	if err != nil {
+		return fmt.Errorf("gagal membaca proposal: %w", err)
+	}
+	proposed, err := skill.FromJSON(data)
+	if err != nil {
+		return err
+	}
+	proposed = skill.NormalizeRefinementProposal(original, proposed)
+	knownTools, err := skillKnownTools()
+	if err != nil {
+		return err
+	}
+	opts := skill.LintOptions{KnownTools: knownTools}
+	preview := skill.BuildRefinementPreview(original, proposed, opts)
+	if skillRefineDiff {
+		fmt.Println(skill.MarshalSkillDiff(original, proposed))
+	}
+	if skillRefinePreview || !skillRefineApply {
+		printRefinementPreview(preview)
+	}
+	if !skillRefineApply {
+		return nil
+	}
+	applied, preview, err := skill.ApplyRefinementWithLint(name, data, nil, "manual", opts, skillRefineAllowInvalid)
+	if err != nil {
+		printRefinementPreview(preview)
+		return err
+	}
+	fmt.Printf("Refinement applied: %s v%d\n", applied.Name, applied.Version)
+	return nil
+}
+
+func printRefinementPreview(preview skill.RefinementPreview) {
+	if skillRefineFormat == "json" {
+		data, _ := preview.ToJSON()
+		fmt.Println(string(data))
+		return
+	}
+	fmt.Printf("Refinement preview: %s -> %s\n", preview.OriginalName, preview.ProposedName)
+	for _, item := range preview.Summary {
+		fmt.Printf("- %s\n", item)
+	}
+	if len(preview.Lint.Issues) == 0 {
+		fmt.Println("Lint: PASS")
+		return
+	}
+	fmt.Println("Lint issues:")
+	for _, issue := range preview.Lint.Issues {
+		fmt.Printf("[%s] %s.%s: %s\n", strings.ToUpper(issue.Severity), issue.Skill, issue.Field, issue.Message)
+	}
 }
 
 var skillAnalyticsCmd = &cobra.Command{
 	Use:   "analytics",
 	Short: "Tampilkan global skill analytics",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Global analytics: (butuh DB tracker)")
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tracker, closeFn, err := openDefaultSkillTracker()
+		if err != nil {
+			return err
+		}
+		defer closeFn()
+		data, err := tracker.GlobalAnalytics()
+		if err != nil {
+			return err
+		}
+		if skillAnalyticsFormat == "json" {
+			b, _ := json.MarshalIndent(data, "", "  ")
+			fmt.Println(string(b))
+			return nil
+		}
+		fmt.Printf("Global analytics:\n  Total run: %v\n  Sukses: %v\n  Overall rate: %.1f%%\n", data["total_runs"], data["successful_runs"], data["overall_rate"])
+		return nil
 	},
+}
+var skillLintCmd = &cobra.Command{
+	Use:   "lint [nama-skill]",
+	Short: "Lint satu atau semua skill",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		report, err := runSkillLint(args)
+		if err != nil {
+			return err
+		}
+		printSkillLintReport(report)
+		if report.HasErrors() || (skillLintStrict && lintWarningCount(report) > 0) {
+			return fmt.Errorf("skill lint gagal: %d error, %d warning", lintErrorCount(report), lintWarningCount(report))
+		}
+		return nil
+	},
+}
+
+var skillValidateCmd = &cobra.Command{
+	Use:   "validate [nama-skill]",
+	Short: "Validasi satu atau semua skill dan gagal pada warning/error",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		prevStrict := skillLintStrict
+		skillLintStrict = true
+		defer func() { skillLintStrict = prevStrict }()
+		report, err := runSkillLint(args)
+		if err != nil {
+			return err
+		}
+		printSkillLintReport(report)
+		if report.HasErrors() || lintWarningCount(report) > 0 {
+			return fmt.Errorf("skill validation gagal: %d error, %d warning", lintErrorCount(report), lintWarningCount(report))
+		}
+		return nil
+	},
+}
+
+func runSkillLint(args []string) (skill.LintReport, error) {
+	knownTools, err := skillKnownTools()
+	if err != nil {
+		return skill.LintReport{}, err
+	}
+	if len(args) == 0 {
+		return skill.LintAllWithKnownTools(knownTools)
+	}
+
+	name := args[0]
+	sk, err := skill.Load(name)
+	if err != nil {
+		return skill.LintReport{}, fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
+	}
+	existing := map[string]bool{}
+	names, err := skill.List()
+	if err != nil {
+		return skill.LintReport{}, err
+	}
+	for _, n := range names {
+		existing[n] = true
+	}
+	return skill.LintSkillWithOptions(sk, skill.LintOptions{Existing: existing, KnownTools: knownTools}), nil
+}
+
+func skillKnownTools() (map[string]bool, error) {
+	known := map[string]bool{}
+	for _, tool := range agent.GetBuiltinTools() {
+		known[tool.Name] = true
+	}
+	for _, tool := range defaultExternalSkillTools() {
+		known[tool] = true
+	}
+	for _, raw := range skillLintAllowTools {
+		for _, tool := range splitToolList(raw) {
+			known[tool] = true
+		}
+	}
+	if strings.TrimSpace(skillLintToolFile) != "" {
+		tools, err := loadSkillLintToolFile(skillLintToolFile)
+		if err != nil {
+			return nil, err
+		}
+		for _, tool := range tools {
+			known[tool] = true
+		}
+	}
+	return known, nil
+}
+
+func defaultExternalSkillTools() []string {
+	return []string{
+		"execute_blender_code",
+		"get-library-documentation",
+		"get_scene_info",
+		"resolve",
+		"resolve-library-id",
+	}
+}
+
+func splitToolList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		tool := strings.TrimSpace(part)
+		if tool != "" {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func loadSkillLintToolFile(path string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("gagal baca tool registry '%s': %w", path, err)
+	}
+
+	var names []string
+	if err := json.Unmarshal(data, &names); err == nil {
+		return names, nil
+	}
+
+	var wrapped struct {
+		Tools []string `json:"tools"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && len(wrapped.Tools) > 0 {
+		return wrapped.Tools, nil
+	}
+
+	return nil, fmt.Errorf("tool registry '%s' harus JSON array string atau object {\"tools\": [...]}", path)
+}
+
+func printSkillLintReport(report skill.LintReport) {
+	if skillLintFormat == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(report.Issues) == 0 {
+		fmt.Println("Skill lint PASS: tidak ada issue.")
+		return
+	}
+	for _, issue := range report.Issues {
+		loc := issue.Skill
+		if issue.Field != "" {
+			if loc != "" {
+				loc += "."
+			}
+			loc += issue.Field
+		}
+		if loc == "" {
+			loc = "skill"
+		}
+		fmt.Printf("[%s] %s: %s\n", strings.ToUpper(issue.Severity), loc, issue.Message)
+	}
+	fmt.Printf("Skill lint selesai: %d error, %d warning.\n", lintErrorCount(report), lintWarningCount(report))
+}
+
+func lintErrorCount(report skill.LintReport) int {
+	count := 0
+	for _, issue := range report.Issues {
+		if issue.Severity == "error" {
+			count++
+		}
+	}
+	return count
+}
+
+func lintWarningCount(report skill.LintReport) int {
+	count := 0
+	for _, issue := range report.Issues {
+		if issue.Severity == "warning" {
+			count++
+		}
+	}
+	return count
 }
 
 func tagsContain(tags []string, query string) bool {
@@ -818,20 +1489,115 @@ func tagsContain(tags []string, query string) bool {
 	return false
 }
 
+func loadAllLocalSkills() ([]*skill.Skill, error) {
+	names, err := skill.List()
+	if err != nil {
+		return nil, fmt.Errorf("gagal list skill: %w", err)
+	}
+	skills := make([]*skill.Skill, 0, len(names))
+	for _, name := range names {
+		sk, err := skill.Load(name)
+		if err != nil || sk == nil {
+			continue
+		}
+		skills = append(skills, sk)
+	}
+	return skills, nil
+}
+
+func openDefaultSkillTracker() (*skill.ExecutionTracker, func(), error) {
+	cfg := config.Get()
+	dbPath := cfg.DBPath
+	if strings.TrimSpace(dbPath) == "" {
+		dbPath = filepath.Join(os.TempDir(), "smara-skill-history.db")
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, nil, fmt.Errorf("gagal membuat direktori tracker: %w", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gagal membuka tracker DB: %w", err)
+	}
+	tracker, err := skill.NewExecutionTracker(db)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	return tracker, func() { _ = db.Close() }, nil
+}
+
+func logSkillRunToDefaultTracker(skillName string, result *skill.RunResult, start time.Time) error {
+	tracker, closeFn, err := openDefaultSkillTracker()
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	workspace, _ := os.Getwd()
+	runID := fmt.Sprintf("run-%d", start.UnixNano())
+	versionID := ""
+	if sk, err := skill.Load(skillName); err == nil && sk != nil {
+		versionID = fmt.Sprintf("v%d", sk.Version)
+	}
+	return tracker.LogRunWithMetadata(skillName, versionID, skillRunApprove, runID, "cli", workspace, "skill-run", result, start)
+}
+
 func init() {
 	skillCmd.AddCommand(skillRunCmd, skillListCmd, skillDeleteCmd, skillCreateCmd)
 	skillCmd.AddCommand(skillInstallCmd, skillUpdateCmd, skillInfoCmd)
 	skillCmd.AddCommand(skillSearchCmd, skillPublishCmd, skillRegistryCmd)
-	skillCmd.AddCommand(skillTreeCmd, skillStatsCmd, skillRefineCmd, skillAnalyticsCmd)
+	skillCmd.AddCommand(skillTreeCmd, skillStatsCmd, skillRunsCmd, skillRefineCmd, skillAnalyticsCmd, skillInspectCmd)
+	skillCmd.AddCommand(skillRecommendCmd, skillSuggestCmd)
+	skillCmd.AddCommand(skillLintCmd, skillValidateCmd)
+	skillCmd.AddCommand(skillHistoryCmd, skillCompareCmd, skillRollbackCmd)
 	skillCmd.AddCommand(skillPluginAddCmd)
 	rootCmd.AddCommand(skillCmd)
 
 	skillRunCmd.Flags().StringVar(&skillRunArgs, "args", "", "Argumen runtime skill sebagai JSON object")
+	skillRunCmd.Flags().BoolVar(&skillRunDryRun, "dry-run", false, "Tampilkan simulasi/risk summary tanpa menjalankan skill")
+	skillRunCmd.Flags().BoolVar(&skillRunApprove, "approve", false, "Setujui eksekusi skill berisiko tinggi/kritis")
 	skillInstallCmd.Flags().StringVar(&skillInstallAlias, "as", "", "Alias nama skill (override nama dari JSON)")
 	skillInstallCmd.Flags().BoolVar(&skillInstallOverwrite, "overwrite", false, "Timpa skill yang sudah ada")
+	skillInstallCmd.Flags().BoolVar(&skillInstallReview, "review", false, "Tampilkan security review tanpa menyimpan skill")
+	skillInstallCmd.Flags().BoolVar(&skillInstallApprove, "approve", false, "Setujui install skill remote/berisiko setelah review")
+	skillInstallCmd.Flags().BoolVar(&skillInstallAllowInvalid, "allow-invalid", false, "Izinkan install walau lint/validasi skill gagal")
 	skillSearchCmd.Flags().StringVar(&skillSearchQuery, "query", "", "Filter kata kunci (positional juga bisa)")
 	skillSearchCmd.Flags().StringVar(&skillSearchRegistry, "registry", "", "Filter nama registry tertentu")
+	skillSearchCmd.Flags().StringVar(&skillSearchTag, "tag", "", "Filter skill berdasarkan tag")
+	skillSearchCmd.Flags().BoolVar(&skillSearchLocal, "local", false, "Cari hanya di skill lokal")
 	skillCreateCmd.Flags().StringVar(&skillCreateFormat, "format", "json", "Format input skill: json atau md (markdown)")
 	skillPluginAddCmd.Flags().StringVar(&skillPluginAlias, "as", "", "Alias nama skill jika sumber hanya berisi satu skill")
 	skillPluginAddCmd.Flags().BoolVar(&skillPluginOverwrite, "overwrite", false, "Timpa skill yang sudah ada")
+	skillLintCmd.Flags().StringVar(&skillLintFormat, "format", "text", "Format output lint: text atau json")
+	skillLintCmd.Flags().BoolVar(&skillLintStrict, "strict", false, "Anggap warning sebagai failure")
+	skillLintCmd.Flags().StringSliceVar(&skillLintAllowTools, "allow-tool", nil, "Whitelist tool eksternal tambahan (boleh comma-separated, repeatable)")
+	skillLintCmd.Flags().StringVar(&skillLintToolFile, "tool-registry", "", "File JSON daftar tool eksternal: [\"tool\"] atau {\"tools\":[\"tool\"]}")
+	skillValidateCmd.Flags().StringVar(&skillLintFormat, "format", "text", "Format output validasi: text atau json")
+	skillValidateCmd.Flags().StringSliceVar(&skillLintAllowTools, "allow-tool", nil, "Whitelist tool eksternal tambahan (boleh comma-separated, repeatable)")
+	skillValidateCmd.Flags().StringVar(&skillLintToolFile, "tool-registry", "", "File JSON daftar tool eksternal: [\"tool\"] atau {\"tools\":[\"tool\"]}")
+	skillRefineCmd.Flags().BoolVar(&skillRefinePreview, "preview", false, "Tampilkan ringkasan perubahan dan hasil lint tanpa apply")
+	skillRefineCmd.Flags().BoolVar(&skillRefineDiff, "diff", false, "Tampilkan diff JSON skill lama vs proposal")
+	skillRefineCmd.Flags().BoolVar(&skillRefineApply, "apply", false, "Apply proposal setelah auto-lint")
+	skillRefineCmd.Flags().StringVar(&skillRefineProposalFile, "proposal", "", "File JSON proposal refinement untuk preview/diff/apply")
+	skillRefineCmd.Flags().BoolVar(&skillRefineAllowInvalid, "allow-invalid", false, "Izinkan apply walau lint proposal memiliki error")
+	skillRefineCmd.Flags().StringVar(&skillRefineFormat, "format", "text", "Format output preview: text atau json")
+	skillHistoryCmd.Flags().StringVar(&skillHistoryFormat, "format", "text", "Format output history: text atau json")
+	skillCompareCmd.Flags().StringVar(&skillCompareFrom, "from", "", "Versi sumber, contoh: v1 atau 1")
+	skillCompareCmd.Flags().StringVar(&skillCompareTo, "to", "", "Versi tujuan, contoh: v2 atau 2")
+	skillCompareCmd.Flags().StringVar(&skillCompareFormat, "format", "text", "Format output compare: text atau json")
+	skillRollbackCmd.Flags().StringVar(&skillRollbackTo, "to", "", "Versi target rollback, contoh: v2 atau 2")
+	skillInspectCmd.Flags().BoolVar(&skillInspectRisk, "risk", false, "Tampilkan risk assessment dan dry-run summary")
+	skillInspectCmd.Flags().StringVar(&skillInspectFormat, "format", "text", "Format output inspect: text atau json")
+	skillTreeCmd.Flags().StringVar(&skillTreeFormat, "format", "text", "Format output tree: text atau json/graph")
+	skillStatsCmd.Flags().StringVar(&skillStatsFormat, "format", "text", "Format output stats: text atau json")
+	skillStatsCmd.Flags().IntVar(&skillStatsLimit, "limit", 10, "Batas jumlah item untuk stats global")
+	skillStatsCmd.Flags().BoolVar(&skillStatsAll, "all", false, "Tampilkan statistik semua skill")
+	skillRunsCmd.Flags().StringVar(&skillStatsFormat, "format", "text", "Format output runs: text atau json")
+	skillRunsCmd.Flags().IntVar(&skillStatsLimit, "limit", 20, "Batas jumlah run history")
+	skillAnalyticsCmd.Flags().StringVar(&skillAnalyticsFormat, "format", "text", "Format output analytics: text atau json")
+	skillRecommendCmd.Flags().StringVar(&skillRecommendFormat, "format", "text", "Format output recommend: text atau json")
+	skillRecommendCmd.Flags().IntVar(&skillRecommendLimit, "limit", 5, "Batas jumlah rekomendasi")
+	skillRecommendCmd.Flags().BoolVar(&skillRecommendNoHistory, "no-history", false, "Jangan gunakan run history untuk scoring")
+	skillSuggestCmd.Flags().StringVar(&skillRecommendFormat, "format", "text", "Format output suggest: text atau json")
+	skillSuggestCmd.Flags().IntVar(&skillRecommendLimit, "limit", 5, "Batas jumlah rekomendasi")
+	skillSuggestCmd.Flags().BoolVar(&skillRecommendNoHistory, "no-history", false, "Jangan gunakan run history untuk scoring")
 }

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -61,8 +63,111 @@ func getActiveBudgetController() activeBudgetController {
 
 const builtinMCPServerName = "builtin"
 
+// toolGroup maps tool names to their group for filtering.
+// Groups: core, ssh, lsp, binary, graphify, skill, image, planning, export, memory
+var toolGroup = map[string]string{
+	// core — always available
+	"run_command":              "core",
+	"view_file":                "core",
+	"read_file":                "core",
+	"write_file":               "core",
+	"delete_file":              "core",
+	"list_dir":                 "core",
+	"edit_file":                "core",
+	"grep_search":              "core",
+	"search_path":              "core",
+	"get_cwd":                  "core",
+	"analyze_workspace":        "core",
+	"web_search":               "core",
+	"web_fetch":                "core",
+	"user_model":               "core",
+	"request_iteration_budget": "core",
+	"iteration_budget_status":  "core",
+	// ssh
+	"ssh_exec":      "ssh",
+	"ssh_view_file": "ssh",
+	"ssh_list_dir":  "ssh",
+	"ssh_upload":    "ssh",
+	"ssh_download":  "ssh",
+	"ssh_manage":    "ssh",
+	// lsp
+	"lsp_hover":            "lsp",
+	"lsp_definition":       "lsp",
+	"lsp_references":       "lsp",
+	"lsp_document_symbols": "lsp",
+	// binary analysis
+	"analyze_binary":       "binary",
+	"extract_strings":      "binary",
+	"scan_signature":       "binary",
+	"analyze_dependencies": "binary",
+	"generate_call_graph":  "binary",
+	// graphify
+	"graphify_init":  "graphify",
+	"graphify_query": "graphify",
+	// skill reuse — always available so the model can choose an existing
+	// recipe even when the user does not explicitly say "skill".
+	"skill_run":          "core",
+	"skill_instructions": "core",
+	"skill_list":         "core",
+	// skill management
+	"skill_create":  "skill",
+	"skill_install": "skill",
+	"skill_delete":  "skill",
+	// image
+	"generate_image": "image",
+	"edit_image":     "image",
+	"analyze_image":  "image",
+	// planning
+	"planning_template": "planning",
+	// export
+	"export_data": "export",
+	// memory
+	"remember":        "memory",
+	"search_memories": "memory",
+	// misc
+	"serve_project":     "core",
+	"connect_mcp":       "core",
+	"disconnect_mcp":    "core",
+	"schedule_reminder": "core",
+}
+
 // GetBuiltinTools returns the standard OS and file manipulation tools
 func GetBuiltinTools() []llm.ToolFunction {
+	return getBuiltinToolsFiltered(nil)
+}
+
+// GetBuiltinToolsFiltered returns builtin tools with disabled groups removed.
+func GetBuiltinToolsFiltered(disabledGroups []string) []llm.ToolFunction {
+	return getBuiltinToolsFiltered(disabledGroups)
+}
+
+func getBuiltinToolsFiltered(disabledGroups []string) []llm.ToolFunction {
+	disabled := make(map[string]bool, len(disabledGroups))
+	for _, g := range disabledGroups {
+		disabled[strings.ToLower(strings.TrimSpace(g))] = true
+	}
+
+	all := allBuiltinTools()
+	if len(disabled) == 0 {
+		return all
+	}
+
+	filtered := make([]llm.ToolFunction, 0, len(all))
+	for _, t := range all {
+		group, ok := toolGroup[t.Name]
+		if !ok {
+			group = "core" // unknown tools default to core (always included)
+		}
+		if disabled[group] {
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	return filtered
+}
+
+// allBuiltinTools returns the full unfiltered list.
+func allBuiltinTools() []llm.ToolFunction {
 	return []llm.ToolFunction{
 		{
 			Name:        "run_command",
@@ -188,6 +293,40 @@ func GetBuiltinTools() []llm.ToolFunction {
 					},
 				},
 				"required": []string{"prompt"},
+			},
+		},
+		{
+			Name:        "edit_image",
+			Description: "Mengedit gambar / image-to-image dari file input dan instruksi teks. Gunakan ini bila user menyertakan [image:/path] atau image_path dan meminta ubah gaya, edit, atau transformasi gambar.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"image_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path gambar input yang akan diedit, misalnya /tmp/input.png",
+					},
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "Instruksi edit/style transfer yang detail untuk image model.",
+					},
+					"model": map[string]interface{}{
+						"type":        "string",
+						"description": "Model image edit, default dari config image_model",
+					},
+					"output_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path output opsional, misalnya /tmp/edited.png",
+					},
+					"size": map[string]interface{}{
+						"type":        "string",
+						"description": "Ukuran gambar opsional, misalnya 1024x1024",
+					},
+					"quality": map[string]interface{}{
+						"type":        "string",
+						"description": "Kualitas gambar opsional: low, medium, high, auto",
+					},
+				},
+				"required": []string{"image_path", "prompt"},
 			},
 		},
 		{
@@ -672,6 +811,23 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "skill_instructions",
+			Description: "Internal: membaca instruksi dari skill folder Codex-style (SKILL.md) agar agent bisa melanjutkan workflow dengan tools yang tersedia.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_name": map[string]interface{}{"type": "string"},
+					"skill_dir":  map[string]interface{}{"type": "string"},
+					"trigger":    map[string]interface{}{"type": "string"},
+					"instructions": map[string]interface{}{
+						"type":        "string",
+						"description": "Isi instruksi SKILL.md",
+					},
+				},
+				"required": []string{"skill_name", "instructions"},
+			},
+		},
+		{
 			Name:        "skill_create",
 			Description: "Membuat dan menyimpan skill otomasi baru (resep multi-step tool calls) ke ~/.smara/skills/. Gunakan saat user minta 'buatkan skill' / 'simpan sebagai skill' / 'buatin routine', atau saat kamu mendeteksi pola perintah berulang yang sebaiknya di-capture untuk dipakai ulang. Skill langsung bisa dijalankan via skill_run setelah disimpan.",
 			Parameters: map[string]interface{}{
@@ -750,6 +906,28 @@ func GetBuiltinTools() []llm.ToolFunction {
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "skill_install",
+			Description: "Menginstall/import skill dari path lokal, file Markdown/JSON, folder SKILL.md, repo GitHub, raw URL, atau perintah kompatibel seperti 'npx skills add owner/repo'. Mendukung Smara skill native dan markdown instruction skill gaya Codex/Claude Code/Antigravity tanpa menjalankan script eksternal.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"source": map[string]interface{}{
+						"type":        "string",
+						"description": "Path/URL/repo/perintah install. Contoh: ~/.agents/skills/graphify, owner/repo, https://.../SKILL.md, atau npx skills add owner/repo",
+					},
+					"alias": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama skill pengganti. Hanya untuk satu skill.",
+					},
+					"overwrite": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Timpa skill dengan nama sama.",
+					},
+				},
+				"required": []string{"source"},
 			},
 		},
 		{
@@ -1093,8 +1271,68 @@ func GetBuiltinTools() []llm.ToolFunction {
 var activeServers = make(map[string]*exec.Cmd)
 var activeServersMu sync.Mutex
 
+const builtinToolProgressRole = "tool_progress"
+
+type builtinToolProgressEvent struct {
+	Tool    string                 `json:"tool"`
+	Event   string                 `json:"event"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+func emitBuiltinProgress(logCallback func(role, content string), tool, event, message string, details map[string]interface{}) {
+	if logCallback == nil {
+		return
+	}
+	ev := builtinToolProgressEvent{
+		Tool:    tool,
+		Event:   event,
+		Message: message,
+		Details: compactBuiltinProgressDetails(details),
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		logCallback("system", message)
+		return
+	}
+	logCallback(builtinToolProgressRole, string(data))
+}
+
+func compactBuiltinProgressDetails(details map[string]interface{}) map[string]interface{} {
+	if len(details) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(details))
+	for k, v := range details {
+		lower := strings.ToLower(k)
+		if strings.Contains(lower, "token") ||
+			strings.Contains(lower, "secret") ||
+			strings.Contains(lower, "password") ||
+			strings.Contains(lower, "api_key") ||
+			strings.Contains(lower, "apikey") {
+			out[k] = "[redacted]"
+			continue
+		}
+		if s, ok := v.(string); ok && len(s) > 500 {
+			out[k] = s[:500] + "...[truncated]"
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // ExecuteBuiltinTool eksekusi fungsi tool built-in tanpa harus melewati koneksi MCP
 func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallback func(role, content string)) (result string, err error) {
+	return ExecuteBuiltinToolWithContext(context.Background(), toolName, args, logCallback)
+}
+
+// ExecuteBuiltinToolWithContext eksekusi tool built-in dengan context cancellation untuk tool yang mendukungnya.
+func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args map[string]interface{}, logCallback func(role, content string)) (result string, err error) {
+	progress := func(event, message string, details map[string]interface{}) {
+		emitBuiltinProgress(logCallback, toolName, event, message, details)
+	}
+
 	// Recover dari panic di handler tool: jangan sampai bug di satu tool
 	// menjatuhkan TUI / WebSocket / supervisor secara keseluruhan. Kembalikan
 	// sebagai error biasa supaya agent bisa mencoba pendekatan lain.
@@ -1107,9 +1345,12 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 	switch toolName {
 	case "generate_image":
-		return executeGenerateImageTool(args)
+		return executeGenerateImageTool(ctx, args, logCallback)
+	case "edit_image":
+		return executeEditImageTool(ctx, args, logCallback)
 
 	case "request_iteration_budget":
+		progress("tool_progress", "Memproses permintaan tambahan iterasi.", map[string]interface{}{"amount": args["amount"]})
 		ctrl := getActiveBudgetController()
 		if ctrl == nil {
 			return "", fmt.Errorf("budget controller tidak aktif (request_iteration_budget hanya valid saat ProcessPrompt sedang berjalan)")
@@ -1140,6 +1381,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		return sb.String(), nil
 
 	case "iteration_budget_status":
+		progress("tool_progress", "Membaca status budget iterasi.", nil)
 		ctrl := getActiveBudgetController()
 		if ctrl == nil {
 			return "", fmt.Errorf("budget controller tidak aktif")
@@ -1160,6 +1402,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'command' tidak valid")
 		}
+		progress("tool_progress", "Menyiapkan proses shell.", map[string]interface{}{"command": cmdStr})
 
 		cmd := exec.Command("sh", "-c", cmdStr)
 		setProcessGroup(cmd)
@@ -1173,6 +1416,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if err := cmd.Start(); err != nil {
 			return "", fmt.Errorf("gagal memulai perintah: %w", err)
 		}
+		progress("tool_progress", "Proses shell berjalan.", map[string]interface{}{"pid": cmd.Process.Pid})
 
 		// Baca stdout dan stderr secara konkuren
 		var wg sync.WaitGroup
@@ -1210,11 +1454,13 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		case waitErr = <-done:
 			// Proses selesai, tunggu reader goroutine
 			wg.Wait()
+			progress("tool_progress", "Proses shell selesai.", nil)
 		case <-time.After(30 * time.Second):
 			// Timeout: bunuh seluruh process group (termasuk background processes)
 			_ = killProcessGroup(cmd.Process.Pid)
 			wg.Wait()
 			waitErr = fmt.Errorf("timeout setelah 30 detik")
+			progress("tool_timeout", "Proses shell timeout setelah 30 detik dan dihentikan.", map[string]interface{}{"pid": cmd.Process.Pid})
 		}
 
 		if waitErr != nil {
@@ -1243,6 +1489,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'path' tidak valid")
 		}
+		progress("tool_progress", "Membaca file dengan nomor baris.", map[string]interface{}{"path": path})
 
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1284,10 +1531,12 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		// Strip [file:/path] / [image:/path] wrappers if user/agent passed
 		// the raw attachment token. Same convention as analyze_image.
 		path = stripAttachmentWrapper(path)
+		progress("tool_progress", "Membaca file.", map[string]interface{}{"path": path})
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca file: %w", err)
 		}
+		progress("tool_progress", "File terbaca, memeriksa tipe konten.", map[string]interface{}{"path": path, "bytes": len(content)})
 		// Guard against binary files. Dumping raw bytes (PDF, images,
 		// archives) into the LLM context corrupts encoding and can crash
 		// upstream providers. Steer the agent to the right tool instead.
@@ -1309,16 +1558,19 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'content' tidak valid")
 		}
+		progress("tool_progress", "Menyiapkan penulisan file.", map[string]interface{}{"path": path, "bytes": len(content)})
 
 		// Pastikan direktori ada
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", fmt.Errorf("gagal membuat direktori: %w", err)
 		}
+		progress("tool_progress", "Direktori output siap.", map[string]interface{}{"dir": dir})
 
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			return "", fmt.Errorf("gagal menulis file: %w", err)
 		}
+		progress("tool_verify", "File berhasil ditulis.", map[string]interface{}{"path": path, "bytes": len(content)})
 		return fmt.Sprintf("File %s berhasil ditulis.", path), nil
 
 	case "delete_file":
@@ -1326,6 +1578,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'path' tidak valid")
 		}
+		progress("tool_progress", "Menghapus file.", map[string]interface{}{"path": path})
 		if err := os.Remove(path); err != nil {
 			return "", fmt.Errorf("gagal menghapus file: %w", err)
 		}
@@ -1336,11 +1589,13 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if !ok {
 			return "", fmt.Errorf("argumen 'path' tidak valid")
 		}
+		progress("tool_progress", "Membaca isi direktori.", map[string]interface{}{"path": path})
 
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca direktori: %w", err)
 		}
+		progress("tool_progress", "Direktori terbaca.", map[string]interface{}{"path": path, "entries": len(entries)})
 
 		var result string
 		for _, entry := range entries {
@@ -1366,6 +1621,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if d, ok := args["depth"].(float64); ok {
 			depth = int(d)
 		}
+		progress("tool_progress", "Menganalisis struktur workspace.", map[string]interface{}{"depth": depth})
 
 		var summary strings.Builder
 		summary.WriteString("### Workspace Analysis Summary\n\n")
@@ -1419,25 +1675,34 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		path, _ := args["path"].(string)
 		oldContent, _ := args["old_content"].(string)
 		newContent, _ := args["new_content"].(string)
+		if oldContent == "" {
+			return "", fmt.Errorf("old_content tidak boleh kosong. Gunakan view_file untuk mengambil teks yang tepat.")
+		}
+		progress("tool_progress", "Membaca file target untuk edit.", map[string]interface{}{"path": path, "old_chars": len(oldContent), "new_chars": len(newContent)})
 
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca file: %w", err)
 		}
+		progress("tool_progress", "File target terbaca, mencari old_content.", map[string]interface{}{"path": path, "bytes": len(data)})
 
 		lines := strings.Split(string(data), "\n")
 		startLine := 1
-		if sl, ok := args["start_line"].(float64); ok {
+		hasStartLine := false
+		if sl, ok := args["start_line"].(float64); ok && sl > 0 {
 			startLine = int(sl)
+			hasStartLine = true
 		}
 		endLine := len(lines)
-		if el, ok := args["end_line"].(float64); ok {
+		hasEndLine := false
+		if el, ok := args["end_line"].(float64); ok && el > 0 {
 			endLine = int(el)
+			hasEndLine = true
 		}
 
 		// Jika start_line/end_line diberikan, cari hanya di range tersebut
 		content := string(data)
-		if okStart, okEnd := args["start_line"] != nil, args["end_line"] != nil; okStart || okEnd {
+		if hasStartLine || hasEndLine {
 			if startLine < 1 {
 				startLine = 1
 			}
@@ -1453,7 +1718,20 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 			subContent := strings.Join(lines[startLine-1:endLine], "\n")
 			if !strings.Contains(subContent, oldContent) {
-				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d. Gunakan view_file untuk verifikasi.", startLine, endLine)
+				count := strings.Count(content, oldContent)
+				if count == 1 {
+					newContentStr := strings.Replace(content, oldContent, newContent, 1)
+					err = os.WriteFile(path, []byte(newContentStr), 0644)
+					if err != nil {
+						return "", fmt.Errorf("gagal menulis file: %w", err)
+					}
+					progress("tool_verify", "Edit diterapkan pada kemunculan unik di luar range.", map[string]interface{}{"path": path, "start_line": startLine, "end_line": endLine})
+					return fmt.Sprintf("File %s berhasil diperbarui. Catatan: range baris %d-%d tidak cocok, jadi Smara mengganti satu kemunculan unik old_content di lokasi aktual file.", path, startLine, endLine), nil
+				}
+				if count > 1 {
+					return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d, tetapi muncul %d kali di luar range tersebut. Gunakan view_file untuk memilih start_line dan end_line yang tepat.", startLine, endLine, count)
+				}
+				return "", fmt.Errorf("teks 'old_content' tidak ditemukan di baris %d-%d atau di seluruh file. Gunakan view_file untuk verifikasi isi terbaru.", startLine, endLine)
 			}
 
 			// Lakukan penggantian hanya di bagian tersebut
@@ -1468,6 +1746,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			if err != nil {
 				return "", fmt.Errorf("gagal menulis file: %w", err)
 			}
+			progress("tool_verify", "Edit diterapkan pada range baris.", map[string]interface{}{"path": path, "start_line": startLine, "end_line": endLine})
 			return fmt.Sprintf("File %s berhasil diperbarui di baris %d-%d.", path, startLine, endLine), nil
 		}
 
@@ -1486,6 +1765,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if err != nil {
 			return "", fmt.Errorf("gagal menulis file: %w", err)
 		}
+		progress("tool_verify", "Edit diterapkan pada satu kemunculan global.", map[string]interface{}{"path": path})
 
 		return fmt.Sprintf("File %s berhasil diperbarui.", path), nil
 
@@ -1495,6 +1775,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if p, ok := args["path"].(string); ok {
 			searchPathStr = p
 		}
+		progress("tool_progress", "Menjalankan pencarian teks rekursif.", map[string]interface{}{"query": query, "path": searchPathStr})
 
 		// Gunakan grep -r -n untuk hasil rekursif dengan nomor baris
 		cmd := exec.Command("grep", "-r", "-n", "--exclude-dir=.git", "--exclude-dir=node_modules", query, searchPathStr)
@@ -1516,9 +1797,11 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	case "search_path":
 		query, _ := args["query"].(string)
 		root, _ := args["root"].(string)
+		progress("tool_progress", "Mencari path di workspace.", map[string]interface{}{"query": query, "root": root})
 		return searchPath(query, root, logCallback)
 
 	case "get_cwd":
+		progress("tool_progress", "Membaca direktori kerja saat ini.", nil)
 		cwd, err := os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("gagal mendapatkan working directory: %w", err)
@@ -1530,6 +1813,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 	case "web_search":
 		query, _ := args["query"].(string)
+		progress("tool_progress", "Menjalankan pencarian web.", map[string]interface{}{"query": query})
 		return searchWeb(query)
 
 	case "web_fetch":
@@ -1546,9 +1830,11 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if wm, ok := args["wait_ms"].(float64); ok && wm > 0 {
 			waitMS = int(wm)
 		}
+		progress("tool_progress", "Mengambil halaman web.", map[string]interface{}{"url": rawURL, "render": render, "max_chars": maxChars})
 
 		// Route based on render policy.
 		if render == "always" {
+			progress("tool_progress", "Menggunakan headless Chromium.", map[string]interface{}{"wait_ms": waitMS})
 			return fetchHeadless(rawURL, maxChars, waitMS)
 		}
 
@@ -1557,6 +1843,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if err != nil {
 			// If it's a 4xx/5xx and render=auto, fall through to headless.
 			if render == "auto" && isBlockingError(err) {
+				progress("tool_progress", "HTTP fetch gagal, mencoba fallback headless.", map[string]interface{}{"error": err.Error(), "wait_ms": waitMS})
 				if headlessResult, hErr := fetchHeadless(rawURL, maxChars, waitMS); hErr == nil {
 					return "⚠ HTTP fetch gagal (" + err.Error() + ") — auto-switched ke headless Chromium.\n\n" + headlessResult, nil
 				}
@@ -1567,6 +1854,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		// If HTTP succeeded but body looks like a challenge page, auto-retry
 		// with headless when render=auto.
 		if render == "auto" && looksLikeChallenge(result) {
+			progress("tool_progress", "Halaman terlihat seperti challenge, mencoba headless.", map[string]interface{}{"wait_ms": waitMS})
 			if headlessResult, hErr := fetchHeadless(rawURL, maxChars, waitMS); hErr == nil {
 				return "⚠ Halaman terdeteksi anti-bot challenge — di-retry via headless Chromium.\n\n" + headlessResult, nil
 			}
@@ -1574,6 +1862,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		return result, nil
 
 	case "export_data":
+		progress("tool_progress", "Mengekspor data terstruktur.", map[string]interface{}{"format": getStr(args, "format"), "path": getStr(args, "path")})
 		return exportData(args)
 
 	case "ssh_exec":
@@ -1582,17 +1871,20 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if hostArg == "" || command == "" {
 			return "", fmt.Errorf("argumen 'host' dan 'command' wajib diisi")
 		}
+		progress("tool_progress", "Menyiapkan eksekusi SSH.", map[string]interface{}{"host": hostArg, "command": command})
 
 		host, err := resolveHost(hostArg)
 		if err != nil {
 			return "", err
 		}
+		progress("tool_progress", "Menghubungkan SSH.", map[string]interface{}{"host": host.Name, "address": host.Address, "user": host.User})
 
 		client, err := smarassh.Connect(host)
 		if err != nil {
 			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
 		}
 		defer client.Close()
+		progress("tool_progress", "SSH terhubung, menjalankan command.", map[string]interface{}{"host": host.Name})
 
 		stdout, stderr, err := client.Exec(command)
 		var result strings.Builder
@@ -1617,6 +1909,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if hostArg == "" || path == "" {
 			return "", fmt.Errorf("argumen 'host' dan 'path' wajib diisi")
 		}
+		progress("tool_progress", "Menyiapkan baca file via SSH.", map[string]interface{}{"host": hostArg, "path": path})
 
 		host, err := resolveHost(hostArg)
 		if err != nil {
@@ -1628,6 +1921,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
 		}
 		defer client.Close()
+		progress("tool_progress", "SSH terhubung, membaca file remote.", map[string]interface{}{"host": host.Name, "path": path})
 
 		stdout, stderr, err := client.Exec("cat " + path)
 		if err != nil {
@@ -1647,6 +1941,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if hostArg == "" {
 			return "", fmt.Errorf("argumen 'host' wajib diisi")
 		}
+		progress("tool_progress", "Menyiapkan list direktori via SSH.", map[string]interface{}{"host": hostArg, "path": path})
 
 		host, err := resolveHost(hostArg)
 		if err != nil {
@@ -1658,6 +1953,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
 		}
 		defer client.Close()
+		progress("tool_progress", "SSH terhubung, membaca direktori remote.", map[string]interface{}{"host": host.Name, "path": path})
 
 		stdout, stderr, err := client.Exec("ls -la " + path)
 		if err != nil {
@@ -1679,6 +1975,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if hostArg == "" || localPath == "" || remotePath == "" {
 			return "", fmt.Errorf("argumen 'host', 'local_path', dan 'remote_path' wajib diisi")
 		}
+		progress("tool_progress", "Menyiapkan upload SSH.", map[string]interface{}{"host": hostArg, "local_path": localPath, "remote_path": remotePath, "method": method})
 
 		host, err := resolveHost(hostArg)
 		if err != nil {
@@ -1690,6 +1987,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
 		}
 		defer client.Close()
+		progress("tool_progress", "SSH terhubung, mulai upload.", map[string]interface{}{"host": host.Name, "method": method})
 
 		var res *smarassh.TransferResult
 		if method == "scp" {
@@ -1719,6 +2017,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if hostArg == "" || remotePath == "" {
 			return "", fmt.Errorf("argumen 'host' dan 'remote_path' wajib diisi")
 		}
+		progress("tool_progress", "Menyiapkan download SSH.", map[string]interface{}{"host": hostArg, "remote_path": remotePath, "local_path": localPath, "method": method})
 
 		host, err := resolveHost(hostArg)
 		if err != nil {
@@ -1730,6 +2029,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 			return "", fmt.Errorf("gagal koneksi SSH: %w", err)
 		}
 		defer client.Close()
+		progress("tool_progress", "SSH terhubung, mulai download.", map[string]interface{}{"host": host.Name, "method": method})
 
 		var res *smarassh.TransferResult
 		if method == "scp" {
@@ -1744,6 +2044,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 	case "ssh_manage":
 		action, _ := args["action"].(string)
+		progress("tool_progress", "Mengelola konfigurasi SSH.", map[string]interface{}{"action": action, "name": getStr(args, "name")})
 		switch action {
 		case "add":
 			name, _ := args["name"].(string)
@@ -1802,6 +2103,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 
 	case "user_model":
 		action := getStr(args, "action")
+		progress("tool_progress", "Mengakses user model.", map[string]interface{}{"action": action})
 		if BuiltinDB == nil {
 			return "", fmt.Errorf("database belum tersedia")
 		}
@@ -1830,11 +2132,13 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if name == "" {
 			return "", fmt.Errorf("argumen 'skill_name' wajib diisi")
 		}
+		progress("tool_progress", "Memuat skill.", map[string]interface{}{"skill_name": name})
 		sk, err := skill.Load(name)
 		if err != nil {
 			return "", fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
 		}
 		res, err := sk.Run(func(toolName string, toolArgs map[string]interface{}) (string, error) {
+			emitBuiltinProgress(logCallback, "skill_run", "tool_progress", "Menjalankan step skill.", map[string]interface{}{"skill_name": name, "step_tool": toolName})
 			return ExecuteBuiltinTool(toolName, toolArgs, logCallback)
 		})
 		if err != nil {
@@ -1842,10 +2146,31 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 		return fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary), nil
 
+	case "skill_instructions":
+		name := getStr(args, "skill_name")
+		instructions := strings.TrimSpace(getStr(args, "instructions"))
+		if instructions == "" {
+			return "", fmt.Errorf("instruksi skill kosong")
+		}
+		progress("tool_progress", "Memuat instruksi skill.", map[string]interface{}{"skill_name": name, "chars": len(instructions)})
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Instruksi skill '%s' dimuat.\n", name))
+		if trigger := strings.TrimSpace(getStr(args, "trigger")); trigger != "" {
+			sb.WriteString("Trigger: " + trigger + "\n")
+		}
+		if skillDir := strings.TrimSpace(getStr(args, "skill_dir")); skillDir != "" {
+			sb.WriteString("Direktori skill: " + skillDir + "\n")
+		}
+		sb.WriteString("\nIkuti instruksi berikut dan lanjutkan dengan tool Smara yang tersedia bila perlu:\n\n")
+		sb.WriteString(instructions)
+		return sb.String(), nil
+
 	case "skill_create":
+		progress("tool_progress", "Membuat skill baru.", map[string]interface{}{"name": getStr(args, "name")})
 		return createSkillFromArgs(args)
 
 	case "skill_list":
+		progress("tool_progress", "Membaca daftar skill.", nil)
 		names, err := skill.List()
 		if err != nil {
 			return "", fmt.Errorf("gagal membaca daftar skill: %w", err)
@@ -1869,11 +2194,40 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		}
 		return sb.String(), nil
 
+	case "skill_install":
+		source := strings.TrimSpace(getStr(args, "source"))
+		if source == "" {
+			return "", fmt.Errorf("argumen 'source' wajib diisi")
+		}
+		progress("tool_progress", "Menginstal skill.", map[string]interface{}{"source": source, "alias": getStr(args, "alias")})
+		normalized, err := skill.NormalizePluginSource([]string{source})
+		if err != nil {
+			return "", err
+		}
+		overwrite := false
+		if v, ok := args["overwrite"].(bool); ok {
+			overwrite = v
+		}
+		installed, err := skill.InstallFromPluginSource(skill.PluginInstallOptions{
+			Source:    normalized,
+			Alias:     strings.TrimSpace(getStr(args, "alias")),
+			Overwrite: overwrite,
+		})
+		if err != nil {
+			return "", fmt.Errorf("gagal install skill: %w", err)
+		}
+		var names []string
+		for _, sk := range installed {
+			names = append(names, sk.Name)
+		}
+		return fmt.Sprintf("Berhasil install %d skill: %s", len(installed), strings.Join(names, ", ")), nil
+
 	case "skill_delete":
 		name := getStr(args, "skill_name")
 		if name == "" {
 			return "", fmt.Errorf("argumen 'skill_name' wajib diisi")
 		}
+		progress("tool_progress", "Menghapus skill.", map[string]interface{}{"skill_name": name})
 		if _, err := skill.Load(name); err != nil {
 			return "", fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
 		}
@@ -1883,11 +2237,13 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		return fmt.Sprintf("Skill '%s' dihapus.", name), nil
 
 	case "planning_template":
+		progress("tool_progress", "Membangun template rencana.", map[string]interface{}{"kind": getStr(args, "kind")})
 		return buildPlanningTemplate(getStr(args, "kind"), getStr(args, "goal"), getStr(args, "context"))
 
 	case "schedule_reminder":
 		promptText := getStr(args, "prompt_text")
 		when := getStr(args, "when")
+		progress("tool_progress", "Membuat reminder.", map[string]interface{}{"when": when})
 		if BuiltinDB == nil {
 			return "", fmt.Errorf("database belum tersedia")
 		}
@@ -1910,6 +2266,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if filePath == "" {
 			return "", fmt.Errorf("argumen 'file_path' wajib diisi")
 		}
+		progress("tool_progress", "Menganalisis binary.", map[string]interface{}{"file_path": filePath})
 		return analyzeBinaryFile(filePath)
 
 	case "extract_strings":
@@ -1928,6 +2285,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if maxResults > 2000 {
 			maxResults = 2000
 		}
+		progress("tool_progress", "Mengekstrak strings dari file.", map[string]interface{}{"file_path": filePath, "min_length": minLen, "max_results": maxResults})
 		return extractStringsFromFile(filePath, minLen, maxResults)
 
 	case "scan_signature":
@@ -1945,6 +2303,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 				patterns = append(patterns, s)
 			}
 		}
+		progress("tool_progress", "Menjalankan signature scan.", map[string]interface{}{"file_path": filePath, "patterns": len(patterns)})
 		return scanSignature(filePath, patterns)
 
 	case "analyze_dependencies":
@@ -1956,6 +2315,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if lang == "" {
 			lang = "auto"
 		}
+		progress("tool_progress", "Menganalisis dependency source.", map[string]interface{}{"source_path": sourcePath, "language": lang})
 		return analyzeDependencies(sourcePath, lang)
 
 	case "generate_call_graph":
@@ -1971,9 +2331,11 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if md, ok := args["max_depth"].(float64); ok {
 			maxDepth = int(md)
 		}
+		progress("tool_progress", "Membangun call graph.", map[string]interface{}{"source_path": sourcePath, "language": lang, "max_depth": maxDepth})
 		return generateCallGraph(sourcePath, lang, maxDepth)
 
 	case "serve_project":
+		progress("tool_progress", "Menyiapkan preview server project.", map[string]interface{}{"project_dir": getStr(args, "project_dir"), "port": args["port"]})
 		result, err := serveProject(args)
 		return result, err
 
@@ -1989,6 +2351,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if BuiltinDB == nil {
 			return "", fmt.Errorf("database tidak tersedia")
 		}
+		progress("tool_progress", "Membangun graphify graph.", map[string]interface{}{"path": path, "name": name})
 		g, err := graphify.ParseGoCodebase(path, name)
 		if err != nil {
 			return "", fmt.Errorf("gagal parse: %w", err)
@@ -2001,6 +2364,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if err := gs.SaveGraph(g); err != nil {
 			return "", fmt.Errorf("gagal simpan graph: %w", err)
 		}
+		progress("tool_verify", "Graphify graph tersimpan.", map[string]interface{}{"name": name, "nodes": g.NodeCount(), "edges": g.EdgeCount()})
 		return fmt.Sprintf("Graph '%s' dibuat: %d nodes, %d edges", name, g.NodeCount(), g.EdgeCount()), nil
 
 	case "graphify_query":
@@ -2019,6 +2383,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if BuiltinDB == nil {
 			return "", fmt.Errorf("database tidak tersedia")
 		}
+		progress("tool_progress", "Menjalankan query graphify.", map[string]interface{}{"query": query, "graph_name": graphName, "depth": depth})
 		gs, err := graphify.NewGraphStore(BuiltinDB)
 		if err != nil {
 			return "", fmt.Errorf("gagal buat graph store: %w", err)
@@ -2058,9 +2423,11 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if v, ok := args["include_metadata"].(bool); ok {
 			includeMeta = v
 		}
+		progress("tool_progress", "Menganalisis gambar.", map[string]interface{}{"path": path, "ocr_lang": ocrLang, "include_metadata": includeMeta})
 		return analyzeImageFile(path, ocrLang, includeMeta)
 
 	case "clip_paste_image":
+		progress("tool_progress", "Membaca gambar dari clipboard.", nil)
 		res, err := clipboard.ReadImage()
 		if err != nil {
 			return "", fmt.Errorf("paste image gagal: %w", err)
@@ -2073,6 +2440,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if path == "" {
 			return "", fmt.Errorf("argumen 'path' wajib diisi")
 		}
+		progress("tool_progress", "Menyalin gambar ke clipboard.", map[string]interface{}{"path": path})
 		if err := clipboard.WriteImage(path); err != nil {
 			return "", fmt.Errorf("copy image gagal: %w", err)
 		}
@@ -2088,6 +2456,7 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 		if v, ok := args["max_chars"].(float64); ok && v > 0 {
 			maxChars = int(v)
 		}
+		progress("tool_progress", "Mengekstrak teks dokumen.", map[string]interface{}{"path": path, "max_chars": maxChars})
 		text, source, err := extractDocumentText(path)
 		if err != nil {
 			return "", err

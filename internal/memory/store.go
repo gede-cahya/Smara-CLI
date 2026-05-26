@@ -49,13 +49,10 @@ type SQLiteStore struct {
 // backward compatibility — every existing CLI command path keeps working
 // without modification.
 //
-// It delegates to NewSQLiteStoreWithDSN using the same DSN format the older
-// implementation produced (`<path>?_journal_mode=WAL&_busy_timeout=5000`),
-// which routes to the `modernc.org/sqlite` driver because the DSN contains
-// no libSQL markers.
+// It delegates to NewSQLiteStoreWithDSN using a modernc.org/sqlite DSN with
+// per-connection PRAGMAs applied before schema initialization.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
-	return NewSQLiteStoreWithDSN(dsn, StoreOptions{})
+	return NewSQLiteStoreWithDSN(sqliteDSN(dbPath), StoreOptions{})
 }
 
 // NewSQLiteStoreWithDSN opens a memory store against a dialect-aware DSN.
@@ -79,6 +76,7 @@ func NewSQLiteStoreWithDSN(dsn string, opts StoreOptions) (*SQLiteStore, error) 
 	if err != nil {
 		return nil, fmt.Errorf("gagal membuka database (%s): %w", driverName, err)
 	}
+	configureSQLiteDB(db, driverName)
 
 	store := &SQLiteStore{
 		db:           db,
@@ -116,6 +114,51 @@ func detectDialect(dsn string) string {
 	default:
 		return "sqlite"
 	}
+}
+
+func sqliteDSN(dbPath string) string {
+	separator := "?"
+	if strings.Contains(dbPath, "?") {
+		separator = "&"
+	}
+	return dbPath + separator + "_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)&_pragma=synchronous(NORMAL)"
+}
+
+func configureSQLiteDB(db *sql.DB, driverName string) {
+	if driverName != "sqlite" {
+		return
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	_, _ = db.Exec("PRAGMA journal_mode=WAL")
+	_, _ = db.Exec("PRAGMA busy_timeout=30000")
+	_, _ = db.Exec("PRAGMA synchronous=NORMAL")
+}
+
+func execWithSQLiteRetry(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
+	var err error
+	for attempt := 0; attempt < 20; attempt++ {
+		var result sql.Result
+		result, err = db.Exec(query, args...)
+		if err == nil || !isSQLiteBusyErr(err) {
+			return result, err
+		}
+		delay := time.Duration(attempt+1) * 250 * time.Millisecond
+		if delay > 2*time.Second {
+			delay = 2 * time.Second
+		}
+		time.Sleep(delay)
+	}
+	return nil, err
+}
+
+func isSQLiteBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "sqlite_busy") || strings.Contains(msg, "sqlite_locked") || strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked") || strings.Contains(msg, "database is busy")
 }
 
 // Init creates the database schema if it doesn't exist.
@@ -733,7 +776,7 @@ func (s *SQLiteStore) SaveWithOptions(content, tags, source string, workspaceID 
 		contentHash = sql.NullString{String: hex.EncodeToString(sum[:]), Valid: true}
 	}
 
-	result, err := s.db.Exec(
+	result, err := execWithSQLiteRetry(s.db,
 		`INSERT INTO memories
 		(content, embedding, tags, source, metadata, created_at, updated_at, expires_at, category_id, version, workspace_id, cloud_id, device_id, content_hash)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -746,7 +789,7 @@ func (s *SQLiteStore) SaveWithOptions(content, tags, source string, workspaceID 
 	id, _ := result.LastInsertId()
 
 	// Create memory version
-	_, _ = s.db.Exec(
+	_, _ = execWithSQLiteRetry(s.db,
 		`INSERT INTO memory_versions (memory_id, content, metadata, changed_by, reason, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		id, content, metadataJSON, "system", "initial creation", now,
@@ -760,7 +803,7 @@ func (s *SQLiteStore) SaveWithOptions(content, tags, source string, workspaceID 
 	// next reconcile pass will re-detect the unsynced row via cloud_id absence
 	// from sync_log. Logging keeps surprises visible without breaking writes.
 	if s.cloudEnabled {
-		if _, syncErr := s.db.Exec(
+		if _, syncErr := execWithSQLiteRetry(s.db,
 			`INSERT INTO sync_log (memory_id, delta_hash, status, attempted_at) VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)`,
 			id, contentHash.String,
 		); syncErr != nil {

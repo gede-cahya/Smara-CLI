@@ -175,7 +175,7 @@ Selamat datang! Saya adalah agen AI yang siap membantu Anda.
 
 *Perintah:*
 /ask <prompt> — Kirim pertanyaan
-/mode <ask|rush|plan> — Ganti mode agen
+/mode <ask|rush|plan|test|image|workflow> — Ganti mode agen
 /mcp — Lihat MCP tools
 /clear — Reset percakapan
 /help — Bantuan
@@ -188,7 +188,7 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 
 /ask <prompt> — Kirim prompt ke Smara
 /mode — Lihat mode saat ini
-/mode <ask|rush|plan> — Ganti mode
+/mode <ask|rush|plan|test|image|workflow> — Ganti mode
 /mcp — Daftar MCP tools
 /clear — Reset history percakapan
 /help — Tampilkan pesan ini
@@ -211,7 +211,7 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 			// Show current mode
 			current := g.supervisor.GetMode()
 			info := agent.GetModeInfo(current)
-			reply := fmt.Sprintf("Mode saat ini: %s %s\n\n%s\n\nGunakan /mode <ask|rush|plan> untuk mengganti.", info.Emoji, info.Label, info.Description)
+			reply := fmt.Sprintf("Mode saat ini: %s %s\n\n%s\n\nGunakan /mode <ask|rush|plan|test|image|workflow> untuk mengganti.", info.Emoji, info.Label, info.Description)
 			return g.sendReply(ctx, msg, reply)
 		}
 		newMode := msg.CommandArgs[0]
@@ -334,7 +334,7 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		},
 	})
 
-	if isImageGenerationPrompt(msg.Content) {
+	if g.supervisor.GetMode() == agent.ModeImage && isImageGenerationPrompt(msg.Content) {
 		log.Printf("[gateway] image generation fast-path matched for %s/%s: %q", msg.Platform, msg.ChannelID, redactSensitiveLogContent(msg.Content))
 		output, err := agent.ExecuteBuiltinTool("generate_image", map[string]interface{}{"prompt": msg.Content}, nil)
 		if err != nil {
@@ -413,6 +413,9 @@ func isImageGenerationPrompt(prompt string) bool {
 	if strings.Contains(p, "analisa") || strings.Contains(p, "analyze") || strings.Contains(p, "lihat gambar") {
 		return false
 	}
+	if isSoftwareImageFeaturePrompt(p) {
+		return false
+	}
 	imageTerms := []string{"gambar", "image", "logo", "ilustrasi", "illustration", "icon", "ikon", "poster", "desain visual"}
 	generateTerms := []string{"buat", "buatkan", "generate", "create", "bikin", "design", "desain"}
 	for _, gen := range generateTerms {
@@ -423,6 +426,26 @@ func isImageGenerationPrompt(prompt string) bool {
 			if strings.Contains(p, img) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func isSoftwareImageFeaturePrompt(prompt string) bool {
+	softwareTerms := []string{
+		"fitur", "feature", "implement", "implementation", "kode", "code", "coding", "endpoint",
+		"component", "komponen", "ui", "aplikasi", "app", "tool", "tools", "workflow",
+		"upload", "api", "backend", "frontend", "integrasi", "integration", "plugin", "sdk",
+	}
+	for _, term := range softwareTerms {
+		if strings.Contains(prompt, term) {
+			return true
+		}
+	}
+	imageToImageTerms := []string{"image to image", "image-to-image", "img2img", "edit image", "image edit", "edit gambar"}
+	for _, term := range imageToImageTerms {
+		if strings.Contains(prompt, term) {
+			return true
 		}
 	}
 	return false

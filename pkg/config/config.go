@@ -49,36 +49,46 @@ type PlatformConfig struct {
 	LogConversations bool              `mapstructure:"log_conversations" yaml:"log_conversations"`
 }
 
+type ChangeJournalConfig struct {
+	Enabled         bool   `mapstructure:"enabled" yaml:"enabled"`
+	MemoryEnabled   bool   `mapstructure:"memory_enabled" yaml:"memory_enabled"`
+	ObsidianEnabled bool   `mapstructure:"obsidian_enabled" yaml:"obsidian_enabled"`
+	ObsidianServer  string `mapstructure:"obsidian_server" yaml:"obsidian_server"`
+	ObsidianNote    string `mapstructure:"obsidian_note" yaml:"obsidian_note"`
+}
+
 // SmaraConfig holds all application configuration.
 type SmaraConfig struct {
-	Provider           string         `mapstructure:"provider" yaml:"provider"`
-	Model              string         `mapstructure:"model" yaml:"model"`
-	OllamaHost         string         `mapstructure:"ollama_host" yaml:"ollama_host"`
-	OpenAIAPIKey       string         `mapstructure:"openai_api_key" yaml:"openai_api_key"`
-	OpenAIModel        string         `mapstructure:"openai_model" yaml:"openai_model"`
-	OpenAIBaseURL      string         `mapstructure:"openai_base_url" yaml:"openai_base_url"`
-	OpenRouterAPIKey   string         `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
-	OpenRouterModel    string         `mapstructure:"openrouter_model" yaml:"openrouter_model"`
-	AnthropicAPIKey    string         `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
-	AnthropicModel     string         `mapstructure:"anthropic_model" yaml:"anthropic_model"`
-	CustomProviderName string         `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
-	CustomAPIKey       string         `mapstructure:"custom_api_key" yaml:"custom_api_key"`
-	CustomBaseURL      string         `mapstructure:"custom_base_url" yaml:"custom_base_url"`
-	CustomModel        string         `mapstructure:"custom_model" yaml:"custom_model"`
-	SyncDir            string         `mapstructure:"sync_dir" yaml:"sync_dir"`
-	SyncInterval       int            `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
-	MCPServers         []MCPServer    `mapstructure:"mcp_servers" yaml:"mcp_servers"`
-	SmaraMCPEnabled    bool           `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
-	SmaraMCPCommand    string         `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
-	SmaraMCPArgs       []string       `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
-	SmaraMCPAPIKey     string         `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
-	ImageModel         string         `mapstructure:"image_model" yaml:"image_model"`
-	ImageOutputDir     string         `mapstructure:"image_output_dir" yaml:"image_output_dir"`
-	Verbose            bool           `mapstructure:"verbose" yaml:"verbose"`
-	DBPath             string         `mapstructure:"db_path" yaml:"db_path"`
-	ActiveWorkspace    string         `mapstructure:"active_workspace" yaml:"active_workspace"`
-	ActiveWorkspaceID  int64          `mapstructure:"-"` // runtime only
-	Platforms          PlatformConfig `mapstructure:"platforms" yaml:"platforms"`
+	Provider           string              `mapstructure:"provider" yaml:"provider"`
+	Model              string              `mapstructure:"model" yaml:"model"`
+	OllamaHost         string              `mapstructure:"ollama_host" yaml:"ollama_host"`
+	OpenAIAPIKey       string              `mapstructure:"openai_api_key" yaml:"openai_api_key"`
+	OpenAIModel        string              `mapstructure:"openai_model" yaml:"openai_model"`
+	OpenAIBaseURL      string              `mapstructure:"openai_base_url" yaml:"openai_base_url"`
+	OpenRouterAPIKey   string              `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
+	OpenRouterModel    string              `mapstructure:"openrouter_model" yaml:"openrouter_model"`
+	AnthropicAPIKey    string              `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
+	AnthropicModel     string              `mapstructure:"anthropic_model" yaml:"anthropic_model"`
+	CustomProviderName string              `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
+	CustomAPIKey       string              `mapstructure:"custom_api_key" yaml:"custom_api_key"`
+	CustomBaseURL       string              `mapstructure:"custom_base_url" yaml:"custom_base_url"`
+	CustomModel         string              `mapstructure:"custom_model" yaml:"custom_model"`
+	CustomDisableStream bool                `mapstructure:"custom_disable_stream" yaml:"custom_disable_stream"`
+	SyncDir             string              `mapstructure:"sync_dir" yaml:"sync_dir"`
+	SyncInterval       int                 `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
+	MCPServers         []MCPServer         `mapstructure:"mcp_servers" yaml:"mcp_servers"`
+	SmaraMCPEnabled    bool                `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
+	SmaraMCPCommand    string              `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
+	SmaraMCPArgs       []string            `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
+	SmaraMCPAPIKey     string              `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	ImageModel         string              `mapstructure:"image_model" yaml:"image_model"`
+	ImageOutputDir     string              `mapstructure:"image_output_dir" yaml:"image_output_dir"`
+	Verbose            bool                `mapstructure:"verbose" yaml:"verbose"`
+	DBPath             string              `mapstructure:"db_path" yaml:"db_path"`
+	ActiveWorkspace    string              `mapstructure:"active_workspace" yaml:"active_workspace"`
+	ActiveWorkspaceID  int64               `mapstructure:"-"` // runtime only
+	Platforms          PlatformConfig      `mapstructure:"platforms" yaml:"platforms"`
+	ChangeJournal      ChangeJournalConfig `mapstructure:"change_journal" yaml:"change_journal"`
 }
 
 var (
@@ -104,9 +114,10 @@ func DefaultConfig() *SmaraConfig {
 		AnthropicModel:     "claude-sonnet-4-20250514",
 		CustomProviderName: "CLIProxyAPI",
 		CustomAPIKey:       "your-api-key-1",
-		CustomBaseURL:      "http://localhost:8317/v1",
-		CustomModel:        "deepseek-v4-pro",
-		SyncDir:            filepath.Join(smaraDir, "sync"),
+		CustomBaseURL:       "http://localhost:8317/v1",
+		CustomModel:          "deepseek-v4-pro",
+		CustomDisableStream: false,
+		SyncDir:             filepath.Join(smaraDir, "sync"),
 		SyncInterval:       15,
 		MCPServers:         []MCPServer{},
 		ImageModel:         "gpt-image-2",
@@ -123,6 +134,13 @@ func DefaultConfig() *SmaraConfig {
 			},
 			MaxResponseLen:  4000,
 			TypingIndicator: true,
+		},
+		ChangeJournal: ChangeJournalConfig{
+			Enabled:         true,
+			MemoryEnabled:   true,
+			ObsidianEnabled: true,
+			ObsidianServer:  "obsidian",
+			ObsidianNote:    "Second Brain/Smara/Change Log.md",
 		},
 	}
 }
@@ -170,6 +188,7 @@ func Init(configPath string) error {
 	viper.SetDefault("custom_api_key", defaults.CustomAPIKey)
 	viper.SetDefault("custom_base_url", defaults.CustomBaseURL)
 	viper.SetDefault("custom_model", defaults.CustomModel)
+	viper.SetDefault("custom_disable_stream", defaults.CustomDisableStream)
 	viper.SetDefault("sync_dir", defaults.SyncDir)
 	viper.SetDefault("sync_interval", defaults.SyncInterval)
 	viper.SetDefault("verbose", defaults.Verbose)
@@ -181,6 +200,11 @@ func Init(configPath string) error {
 	viper.SetDefault("smara_mcp_api_key", defaults.SmaraMCPAPIKey)
 	viper.SetDefault("image_model", defaults.ImageModel)
 	viper.SetDefault("image_output_dir", defaults.ImageOutputDir)
+	viper.SetDefault("change_journal.enabled", defaults.ChangeJournal.Enabled)
+	viper.SetDefault("change_journal.memory_enabled", defaults.ChangeJournal.MemoryEnabled)
+	viper.SetDefault("change_journal.obsidian_enabled", defaults.ChangeJournal.ObsidianEnabled)
+	viper.SetDefault("change_journal.obsidian_server", defaults.ChangeJournal.ObsidianServer)
+	viper.SetDefault("change_journal.obsidian_note", defaults.ChangeJournal.ObsidianNote)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")

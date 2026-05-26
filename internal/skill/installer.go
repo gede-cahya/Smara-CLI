@@ -17,15 +17,23 @@ const (
 
 // InstallOptions configures a remote install.
 type InstallOptions struct {
-	URL       string // raw URL or GitHub blob/gist shorthand
-	Alias     string // optional override for skill name
-	Overwrite bool   // allow replacing existing skill
+	URL          string   // raw URL or GitHub blob/gist shorthand
+	Alias        string   // optional override for skill name
+	Overwrite    bool     // allow replacing existing skill
+	ReviewOnly   bool     // print/review without saving
+	Approve      bool     // explicit approval for remote/high-risk installs
+	AllowInvalid bool     // allow saving lint-invalid skills
+	AllowedTools []string // optional allowlist
+	BlockedTools []string // optional blocklist
 }
 
-// InstallFromURL downloads, validates, and saves a skill from a remote URL.
+// InstallFromURL downloads, validates, reviews, and saves a skill from a remote URL.
 func InstallFromURL(opts InstallOptions) (*Skill, error) {
-	resolved := resolveURL(opts.URL)
+	if strings.TrimSpace(opts.URL) == "" {
+		return nil, fmt.Errorf("skill URL is required")
+	}
 
+	resolved := resolveURL(opts.URL)
 	client := &http.Client{Timeout: installTimeout}
 	resp, err := client.Get(resolved)
 	if err != nil {
@@ -67,6 +75,21 @@ func InstallFromURL(opts InstallOptions) (*Skill, error) {
 
 	// Record source URL for future updates
 	sk.SourceURL = resolved
+
+	review := ReviewSkillInstall(InstallReviewOptions{
+		Source:       resolved,
+		Skill:        sk,
+		Approve:      opts.Approve,
+		AllowInvalid: opts.AllowInvalid,
+		AllowedTools: opts.AllowedTools,
+		BlockedTools: opts.BlockedTools,
+	})
+	if opts.ReviewOnly {
+		return sk, fmt.Errorf("install review only; skill not saved\n%s", FormatInstallReview(review))
+	}
+	if !review.CanInstall {
+		return nil, fmt.Errorf("skill install blocked by security review\n%s", FormatInstallReview(review))
+	}
 
 	// Check for existing skill
 	if existing, _ := Load(sk.Name); existing != nil && !opts.Overwrite {

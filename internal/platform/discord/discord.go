@@ -510,10 +510,10 @@ func (a *Adapter) registerSlashCommands() {
 				},
 				{
 					Name:        "mode",
-					Description: "Ganti mode agen (ask/rush/plan)",
+					Description: "Ganti mode agen (ask/rush/plan/test/image/workflow)",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
-						{Name: "name", Description: "Nama mode: ask, rush, plan", Type: discordgo.ApplicationCommandOptionString, Required: false},
+						{Name: "name", Description: "Nama mode: ask, rush, plan, test, image, workflow", Type: discordgo.ApplicationCommandOptionString, Required: false},
 					},
 				},
 				{Name: "help", Description: "Tampilkan bantuan", Type: discordgo.ApplicationCommandOptionSubCommand},

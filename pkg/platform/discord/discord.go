@@ -471,12 +471,12 @@ func (a *Adapter) registerSlashCommands() {
 				},
 				{
 					Name:        "mode",
-					Description: "Ganti mode agen (ask/rush/plan)",
+					Description: "Ganti mode agen (ask/rush/plan/test/image/workflow)",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Name:        "name",
-							Description: "Nama mode: ask, rush, plan",
+							Description: "Nama mode: ask, rush, plan, test, image, workflow",
 							Type:        discordgo.ApplicationCommandOptionString,
 							Required:    false,
 						},

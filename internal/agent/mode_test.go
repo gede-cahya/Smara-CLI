@@ -11,13 +11,14 @@ func TestMode_Constants(t *testing.T) {
 	assert.Equal(t, Mode("rush"), ModeRush)
 	assert.Equal(t, Mode("plan"), ModePlan)
 	assert.Equal(t, Mode("test"), ModeTest)
+	assert.Equal(t, Mode("image"), ModeImage)
 }
 
 func TestAllModes_ReturnsAll(t *testing.T) {
 	modes := AllModes()
-	assert.Len(t, modes, 5)
+	assert.Len(t, modes, 6)
 
-	names := make([]Mode, 0, 5)
+	names := make([]Mode, 0, 6)
 	for _, m := range modes {
 		names = append(names, m.Name)
 	}
@@ -25,6 +26,7 @@ func TestAllModes_ReturnsAll(t *testing.T) {
 	assert.Contains(t, names, ModeRush)
 	assert.Contains(t, names, ModePlan)
 	assert.Contains(t, names, ModeTest)
+	assert.Contains(t, names, ModeImage)
 	assert.Contains(t, names, ModeWorkflow)
 }
 
@@ -40,7 +42,7 @@ func TestAllModes_ModeInfoFields(t *testing.T) {
 }
 
 func TestGetModeInfo_ExistingModes(t *testing.T) {
-	for _, mode := range []Mode{ModeAsk, ModeRush, ModePlan, ModeTest, ModeWorkflow} {
+	for _, mode := range []Mode{ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow} {
 		info := GetModeInfo(mode)
 		assert.Equal(t, mode, info.Name, "GetModeInfo should return correct mode for %s", mode)
 	}
@@ -63,11 +65,20 @@ func TestModePlan_SystemPromptStructure(t *testing.T) {
 	assert.Contains(t, info.SystemPrompt, "allow_custom")
 }
 
+func TestModeImage_SystemPromptStructure(t *testing.T) {
+	info := GetModeInfo(ModeImage)
+	assert.Equal(t, "Image", info.Label)
+	assert.Contains(t, info.SystemPrompt, "generate_image")
+	assert.Contains(t, info.SystemPrompt, "analyze_image")
+	assert.Contains(t, info.SystemPrompt, "edit_image")
+}
+
 func TestValidMode(t *testing.T) {
 	assert.True(t, ValidMode("ask"))
 	assert.True(t, ValidMode("rush"))
 	assert.True(t, ValidMode("plan"))
 	assert.True(t, ValidMode("test"))
+	assert.True(t, ValidMode("image"))
 	assert.True(t, ValidMode("workflow"))
 	assert.False(t, ValidMode("unknown"))
 	assert.False(t, ValidMode(""))

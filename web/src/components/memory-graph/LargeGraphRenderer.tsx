@@ -31,12 +31,24 @@ type CameraState = {
   dragEdge: DragEdge | null
 }
 
-const patternModes: Array<{ id: PatternMode; label: string }> = [
-  { id: 'nebula', label: 'Nebula' },
-  { id: 'constellation', label: 'Constellation' },
-  { id: 'radial', label: 'Radial' },
-  { id: 'galaxy', label: 'Galaxy' },
-  { id: 'organic', label: 'Organic' },
+type PatternProfile = {
+  patternPull: number
+  centerPull: number
+  edgeLength: number
+  autoEdgeLength: number
+  edgeStrength: number
+  repel: number
+  damping: number
+  maxVelocity: number
+  cooling: number
+}
+
+const patternModes: Array<{ id: PatternMode; label: string; hint: string }> = [
+  { id: 'nebula', label: 'Nebula', hint: 'kabut cluster noisy, tidak simetris' },
+  { id: 'constellation', label: 'Constellation', hint: 'rasi bintang: cluster kecil terpisah' },
+  { id: 'radial', label: 'Radial', hint: 'ring konsentris + spoke per cluster' },
+  { id: 'galaxy', label: 'Galaxy', hint: 'spiral arms jelas seperti galaksi' },
+  { id: 'organic', label: 'Organic', hint: 'blob/cabang organik mengalir' },
 ]
 
 function nodeCluster(node: MemGraphNode): number {
@@ -46,46 +58,104 @@ function nodeCluster(node: MemGraphNode): number {
   return Math.abs(h) % 9
 }
 
+function nodeRank(node: MemGraphNode, index: number, total: number): number {
+  const degree = Math.min(node.degree || 0, 36)
+  const degreeRank = 1 - degree / 36
+  const indexRank = total <= 1 ? 0 : index / (total - 1)
+  return Math.max(0, Math.min(1, degreeRank * 0.48 + indexRank * 0.52))
+}
+
+function patternProfile(mode: PatternMode, dense: boolean): PatternProfile {
+  const densityScale = dense ? 0.82 : 1
+  if (mode === 'radial') {
+    return { patternPull: 0.0072, centerPull: 0.00012, edgeLength: 138, autoEdgeLength: 166, edgeStrength: 0.009, repel: 1160 * densityScale, damping: 0.80, maxVelocity: 18, cooling: 0.986 }
+  }
+  if (mode === 'galaxy') {
+    return { patternPull: 0.0064, centerPull: 0.00008, edgeLength: 118, autoEdgeLength: 148, edgeStrength: 0.010, repel: 900 * densityScale, damping: 0.82, maxVelocity: 17, cooling: 0.987 }
+  }
+  if (mode === 'constellation') {
+    return { patternPull: 0.0078, centerPull: 0.00002, edgeLength: 156, autoEdgeLength: 196, edgeStrength: 0.007, repel: 1480 * densityScale, damping: 0.79, maxVelocity: 20, cooling: 0.985 }
+  }
+  if (mode === 'organic') {
+    return { patternPull: 0.0048, centerPull: 0.00032, edgeLength: 96, autoEdgeLength: 126, edgeStrength: 0.014, repel: 1040 * densityScale, damping: 0.835, maxVelocity: 15, cooling: 0.983 }
+  }
+  return { patternPull: 0.0038, centerPull: 0.00055, edgeLength: 108, autoEdgeLength: 136, edgeStrength: 0.013, repel: 1280 * densityScale, damping: 0.84, maxVelocity: 15, cooling: 0.982 }
+}
+
 function patternTarget(node: DrawNode, mode: PatternMode, index: number, total: number) {
   const degree = node.node.degree || 0
   const cluster = nodeCluster(node.node)
-  const t = total <= 1 ? 0 : index / (total - 1)
+  const rank = nodeRank(node.node, index, total)
   const noise = hashNoise(node.node.id + cluster * 101)
+  const noise2 = hashNoise(node.node.id * 7 + 31)
+  const noise3 = hashNoise(node.node.id * 13 + cluster * 17)
+  const golden = 2.399963229728653
 
   if (mode === 'radial') {
-    const angle = cluster / 9 * Math.PI * 2 + (noise - 0.5) * 0.55
-    const radius = 70 + (8 - Math.min(cluster, 8)) * 28 + Math.sqrt(Math.max(1, index)) * 7 - Math.min(degree, 24) * 4
-    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
+    const spoke = cluster / 9 * Math.PI * 2
+    const ring = Math.floor(rank * 5.999)
+    const ringRadius = 58 + ring * 82 + Math.max(0, 8 - Math.min(degree, 8)) * 7
+    const arcOffset = (noise - 0.5) * 0.46 + (index % 7 - 3) * 0.018
+    const radiusJitter = (noise2 - 0.5) * 32
+    return {
+      x: Math.cos(spoke + arcOffset) * (ringRadius + radiusJitter),
+      y: Math.sin(spoke + arcOffset) * (ringRadius + radiusJitter),
+    }
   }
 
   if (mode === 'galaxy') {
-    const arm = cluster % 4
-    const angle = arm * Math.PI / 2 + t * Math.PI * 7.5 + noise * 0.7
-    const radius = 38 + Math.sqrt(index + 1) * 18 + cluster * 9
-    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
+    const arms = 5
+    const arm = cluster % arms
+    const radius = 42 + Math.pow(rank, 0.72) * 520 + noise2 * 58 - Math.min(degree, 26) * 3.2
+    const twist = radius * 0.020
+    const angle = arm / arms * Math.PI * 2 + twist + (noise - 0.5) * 0.62
+    const flatten = 0.78 + noise3 * 0.24
+    return {
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius * flatten,
+    }
   }
 
   if (mode === 'constellation') {
-    const hubAngle = cluster / 9 * Math.PI * 2
-    const hubRadius = 95 + (cluster % 3) * 92
+    const hubAngle = cluster / 9 * Math.PI * 2 + (cluster % 2) * 0.18
+    const hubRadius = cluster === 0 ? 0 : 210 + (cluster % 3) * 104
+    const hubX = Math.cos(hubAngle) * hubRadius
+    const hubY = Math.sin(hubAngle) * hubRadius
     const localAngle = noise * Math.PI * 2
-    const localRadius = 22 + Math.sqrt(index % 80) * 14 + Math.max(0, 10 - degree) * 3
+    const localRing = 1 + ((index + cluster) % 4)
+    const localRadius = 20 + localRing * 22 + noise2 * 44 + Math.max(0, 9 - Math.min(degree, 9)) * 2.5
     return {
-      x: Math.cos(hubAngle) * hubRadius + Math.cos(localAngle) * localRadius,
-      y: Math.sin(hubAngle) * hubRadius + Math.sin(localAngle) * localRadius,
+      x: hubX + Math.cos(localAngle) * localRadius,
+      y: hubY + Math.sin(localAngle) * localRadius,
     }
   }
 
   if (mode === 'organic') {
-    const angle = index * 2.399963229728653 + noise * 1.4
-    const wave = Math.sin(index * 0.19 + cluster) * 72
-    const radius = 45 + Math.sqrt(index + 1) * 27 + wave - Math.min(degree, 20) * 5
-    return { x: Math.cos(angle) * radius * 1.12, y: Math.sin(angle) * radius * 0.82 }
+    const branch = cluster % 6
+    const trunkAngle = -0.85 + branch * 0.34 + Math.sin(cluster) * 0.13
+    const distance = 52 + Math.pow(rank, 0.78) * 500 + noise2 * 54 - Math.min(degree, 20) * 4
+    const wave = Math.sin(index * 0.21 + cluster * 1.7) * (38 + rank * 72)
+    const side = (cluster % 2 === 0 ? 1 : -1) * wave
+    const baseX = Math.cos(trunkAngle) * distance
+    const baseY = Math.sin(trunkAngle) * distance
+    return {
+      x: baseX + Math.cos(trunkAngle + Math.PI / 2) * side,
+      y: baseY + Math.sin(trunkAngle + Math.PI / 2) * side * 0.82 + Math.sin(rank * Math.PI * 3 + noise) * 42,
+    }
   }
 
-  const angle = index * 2.399963229728653 + noise * 0.9
-  const radius = 42 + Math.sqrt(index + 1) * (22 + (cluster % 4) * 4) - Math.min(degree, 22) * 5 + hashNoise(node.node.id + 91) * 78
-  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
+  const cloud = cluster % 3
+  const cloudAngle = cloud / 3 * Math.PI * 2 + noise3 * 0.55
+  const cloudRadius = cloud === 0 ? 40 : 150 + cloud * 88
+  const centerX = Math.cos(cloudAngle) * cloudRadius
+  const centerY = Math.sin(cloudAngle) * cloudRadius * 0.72
+  const angle = index * golden + noise * 1.4
+  const radius = 38 + Math.pow(rank, 0.64) * (320 + (cluster % 4) * 34) + noise2 * 95 - Math.min(degree, 22) * 4.5
+  const swirl = Math.sin(rank * Math.PI * 2 + cluster) * 48
+  return {
+    x: centerX + Math.cos(angle) * radius + Math.cos(angle * 2.7) * swirl,
+    y: centerY + Math.sin(angle) * radius * (0.72 + noise3 * 0.34) + Math.sin(angle * 1.9) * swirl,
+  }
 }
 
 type SimGraph = {
@@ -138,16 +208,19 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
   const nodes = sim.nodes
   const alpha = sim.alpha
   if (alpha < 0.015) return
+  const profile = patternProfile(pattern, dense)
 
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i]
     const target = patternTarget(n, pattern, i, nodes.length)
-    const patternPull = pattern === 'nebula' ? 0.0012 : pattern === 'organic' ? 0.0020 : 0.0028
-    n.vx += (target.x - n.x) * patternPull * alpha
-    n.vy += (target.y - n.y) * patternPull * alpha
-    const hubPull = 0.0016 + Math.min(n.node.degree || 0, 20) * 0.00005
-    n.vx += -n.x * hubPull * alpha
-    n.vy += -n.y * hubPull * alpha
+    const degreeBoost = 1 + Math.min(n.node.degree || 0, 18) * 0.006
+    n.vx += (target.x - n.x) * profile.patternPull * degreeBoost * alpha
+    n.vy += (target.y - n.y) * profile.patternPull * degreeBoost * alpha
+    if (profile.centerPull > 0) {
+      const hubPull = profile.centerPull + Math.min(n.node.degree || 0, 20) * profile.centerPull * 0.05
+      n.vx += -n.x * hubPull * alpha
+      n.vy += -n.y * hubPull * alpha
+    }
   }
 
   const maxEdgesPerTick = dense ? 4200 : sim.edgePairs.length
@@ -156,8 +229,9 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
     const dx = e.b.x - e.a.x
     const dy = e.b.y - e.a.y
     const dist = Math.max(1, Math.hypot(dx, dy))
-    const target = pattern === 'constellation' ? (e.auto ? 132 : 105) : pattern === 'radial' ? (e.auto ? 118 : 98) : e.auto ? 112 : 92
-    const strength = (e.auto ? 0.010 : 0.018) * Math.max(0.35, Math.min(1.35, e.weight)) * alpha
+    const sameCluster = nodeCluster(e.a.node) === nodeCluster(e.b.node)
+    const target = (e.auto ? profile.autoEdgeLength : profile.edgeLength) * (sameCluster ? 0.82 : 1.18)
+    const strength = (e.auto ? profile.edgeStrength * 0.58 : profile.edgeStrength) * Math.max(0.28, Math.min(1.28, e.weight)) * alpha
     const f = (dist - target) * strength / dist
     const fx = dx * f
     const fy = dy * f
@@ -165,7 +239,6 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
     e.b.vx -= fx; e.b.vy -= fy
   }
 
-  const repel = pattern === 'constellation' ? 1250 : pattern === 'radial' ? 1020 : dense ? 980 : 1450
   const stride = dense ? Math.max(2, Math.ceil(nodes.length / 620)) : 1
   for (let i = 0; i < nodes.length; i++) {
     const a = nodes[i]
@@ -175,10 +248,12 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
       let dy = b.y - a.y
       let d2 = dx * dx + dy * dy
       if (d2 < 0.01) { dx = hashNoise(a.node.id + b.node.id) - 0.5; dy = hashNoise(a.node.id - b.node.id) - 0.5; d2 = dx * dx + dy * dy }
-      if (d2 > 620 * 620) continue
+      if (d2 > 720 * 720) continue
       const dist = Math.sqrt(d2)
-      const minDist = a.r + b.r + 18
-      const force = ((repel / Math.max(d2, 80)) + (dist < minDist ? (minDist - dist) * 0.018 : 0)) * alpha
+      const sameCluster = nodeCluster(a.node) === nodeCluster(b.node)
+      const minDist = a.r + b.r + (sameCluster && pattern !== 'constellation' ? 12 : 24)
+      const repelBoost = sameCluster ? 0.76 : pattern === 'constellation' ? 1.42 : 1
+      const force = ((profile.repel * repelBoost / Math.max(d2, 80)) + (dist < minDist ? (minDist - dist) * 0.018 : 0)) * alpha
       const fx = (dx / dist) * force
       const fy = (dy / dist) * force
       a.vx -= fx; a.vy -= fy
@@ -192,12 +267,12 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
       n.vy = 0
       continue
     }
-    n.vx *= 0.84
-    n.vy *= 0.84
-    n.x += Math.max(-14, Math.min(14, n.vx))
-    n.y += Math.max(-14, Math.min(14, n.vy))
+    n.vx *= profile.damping
+    n.vy *= profile.damping
+    n.x += Math.max(-profile.maxVelocity, Math.min(profile.maxVelocity, n.vx))
+    n.y += Math.max(-profile.maxVelocity, Math.min(profile.maxVelocity, n.vy))
   }
-  sim.alpha *= 0.982
+  sim.alpha *= profile.cooling
 }
 
 interface Props {
@@ -225,6 +300,7 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
   })
   const drawRef = useRef<() => void>(() => {})
   const simRef = useRef<SimGraph | null>(null)
+  const previousPattern = useRef<PatternMode>('nebula')
   const [pattern, setPattern] = useState<PatternMode>('nebula')
 
   const graph = useMemo(() => {
@@ -250,7 +326,21 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
   }, [graph])
 
   useEffect(() => {
-    if (simRef.current) simRef.current.alpha = 1
+    if (simRef.current) {
+      const sim = simRef.current
+      const changed = previousPattern.current !== pattern
+      sim.alpha = changed ? 1.45 : 1
+      if (changed) {
+        for (let i = 0; i < sim.nodes.length; i++) {
+          const n = sim.nodes[i]
+          const jitter = (hashNoise(n.node.id + pattern.length * 97) - 0.5) * 10
+          const jitter2 = (hashNoise(n.node.id * 3 + pattern.length * 53) - 0.5) * 10
+          n.vx += jitter
+          n.vy += jitter2
+        }
+      }
+      previousPattern.current = pattern
+    }
     drawRef.current()
   }, [pattern])
 
@@ -409,6 +499,8 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
     return best
   }
 
+  const activePattern = patternModes.find(mode => mode.id === pattern)
+
   return <div
     ref={wrapRef}
     className="absolute inset-0 cursor-grab active:cursor-grabbing"
@@ -500,7 +592,7 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
   >
     <canvas ref={canvasRef} className="w-full h-full" />
     <div className="absolute top-3 left-3 flex flex-wrap items-center gap-2 text-[10px] text-smara-100 bg-slate-950/70 border border-smara-400/20 rounded-lg px-2 py-1">
-      <span>Obsidian-style Fast LOD · draggable nodes/edges</span>
+      <span>Fast LOD Pattern · draggable nodes/edges</span>
       <select
         value={pattern}
         onChange={e => setPattern(e.target.value as PatternMode)}
@@ -509,6 +601,7 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
       >
         {patternModes.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
       </select>
+      {activePattern && <span className="text-slate-400">{activePattern.hint}</span>}
     </div>
   </div>
 }

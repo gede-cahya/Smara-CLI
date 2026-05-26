@@ -21,6 +21,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/browser"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
+	"github.com/gede-cahya/Smara-CLI/internal/imageflow"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
@@ -150,7 +151,11 @@ func localImagePathAllowed(path string) (string, error) {
 	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" {
 		return "", fmt.Errorf("hanya file gambar yang diizinkan")
 	}
-	for _, dir := range []string{"/tmp", os.TempDir()} {
+	dirs := []string{"/tmp", os.TempDir()}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".smara", "clip-images"), filepath.Join(home, ".smara", "images"))
+	}
+	for _, dir := range dirs {
 		absDir, err := filepath.Abs(dir)
 		if err != nil {
 			continue
@@ -164,25 +169,51 @@ func localImagePathAllowed(path string) (string, error) {
 }
 
 func (s *Server) rewriteGeneratedImageLinks(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "Markdown:") {
-			continue
-		}
-		start := strings.Index(line, "](")
-		end := strings.LastIndex(line, ")")
-		if start < 0 || end <= start+2 {
-			continue
-		}
-		path := line[start+2 : end]
+	return rewriteGeneratedImageMarkdown(text, func(path string) (string, error) {
 		if _, err := s.generatedImagePathAllowed(path); err != nil {
-			continue
+			return "", err
 		}
-		line = line[:start+2] + "/api/generated-image?path=" + url.QueryEscape(path) + line[end:]
-		lines[i] = line
+		return "/api/generated-image?path=" + url.QueryEscape(path), nil
+	})
+}
+
+func rewriteGeneratedImageMarkdown(text string, rewrite func(string) (string, error)) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		start := strings.Index(text[i:], "![")
+		if start < 0 {
+			b.WriteString(text[i:])
+			break
+		}
+		start += i
+		b.WriteString(text[i:start])
+
+		labelEnd := strings.Index(text[start:], "](")
+		if labelEnd < 0 {
+			b.WriteString(text[start:])
+			break
+		}
+		labelEnd += start
+		pathStart := labelEnd + 2
+		pathEndRel := strings.Index(text[pathStart:], ")")
+		if pathEndRel < 0 {
+			b.WriteString(text[start:])
+			break
+		}
+		pathEnd := pathStart + pathEndRel
+		path := text[pathStart:pathEnd]
+
+		newPath, err := rewrite(path)
+		if err != nil {
+			b.WriteString(text[start : pathEnd+1])
+		} else {
+			b.WriteString(text[start:pathStart])
+			b.WriteString(newPath)
+			b.WriteString(")")
+		}
+		i = pathEnd + 1
 	}
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
 func (s *Server) generatedImagePathAllowed(path string) (string, error) {
@@ -460,7 +491,32 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			preview := formatToolResultPreview(s.rewriteGeneratedImageLinks(output))
 			_ = session.WriteJSON(wsMessage{Type: "tool_result", Output: preview})
 		},
+		OnStream: func(chunk string, isThinking bool) {
+			_ = session.WriteJSON(wsMessage{Type: "stream", Payload: s.rewriteGeneratedImageLinks(chunk), Args: map[string]interface{}{"is_thinking": isThinking}})
+		},
 		OnLog: func(role, content string) {
+			if role == "tool_progress" {
+				var ev wsToolProgressEvent
+				if err := json.Unmarshal([]byte(content), &ev); err == nil && ev.Event != "" {
+					level := "info"
+					if strings.Contains(strings.ToLower(ev.Event), "error") || strings.Contains(strings.ToLower(ev.Event), "timeout") {
+						level = "warn"
+					}
+					_ = session.WriteJSON(wsMessage{
+						Type:    "process_log",
+						Payload: ev.Message,
+						Role:    "process",
+						Args: map[string]interface{}{
+							"event":   ev.Event,
+							"level":   level,
+							"message": ev.Message,
+							"tool":    ev.Tool,
+							"details": ev.Details,
+						},
+					})
+					return
+				}
+			}
 			_ = session.WriteJSON(wsMessage{Type: "log", Payload: content, Role: role})
 		},
 	})
@@ -1437,18 +1493,111 @@ func (s *Server) handleSkillRefine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		Notes    string `json:"notes"`
+		Proposal string `json:"proposal"`
+		Apply    bool   `json:"apply"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	prompt, err := skill.BuildRefinementPrompt(req.Name, nil)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		errorResponse(w, http.StatusBadRequest, "name required")
+		return
+	}
+
+	if req.Apply {
+		proposal := cleanSkillJSONOutput(req.Proposal)
+		if proposal == "" {
+			errorResponse(w, http.StatusBadRequest, "proposal required")
+			return
+		}
+		refined, err := skill.ApplyNamedRefinement(name, []byte(proposal), nil, "manual")
+		if err != nil {
+			errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if s.SkillTracker != nil {
+			_ = s.SkillTracker.RecordImprovement(skill.SkillImprovement{
+				SkillName:    refined.Name,
+				Version:      refined.Version,
+				TriggeredAt:  time.Now(),
+				Trigger:      "manual-refine",
+				Applied:      true,
+				ProposedJSON: proposal,
+			})
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{
+			"status":  "applied",
+			"applied": true,
+			"skill":   refined,
+		})
+		return
+	}
+
+	provider := s.Supervisor.GetProvider()
+	if provider == nil {
+		errorResponse(w, http.StatusServiceUnavailable, "provider not available")
+		return
+	}
+	var prompt string
+	var err error
+	if s.SkillTracker != nil {
+		prompt, _, err = skill.BuildRefinementPromptFull(name, s.SkillTracker, nil)
+	} else {
+		prompt, err = skill.BuildRefinementPrompt(name, nil)
+	}
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"prompt": prompt})
+	if notes := strings.TrimSpace(req.Notes); notes != "" {
+		prompt += "\n\nCatatan manual dari user:\n" + notes
+	}
+	resp, err := provider.Chat([]llm.Message{
+		{Role: "system", Content: "You are a Smara skill refiner. Output only valid JSON matching the Skill schema. Do not wrap it in markdown."},
+		{Role: "user", Content: prompt},
+	})
+	if err != nil {
+		errorResponse(w, http.StatusBadGateway, "skill refine failed: "+err.Error())
+		return
+	}
+	proposal := cleanSkillJSONOutput(resp.Content)
+	if _, err := skill.FromJSON([]byte(proposal)); err != nil {
+		errorResponse(w, http.StatusBadGateway, "provider returned invalid skill JSON: "+err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":   "proposed",
+		"applied":  false,
+		"name":     name,
+		"prompt":   prompt,
+		"proposal": proposal,
+	})
+}
+
+func cleanSkillJSONOutput(raw string) string {
+	text := strings.TrimSpace(raw)
+	if strings.HasPrefix(text, "```") {
+		lines := strings.Split(text, "\n")
+		if len(lines) > 1 {
+			if strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
+				lines = lines[1:]
+			}
+			if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+				lines = lines[:len(lines)-1]
+			}
+			text = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+	}
+	if start := strings.Index(text, "{"); start >= 0 {
+		if end := strings.LastIndex(text, "}"); end > start {
+			return strings.TrimSpace(text[start : end+1])
+		}
+	}
+	return text
 }
 
 func (s *Server) handleSkillDependencies(w http.ResponseWriter, r *http.Request) {
@@ -1677,7 +1826,541 @@ func (s *Server) handleCustomWorkflowImport(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": status, "name": req.Name, "agents": len(cw.Agents), "merged": merged})
 }
 
-// --- Filesystem Browser ---
+// --- Image Flow ---
+
+func (s *Server) handleImageFlowList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	items, err := imageflow.List()
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"workflows": items})
+}
+
+func (s *Server) handleImageFlowGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if strings.TrimSpace(name) == "" {
+		errorResponse(w, http.StatusBadRequest, "name required")
+		return
+	}
+	wf, err := imageflow.Load(name)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, wf)
+}
+
+func (s *Server) handleImageFlowSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var wf imageflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := imageflow.Save(&wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "saved", "name": wf.Name})
+}
+
+func (s *Server) handleImageFlowDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST/DELETE")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		req.Name = r.URL.Query().Get("name")
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		errorResponse(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if err := imageflow.Delete(req.Name); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted", "name": req.Name})
+}
+
+func (s *Server) handleImageFlowRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	var req struct {
+		Workflow imageflow.Workflow `json:"workflow"`
+		Priority int                `json:"priority,omitempty"`
+	}
+	var wf imageflow.Workflow
+	priority := 0
+	if err := json.Unmarshal(raw, &req); err == nil && strings.TrimSpace(req.Workflow.Name) != "" {
+		wf = req.Workflow
+		priority = req.Priority
+	} else if err := json.Unmarshal(raw, &wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	job, err := imageflow.StartJobWithOptions(&wf, imageflow.JobOptions{Priority: priority})
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, job)
+}
+
+func (s *Server) handleImageFlowStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if strings.TrimSpace(id) == "" {
+		errorResponse(w, http.StatusBadRequest, "id required")
+		return
+	}
+	job, ok := imageflow.GetJob(id)
+	if !ok {
+		errorResponse(w, http.StatusNotFound, "job not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, job)
+}
+
+func (s *Server) handleImageFlowCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if strings.TrimSpace(req.ID) == "" {
+		req.ID = r.URL.Query().Get("id")
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		errorResponse(w, http.StatusBadRequest, "id required")
+		return
+	}
+	job, ok := imageflow.CancelJob(req.ID)
+	if !ok {
+		errorResponse(w, http.StatusNotFound, "job not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, job)
+}
+
+func (s *Server) handleImageFlowRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if strings.TrimSpace(req.ID) == "" {
+		req.ID = r.URL.Query().Get("id")
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		errorResponse(w, http.StatusBadRequest, "id required")
+		return
+	}
+	job, ok, err := imageflow.RetryJob(req.ID)
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !ok {
+		errorResponse(w, http.StatusNotFound, "job not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, job)
+}
+
+func (s *Server) handleImageFlowEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if strings.TrimSpace(id) == "" {
+		errorResponse(w, http.StatusBadRequest, "id required")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		errorResponse(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	ctx := r.Context()
+	ticker := time.NewTicker(750 * time.Millisecond)
+	defer ticker.Stop()
+	last := ""
+	for {
+		job, exists := imageflow.GetJob(id)
+		if !exists {
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", `{"error":"job not found"}`)
+			flusher.Flush()
+			return
+		}
+		data, _ := json.Marshal(job)
+		payload := string(data)
+		if payload != last {
+			fmt.Fprintf(w, "event: job\ndata: %s\n\n", payload)
+			flusher.Flush()
+			last = payload
+		}
+		if job.Status == "success" || job.Status == "failed" || job.Status == "canceled" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) handleImageFlowAssets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	assets, err := imageflow.ListAssets()
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	showArchived := r.URL.Query().Get("archived") == "1" || strings.EqualFold(r.URL.Query().Get("archived"), "true")
+	filtered := make([]imageflow.Asset, 0, len(assets))
+	for _, asset := range assets {
+		if asset.Archived && !showArchived {
+			continue
+		}
+		if mode != "" && strings.ToLower(asset.Mode) != mode {
+			continue
+		}
+		if query != "" {
+			haystack := strings.ToLower(strings.Join([]string{asset.ID, asset.Workflow, asset.JobID, asset.Path, asset.Model, asset.Mode, asset.Provider, asset.Prompt}, " "))
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		filtered = append(filtered, asset)
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"assets": filtered})
+}
+
+func (s *Server) handleImageFlowAssetImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		Path     string `json:"path"`
+		Workflow string `json:"workflow"`
+		Mode     string `json:"mode"`
+		Prompt   string `json:"prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.Path = strings.TrimSpace(req.Path)
+	if req.Path == "" {
+		errorResponse(w, http.StatusBadRequest, "path required")
+		return
+	}
+	asset := imageflow.Asset{
+		ID:        fmt.Sprintf("asset-import-%d", time.Now().UnixNano()),
+		Workflow:  strings.TrimSpace(req.Workflow),
+		Path:      req.Path,
+		Mode:      strings.TrimSpace(req.Mode),
+		Prompt:    strings.TrimSpace(req.Prompt),
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	if asset.Workflow == "" {
+		asset.Workflow = "Imported Asset"
+	}
+	if asset.Mode == "" {
+		asset.Mode = "imported"
+	}
+	if err := imageflow.SaveAsset(asset); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "imported", "asset": asset})
+}
+
+func (s *Server) handleImageFlowAssetDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST/DELETE")
+		return
+	}
+	var req struct {
+		ID         string `json:"id"`
+		DeleteFile bool   `json:"delete_file"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if strings.TrimSpace(req.ID) == "" {
+		req.ID = r.URL.Query().Get("id")
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		errorResponse(w, http.StatusBadRequest, "id required")
+		return
+	}
+	asset, ok, err := imageflow.DeleteAsset(req.ID, req.DeleteFile)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		errorResponse(w, http.StatusNotFound, "asset not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "deleted", "asset": asset})
+}
+
+func (s *Server) handleImageFlowAssetArchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		ID       string `json:"id"`
+		Archived bool   `json:"archived"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		errorResponse(w, http.StatusBadRequest, "id required")
+		return
+	}
+	asset, ok, err := imageflow.ArchiveAsset(req.ID, req.Archived)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		errorResponse(w, http.StatusNotFound, "asset not found")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "updated", "asset": asset})
+}
+
+func (s *Server) handleImageFlowAssetCleanup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		MaxAgeHours int  `json:"max_age_hours"`
+		DeleteFiles bool `json:"delete_files"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.MaxAgeHours <= 0 {
+		req.MaxAgeHours = 24 * 30
+	}
+	removed, err := imageflow.CleanupAssets(time.Duration(req.MaxAgeHours)*time.Hour, req.DeleteFiles)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "cleaned", "removed": removed})
+}
+
+func (s *Server) handleImageFlowModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"current": imageflow.ModelStatus(), "available": imageflow.AvailableModels()})
+}
+
+func (s *Server) handleImageFlowJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"jobs": imageflow.ListJobs(), "stats": imageflow.JobQueueStats()})
+}
+
+func (s *Server) handleImageFlowMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	jsonResponse(w, http.StatusOK, imageflow.UsageMetrics())
+}
+
+func (s *Server) handleImageFlowAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	events, err := imageflow.ReadAuditEvents(limit)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"events": events})
+}
+
+func (s *Server) handleImageFlowTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"templates": imageflow.BuiltinTemplates()})
+}
+
+func (s *Server) handleImageFlowAgentCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Instruction string `json:"instruction"`
+		Prompt      string `json:"prompt"`
+		Save        bool   `json:"save"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	wf := imageflow.NewWorkflowFromPrompt(req.Name, req.Instruction, req.Prompt)
+	if req.Save {
+		if err := imageflow.Save(&wf); err != nil {
+			errorResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"workflow": wf, "issues": imageflow.LintWorkflow(&wf)})
+}
+
+func (s *Server) handleImageFlowAgentExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var wf imageflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	jsonResponse(w, http.StatusOK, imageflow.ExplainWorkflow(&wf))
+}
+
+func (s *Server) handleImageFlowAgentLint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var wf imageflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"issues": imageflow.LintWorkflow(&wf)})
+}
+
+func (s *Server) handleImageFlowAgentFix(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var wf imageflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	fixed, actions := imageflow.FixWorkflow(&wf)
+	if fixed == nil {
+		errorResponse(w, http.StatusBadRequest, strings.Join(actions, ", "))
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"workflow": fixed, "actions": actions, "issues": imageflow.LintWorkflow(fixed)})
+}
+
+func (s *Server) handleImageFlowAgentOptimize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var wf imageflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"suggestions": imageflow.OptimizeWorkflow(&wf)})
+}
+
+func (s *Server) handleImageFlowTemplateRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		TemplateID string                 `json:"template_id"`
+		Params     map[string]interface{} `json:"params"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	tmpl, ok := imageflow.TemplateByID(req.TemplateID)
+	if !ok {
+		errorResponse(w, http.StatusNotFound, "template not found")
+		return
+	}
+	wf := imageflow.ApplyParameters(&tmpl.Workflow, req.Params)
+	job, err := imageflow.StartJob(&wf)
+	if err != nil {
+		errorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, job)
+}
+
+type fsEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
+}
 
 func (s *Server) handleFSCwd(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -1689,12 +2372,7 @@ func (s *Server) handleFSCwd(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"path": cwd})
-}
-
-type fsEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"is_dir"`
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"path": cwd})
 }
 
 func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
@@ -1702,15 +2380,14 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
 		return
 	}
-	p := r.URL.Query().Get("path")
+	p := strings.TrimSpace(r.URL.Query().Get("path"))
 	if p == "" {
-		cwd, _ := os.Getwd()
-		p = cwd
-	}
-	p, err := filepath.Abs(p)
-	if err != nil {
-		errorResponse(w, http.StatusBadRequest, "invalid path")
-		return
+		var err error
+		p, err = os.Getwd()
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	info, err := os.Stat(p)
 	if err != nil || !info.IsDir() {
@@ -1729,10 +2406,7 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 		}
 		result = append(result, fsEntry{Name: e.Name(), IsDir: e.IsDir()})
 	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"path":    p,
-		"entries": result,
-	})
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"path": p, "entries": result})
 }
 
 // handleSkillExport returns the entire skill tree as a downloadable JSON

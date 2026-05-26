@@ -61,6 +61,7 @@ func init() {
 	rootCmd.AddCommand(magicPointerCmd)
 	rootCmd.AddCommand(desktopAgentCmd)
 	rootCmd.AddCommand(voiceCmd)
+	rootCmd.AddCommand(claudeHookCmd)
 }
 
 func initConfig() {

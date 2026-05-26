@@ -393,6 +393,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	)
 
 	switch msg.(type) {
+	case tea.WindowSizeMsg:
+		size := msg.(tea.WindowSizeMsg)
+		m.width = size.Width
+		m.height = size.Height
+		m.updateLayout()
+		return m, nil
 	case animTickMsg:
 		if m.animatingSidebar {
 			m.sidebarWidthFloat, m.sidebarVelocity = m.sidebarSpring.Update(m.sidebarWidthFloat, m.sidebarVelocity, m.sidebarTargetWidth)
@@ -1308,10 +1314,10 @@ func (m *AppModel) handleCommand(cmd string, args []string) {
 	switch cmd {
 	case "help":
 		m.addMessage("System", `Perintah tersedia:
-  [Tab]              — Ganti mode agen (cycle: ask → rush → plan → test)
+  [Tab]              — Ganti mode agen (cycle: ask → rush → plan → test → image → workflow)
   [F2]               — Ganti tampilan (Chat → Node Graph → Help)
   [F3]               — Buka session picker
-  /mode [ask|rush|plan|test] — Ganti mode agen
+  /mode [ask|rush|plan|test|image|workflow] — Ganti mode agen
   /model [provider] [model] — Ganti LLM provider/model
   /skill [run <nama>] — Lihat atau jalankan skill tersimpan
   /help              — Tampilkan bantuan ini

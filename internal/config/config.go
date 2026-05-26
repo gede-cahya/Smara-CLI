@@ -68,6 +68,14 @@ type CloudMemoryConfig struct {
 	SyncTables      []string `mapstructure:"sync_tables" yaml:"sync_tables"`
 }
 
+type ChangeJournalConfig struct {
+	Enabled         bool   `mapstructure:"enabled" yaml:"enabled"`
+	MemoryEnabled   bool   `mapstructure:"memory_enabled" yaml:"memory_enabled"`
+	ObsidianEnabled bool   `mapstructure:"obsidian_enabled" yaml:"obsidian_enabled"`
+	ObsidianServer  string `mapstructure:"obsidian_server" yaml:"obsidian_server"`
+	ObsidianNote    string `mapstructure:"obsidian_note" yaml:"obsidian_note"`
+}
+
 // PlatformConfig holds configuration for all platform bots.
 type PlatformConfig struct {
 	Telegram         PlatformBotConfig `mapstructure:"telegram" yaml:"telegram"`
@@ -80,36 +88,41 @@ type PlatformConfig struct {
 
 // SmaraConfig holds all application configuration.
 type SmaraConfig struct {
-	Provider           string            `mapstructure:"provider" yaml:"provider"`
-	Model              string            `mapstructure:"model" yaml:"model"`
-	OllamaHost         string            `mapstructure:"ollama_host" yaml:"ollama_host"`
-	OpenAIAPIKey       string            `mapstructure:"openai_api_key" yaml:"openai_api_key"`
-	OpenAIModel        string            `mapstructure:"openai_model" yaml:"openai_model"`
-	OpenAIBaseURL      string            `mapstructure:"openai_base_url" yaml:"openai_base_url"`
-	OpenRouterAPIKey   string            `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
-	OpenRouterModel    string            `mapstructure:"openrouter_model" yaml:"openrouter_model"`
-	AnthropicAPIKey    string            `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
-	AnthropicModel     string            `mapstructure:"anthropic_model" yaml:"anthropic_model"`
-	CustomProviderName string            `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
-	CustomAPIKey       string            `mapstructure:"custom_api_key" yaml:"custom_api_key"`
-	CustomBaseURL      string            `mapstructure:"custom_base_url" yaml:"custom_base_url"`
-	CustomModel        string            `mapstructure:"custom_model" yaml:"custom_model"`
-	SyncDir            string            `mapstructure:"sync_dir" yaml:"sync_dir"`
-	SyncInterval       int               `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
-	MCPServers         []MCPServer       `mapstructure:"mcp_servers" yaml:"mcp_servers"`
-	SmaraMCPEnabled    bool              `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
-	SmaraMCPCommand    string            `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
-	SmaraMCPArgs       []string          `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
-	SmaraMCPAPIKey     string            `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
-	ImageModel         string            `mapstructure:"image_model" yaml:"image_model"`
-	ImageOutputDir     string            `mapstructure:"image_output_dir" yaml:"image_output_dir"`
-	Verbose            bool              `mapstructure:"verbose" yaml:"verbose"`
-	DBPath             string            `mapstructure:"db_path" yaml:"db_path"`
-	ActiveWorkspace    string            `mapstructure:"active_workspace" yaml:"active_workspace"`
-	ActiveWorkspaceID  int64             `mapstructure:"-"` // runtime only
-	Platforms          PlatformConfig    `mapstructure:"platforms" yaml:"platforms"`
-	SkillRegistries    []RegistryConfig  `mapstructure:"skill_registries" yaml:"skill_registries"`
-	CloudMemory        CloudMemoryConfig `mapstructure:"cloud_memory" yaml:"cloud_memory"`
+	Provider            string              `mapstructure:"provider" yaml:"provider"`
+	Model               string              `mapstructure:"model" yaml:"model"`
+	ReasoningEffort     string              `mapstructure:"reasoning_effort" yaml:"reasoning_effort"`
+	OllamaHost          string              `mapstructure:"ollama_host" yaml:"ollama_host"`
+	OpenAIAPIKey        string              `mapstructure:"openai_api_key" yaml:"openai_api_key"`
+	OpenAIModel         string              `mapstructure:"openai_model" yaml:"openai_model"`
+	OpenAIBaseURL       string              `mapstructure:"openai_base_url" yaml:"openai_base_url"`
+	OpenRouterAPIKey    string              `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
+	OpenRouterModel     string              `mapstructure:"openrouter_model" yaml:"openrouter_model"`
+	AnthropicAPIKey     string              `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
+	AnthropicModel      string              `mapstructure:"anthropic_model" yaml:"anthropic_model"`
+	CustomProviderName  string              `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
+	CustomAPIKey        string              `mapstructure:"custom_api_key" yaml:"custom_api_key"`
+	CustomBaseURL       string              `mapstructure:"custom_base_url" yaml:"custom_base_url"`
+	CustomModel         string              `mapstructure:"custom_model" yaml:"custom_model"`
+	CustomDisableStream bool                `mapstructure:"custom_disable_stream" yaml:"custom_disable_stream"`
+	SyncDir             string              `mapstructure:"sync_dir" yaml:"sync_dir"`
+	SyncInterval        int                 `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
+	MCPServers          []MCPServer         `mapstructure:"mcp_servers" yaml:"mcp_servers"`
+	SmaraMCPEnabled     bool                `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
+	SmaraMCPCommand     string              `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
+	SmaraMCPArgs        []string            `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
+	SmaraMCPAPIKey      string              `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	ImageModel          string              `mapstructure:"image_model" yaml:"image_model"`
+	ImageBaseURL        string              `mapstructure:"image_base_url" yaml:"image_base_url"`
+	ImageAPIKey         string              `mapstructure:"image_api_key" yaml:"image_api_key"`
+	ImageOutputDir      string              `mapstructure:"image_output_dir" yaml:"image_output_dir"`
+	Verbose             bool                `mapstructure:"verbose" yaml:"verbose"`
+	DBPath              string              `mapstructure:"db_path" yaml:"db_path"`
+	ActiveWorkspace     string              `mapstructure:"active_workspace" yaml:"active_workspace"`
+	ActiveWorkspaceID   int64               `mapstructure:"-"` // runtime only
+	Platforms           PlatformConfig      `mapstructure:"platforms" yaml:"platforms"`
+	SkillRegistries     []RegistryConfig    `mapstructure:"skill_registries" yaml:"skill_registries"`
+	CloudMemory         CloudMemoryConfig   `mapstructure:"cloud_memory" yaml:"cloud_memory"`
+	ChangeJournal       ChangeJournalConfig `mapstructure:"change_journal" yaml:"change_journal"`
 
 	// AutoSkillDetect enables automatic skill capture: when the same tool-call
 	// pattern is observed repeatedly, Smara creates a skill without being asked.
@@ -138,6 +151,12 @@ type SmaraConfig struct {
 	// invocations regularly exceed the old 5 min cap. Set 0 for the
 	// built-in default.
 	AgentRequestTimeoutSec int `mapstructure:"agent_request_timeout_sec" yaml:"agent_request_timeout_sec"`
+
+	// DisabledToolGroups lists tool group names to exclude from the LLM
+	// request, reducing input token count and improving latency.
+	// Available groups: ssh, lsp, binary, graphify, skill, image, planning, export
+	// Example: ["ssh", "lsp", "binary", "graphify"] saves ~3000 tokens.
+	DisabledToolGroups []string `mapstructure:"disabled_tool_groups" yaml:"disabled_tool_groups"`
 }
 
 // RegistryConfig defines a configured skill marketplace/registry source.
@@ -158,28 +177,32 @@ func DefaultConfig() *SmaraConfig {
 	home, _ := os.UserHomeDir()
 	smaraDir := filepath.Join(home, ".smara")
 	return &SmaraConfig{
-		Provider:           "custom",
-		Model:              "deepseek-v4-pro",
-		OllamaHost:         "http://localhost:11434",
-		OpenAIAPIKey:       "",
-		OpenAIModel:        "gpt-4o",
-		OpenAIBaseURL:      "",
-		OpenRouterAPIKey:   "",
-		OpenRouterModel:    "anthropic/claude-sonnet-4",
-		AnthropicAPIKey:    "",
-		AnthropicModel:     "claude-sonnet-4-20250514",
-		CustomProviderName: "CLIProxyAPI",
-		CustomAPIKey:       "your-api-key-1",
-		CustomBaseURL:      "http://localhost:8317/v1",
-		CustomModel:        "deepseek-v4-pro",
-		SyncDir:            filepath.Join(smaraDir, "sync"),
-		SyncInterval:       15,
-		MCPServers:         []MCPServer{},
-		ImageModel:         "gpt-image-2",
-		ImageOutputDir:     filepath.Join(smaraDir, "images"),
-		Verbose:            false,
-		DBPath:             filepath.Join(smaraDir, "memory.db"),
-		ActiveWorkspace:    "default",
+		Provider:            "custom",
+		Model:               "deepseek-v4-pro",
+		ReasoningEffort:     "",
+		OllamaHost:          "http://localhost:11434",
+		OpenAIAPIKey:        "",
+		OpenAIModel:         "gpt-4o",
+		OpenAIBaseURL:       "",
+		OpenRouterAPIKey:    "",
+		OpenRouterModel:     "anthropic/claude-sonnet-4",
+		AnthropicAPIKey:     "",
+		AnthropicModel:      "claude-sonnet-4-20250514",
+		CustomProviderName:  "CLIProxyAPI",
+		CustomAPIKey:        "your-api-key-1",
+		CustomBaseURL:       "http://localhost:8317/v1",
+		CustomModel:         "deepseek-v4-pro",
+		CustomDisableStream: false,
+		SyncDir:             filepath.Join(smaraDir, "sync"),
+		SyncInterval:        15,
+		MCPServers:          []MCPServer{},
+		ImageModel:          "gpt-image-2",
+		ImageBaseURL:        "", // empty = use custom_base_url
+		ImageAPIKey:         "", // empty = use custom_api_key
+		ImageOutputDir:      filepath.Join(smaraDir, "images"),
+		Verbose:             false,
+		DBPath:              filepath.Join(smaraDir, "memory.db"),
+		ActiveWorkspace:     "default",
 		Platforms: PlatformConfig{
 			WhatsApp: WhatsAppConfig{
 				Enabled:    false,
@@ -198,9 +221,17 @@ func DefaultConfig() *SmaraConfig {
 		},
 		AutoSkillDetect:        true,
 		AutoSkillThreshold:     3,
-		PlatformPromptTimeout:  600,  // 10 minutes; was hardcoded 300s
-		AgentMaxIterations:     80,   // long roadmap chains routinely exceed 30
-		AgentRequestTimeoutSec: 3600, // 60 min; web/TUI was hardcoded 5 min
+		PlatformPromptTimeout:  600,        // 10 minutes; was hardcoded 300s
+		AgentMaxIterations:     80,         // long roadmap chains routinely exceed 30
+		AgentRequestTimeoutSec: 3600,       // 60 min; web/TUI was hardcoded 5 min
+		DisabledToolGroups:     []string{}, // empty = all tools enabled
+		ChangeJournal: ChangeJournalConfig{
+			Enabled:         true,
+			MemoryEnabled:   true,
+			ObsidianEnabled: true,
+			ObsidianServer:  "obsidian",
+			ObsidianNote:    "Second Brain/Smara/Change Log.md",
+		},
 		CloudMemory: CloudMemoryConfig{
 			Enabled:         false,
 			Provider:        "turso",
@@ -255,6 +286,7 @@ func Init(configPath string) error {
 	defaults := DefaultConfig()
 	viper.SetDefault("provider", defaults.Provider)
 	viper.SetDefault("model", defaults.Model)
+	viper.SetDefault("reasoning_effort", defaults.ReasoningEffort)
 	viper.SetDefault("ollama_host", defaults.OllamaHost)
 	viper.SetDefault("openai_api_key", defaults.OpenAIAPIKey)
 	viper.SetDefault("openai_model", defaults.OpenAIModel)
@@ -267,6 +299,7 @@ func Init(configPath string) error {
 	viper.SetDefault("custom_api_key", defaults.CustomAPIKey)
 	viper.SetDefault("custom_base_url", defaults.CustomBaseURL)
 	viper.SetDefault("custom_model", defaults.CustomModel)
+	viper.SetDefault("custom_disable_stream", defaults.CustomDisableStream)
 	viper.SetDefault("sync_dir", defaults.SyncDir)
 	viper.SetDefault("sync_interval", defaults.SyncInterval)
 	viper.SetDefault("verbose", defaults.Verbose)
@@ -277,6 +310,8 @@ func Init(configPath string) error {
 	viper.SetDefault("smara_mcp_args", defaults.SmaraMCPArgs)
 	viper.SetDefault("smara_mcp_api_key", defaults.SmaraMCPAPIKey)
 	viper.SetDefault("image_model", defaults.ImageModel)
+	viper.SetDefault("image_base_url", defaults.ImageBaseURL)
+	viper.SetDefault("image_api_key", defaults.ImageAPIKey)
 	viper.SetDefault("image_output_dir", defaults.ImageOutputDir)
 	viper.SetDefault("skill_registries", defaults.SkillRegistries)
 	viper.SetDefault("auto_skill_detect", defaults.AutoSkillDetect)
@@ -284,6 +319,12 @@ func Init(configPath string) error {
 	viper.SetDefault("platform_prompt_timeout", defaults.PlatformPromptTimeout)
 	viper.SetDefault("agent_max_iterations", defaults.AgentMaxIterations)
 	viper.SetDefault("agent_request_timeout_sec", defaults.AgentRequestTimeoutSec)
+	viper.SetDefault("disabled_tool_groups", defaults.DisabledToolGroups)
+	viper.SetDefault("change_journal.enabled", defaults.ChangeJournal.Enabled)
+	viper.SetDefault("change_journal.memory_enabled", defaults.ChangeJournal.MemoryEnabled)
+	viper.SetDefault("change_journal.obsidian_enabled", defaults.ChangeJournal.ObsidianEnabled)
+	viper.SetDefault("change_journal.obsidian_server", defaults.ChangeJournal.ObsidianServer)
+	viper.SetDefault("change_journal.obsidian_note", defaults.ChangeJournal.ObsidianNote)
 	viper.SetDefault("cloud_memory.enabled", defaults.CloudMemory.Enabled)
 	viper.SetDefault("cloud_memory.provider", defaults.CloudMemory.Provider)
 	viper.SetDefault("cloud_memory.db_name_pattern", defaults.CloudMemory.DBNamePattern)
@@ -403,22 +444,31 @@ func allSettingsFromStruct(c *SmaraConfig) map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	return map[string]interface{}{
-		"agent_max_iterations":           c.AgentMaxIterations,
-		"agent_request_timeout_sec":      c.AgentRequestTimeoutSec,
-		"auto_skill_detect":              c.AutoSkillDetect,
-		"auto_skill_threshold":           c.AutoSkillThreshold,
-		"platform_prompt_timeout":        c.PlatformPromptTimeout,
-		"image_model":                    c.ImageModel,
-		"image_output_dir":               c.ImageOutputDir,
-		"sync_interval":                  c.SyncInterval,
-		"verbose":                        c.Verbose,
-		"smara_mcp_enabled":              c.SmaraMCPEnabled,
-		"cloud_memory.enabled":           c.CloudMemory.Enabled,
-		"cloud_memory.sync_interval_sec": c.CloudMemory.SyncIntervalSec,
-		"cloud_memory.encrypt_at_rest":   c.CloudMemory.EncryptAtRest,
-		"cloud_memory.max_rows_per_hour": c.CloudMemory.MaxRowsPerHour,
-		"cloud_memory.max_storage_mb":    c.CloudMemory.MaxStorageMB,
-		"cloud_memory.embeddings_cloud":  c.CloudMemory.EmbeddingsCloud,
+		"agent_max_iterations":            c.AgentMaxIterations,
+		"agent_request_timeout_sec":       c.AgentRequestTimeoutSec,
+		"reasoning_effort":                c.ReasoningEffort,
+		"auto_skill_detect":               c.AutoSkillDetect,
+		"auto_skill_threshold":            c.AutoSkillThreshold,
+		"platform_prompt_timeout":         c.PlatformPromptTimeout,
+		"image_model":                     c.ImageModel,
+		"image_base_url":                  c.ImageBaseURL,
+		"image_api_key":                   c.ImageAPIKey,
+		"image_output_dir":                c.ImageOutputDir,
+		"sync_interval":                   c.SyncInterval,
+		"verbose":                         c.Verbose,
+		"custom_disable_stream":           c.CustomDisableStream,
+		"smara_mcp_enabled":               c.SmaraMCPEnabled,
+		"change_journal.enabled":          c.ChangeJournal.Enabled,
+		"change_journal.memory_enabled":   c.ChangeJournal.MemoryEnabled,
+		"change_journal.obsidian_enabled": c.ChangeJournal.ObsidianEnabled,
+		"change_journal.obsidian_server":  c.ChangeJournal.ObsidianServer,
+		"change_journal.obsidian_note":    c.ChangeJournal.ObsidianNote,
+		"cloud_memory.enabled":            c.CloudMemory.Enabled,
+		"cloud_memory.sync_interval_sec":  c.CloudMemory.SyncIntervalSec,
+		"cloud_memory.encrypt_at_rest":    c.CloudMemory.EncryptAtRest,
+		"cloud_memory.max_rows_per_hour":  c.CloudMemory.MaxRowsPerHour,
+		"cloud_memory.max_storage_mb":     c.CloudMemory.MaxStorageMB,
+		"cloud_memory.embeddings_cloud":   c.CloudMemory.EmbeddingsCloud,
 	}
 }
 

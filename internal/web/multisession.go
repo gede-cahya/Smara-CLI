@@ -13,6 +13,7 @@ import (
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 )
 
@@ -88,6 +89,8 @@ type WebSessionManager struct {
 	workspace   string
 	workspaceID int64
 	maxIter     int
+	mcpClients  map[string]*mcp.Client
+	mcpInfo     map[string]agent.MCPServerInfo
 }
 
 func NewWebSessionManager(provider llm.Provider, providerCfg llm.ProviderConfig, memStore memory.MemoryStore, workspace string, workspaceID int64, maxIter int, storePath string) *WebSessionManager {
@@ -95,7 +98,18 @@ func NewWebSessionManager(provider llm.Provider, providerCfg llm.ProviderConfig,
 		home, _ := os.UserHomeDir()
 		storePath = filepath.Join(home, ".smara", "web-sessions.json")
 	}
-	m := &WebSessionManager{sessions: map[string]*WebAgentSession{}, storePath: storePath, provider: provider, providerCfg: providerCfg, memStore: memStore, workspace: workspace, workspaceID: workspaceID, maxIter: maxIter}
+	m := &WebSessionManager{
+		sessions:    map[string]*WebAgentSession{},
+		storePath:   storePath,
+		provider:    provider,
+		providerCfg: providerCfg,
+		memStore:    memStore,
+		workspace:   workspace,
+		workspaceID: workspaceID,
+		maxIter:     maxIter,
+		mcpClients:  map[string]*mcp.Client{},
+		mcpInfo:     map[string]agent.MCPServerInfo{},
+	}
 	_ = m.Load()
 	return m
 }
@@ -125,6 +139,65 @@ func (m *WebSessionManager) Load() error {
 }
 
 func (s *WebAgentSession) sessionsResetRuntime() { s.supervisor = nil; s.cancel = nil }
+
+func (m *WebSessionManager) SetMCPConnections(clients map[string]*mcp.Client, info map[string]agent.MCPServerInfo) {
+	clientCopy := make(map[string]*mcp.Client, len(clients))
+	for name, client := range clients {
+		clientCopy[name] = client
+	}
+	infoCopy := make(map[string]agent.MCPServerInfo, len(info))
+	for name, serverInfo := range info {
+		serverInfo.Tools = append([]mcp.Tool(nil), serverInfo.Tools...)
+		infoCopy[name] = serverInfo
+	}
+
+	m.mu.Lock()
+	m.mcpClients = clientCopy
+	m.mcpInfo = infoCopy
+	var supervisors []*agent.Supervisor
+	for _, session := range m.sessions {
+		session.mu.Lock()
+		if session.supervisor != nil {
+			supervisors = append(supervisors, session.supervisor)
+		}
+		session.mu.Unlock()
+	}
+	m.mu.Unlock()
+
+	for _, sup := range supervisors {
+		applyMCPConnectionsToSupervisor(sup, clientCopy, infoCopy)
+	}
+}
+
+func (m *WebSessionManager) mcpSnapshot() (map[string]*mcp.Client, map[string]agent.MCPServerInfo) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	clients := make(map[string]*mcp.Client, len(m.mcpClients))
+	for name, client := range m.mcpClients {
+		clients[name] = client
+	}
+	info := make(map[string]agent.MCPServerInfo, len(m.mcpInfo))
+	for name, serverInfo := range m.mcpInfo {
+		serverInfo.Tools = append([]mcp.Tool(nil), serverInfo.Tools...)
+		info[name] = serverInfo
+	}
+	return clients, info
+}
+
+func applyMCPConnectionsToSupervisor(sup *agent.Supervisor, clients map[string]*mcp.Client, info map[string]agent.MCPServerInfo) {
+	for name, client := range clients {
+		if existing, ok := sup.GetMCPClient(name); !ok || existing != client {
+			sup.RegisterMCPClient(name, client)
+		}
+	}
+	for name, serverInfo := range info {
+		if serverInfo.Connected {
+			sup.UpdateMCPInfo(name, serverInfo.Tools)
+		} else if serverInfo.Error != "" {
+			sup.UpdateMCPError(name, serverInfo.Error)
+		}
+	}
+}
 
 func snapshotSession(s *WebAgentSession) webAgentSessionSnapshot {
 	s.mu.Lock()
@@ -162,6 +235,7 @@ func (m *WebSessionManager) Save() error {
 }
 
 func (m *WebSessionManager) ensureSupervisor(s *WebAgentSession) *agent.Supervisor {
+	clients, info := m.mcpSnapshot()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.supervisor != nil {
@@ -174,6 +248,7 @@ func (m *WebSessionManager) ensureSupervisor(s *WebAgentSession) *agent.Supervis
 	if m.maxIter > 0 {
 		sup.SetMaxIterations(m.maxIter)
 	}
+	applyMCPConnectionsToSupervisor(sup, clients, info)
 	created, _ := sup.CreateSession(agent.SessionConfig{Name: s.Name, WorkspaceID: m.workspaceID, Mode: s.Mode, IsAgentic: true})
 	if created != nil {
 		for _, hm := range s.History {

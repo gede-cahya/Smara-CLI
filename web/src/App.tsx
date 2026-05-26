@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon } from 'lucide-react'
 import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
@@ -64,25 +64,29 @@ const SkillTree = lazy(() => import('./pages/SkillTree'))
 const SkillDashboard = lazy(() => import('./pages/SkillDashboard'))
 const Graphify = lazy(() => import('./pages/Graphify'))
 const CustomWorkflow = lazy(() => import('./pages/CustomWorkflow'))
+const ImageFlow = lazy(() => import('./pages/ImageFlow'))
 
 const TAB_KEY = 'smara_active_tab'
 
 const navItems = [
-  { id: 'chat', label: 'Chat', icon: MessageSquare },
-  { id: 'workflow', label: 'Workflow', icon: GitBranch },
-  { id: 'custom-workflow', label: 'Custom Workflow', icon: GitBranch },
-  { id: 'magic-pointer', label: 'Magic Pointer', icon: MousePointer2 },
-  { id: 'voice', label: 'Voice', icon: Mic },
-  { id: 'avatar', label: 'Avatar', icon: Bot },
-  { id: 'remote-desktop', label: 'Remote Desktop', icon: Monitor },
-  { id: 'skilltree', label: 'Skill Tree', icon: TreePine },
-  { id: 'skilldash', label: 'Analytics', icon: LineChart },
-  { id: 'graphify', label: 'Graphify', icon: Network },
-  { id: 'memory', label: 'Memory', icon: Database },
-  { id: 'workspace', label: 'Workspace', icon: Layers },
-  { id: 'config', label: 'Config', icon: Settings },
-  { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+  { id: 'chat', label: 'Chat', icon: MessageSquare, group: 'Core' },
+  { id: 'dashboard', label: 'Dashboard', icon: BarChart3, group: 'Core' },
+  { id: 'config', label: 'Config', icon: Settings, group: 'Core' },
+  { id: 'workflow', label: 'Workflow', icon: GitBranch, group: 'Build' },
+  { id: 'custom-workflow', label: 'Custom Workflow', icon: GitBranch, group: 'Build' },
+  { id: 'skilltree', label: 'Skill Tree', icon: TreePine, group: 'Build' },
+  { id: 'skilldash', label: 'Analytics', icon: LineChart, group: 'Build' },
+  { id: 'graphify', label: 'Graphify', icon: Network, group: 'Build' },
+  { id: 'image-flow', label: 'Image Flow', icon: ImageIcon, group: 'Media' },
+  { id: 'voice', label: 'Voice', icon: Mic, group: 'Media' },
+  { id: 'avatar', label: 'Avatar', icon: Bot, group: 'Media' },
+  { id: 'magic-pointer', label: 'Magic Pointer', icon: MousePointer2, group: 'System' },
+  { id: 'remote-desktop', label: 'Remote Desktop', icon: Monitor, group: 'System' },
+  { id: 'memory', label: 'Memory', icon: Database, group: 'System' },
+  { id: 'workspace', label: 'Workspace', icon: Layers, group: 'System' },
 ]
+
+const navGroups = ['Core', 'Build', 'Media', 'System']
 
 function loadTab(): string {
   try {
@@ -137,37 +141,43 @@ export default function App() {
         </div>
 
         <nav className="flex-1 p-3 overflow-y-auto">
-          <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-600">Navigation</div>
-          <div className="space-y-1">
-          {navItems.map(item => {
-            const Icon = item.icon
-            const isActive = active === item.id
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActive(item.id)
-                  if (item.id === 'chat') chatRef.current?.openSessions()
-                }}
-                className={`group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${
-                  isActive
-                    ? 'bg-smara-300/10 text-white shadow-sm shadow-smara-950/20'
-                    : 'text-neutral-500 hover:bg-neutral-900/60 hover:text-neutral-100'
-                }`}
-              >
-                {isActive && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-smara-300/80 shadow-[0_0_14px_rgba(190,242,100,.45)]" />}
-                <span className={`grid h-8 w-8 place-items-center rounded-lg transition-colors ${isActive ? 'bg-smara-300/12 text-smara-200' : 'bg-neutral-900/50 text-neutral-500 group-hover:text-smara-200'}`}>
-                  <Icon className="w-4 h-4" />
-                </span>
-                <span className="truncate text-left">{item.label}</span>
-                {item.id === 'chat' && (
-                  <span className="ml-auto rounded-full bg-smara-300/10 px-2 py-0.5 text-[10px] text-smara-200">
-                    Sesi
-                  </span>
-                )}
-              </button>
-            )
-          })}
+          <div className="space-y-4">
+            {navGroups.map(group => (
+              <div key={group}>
+                <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-600">{group}</div>
+                <div className="space-y-1">
+                  {navItems.filter(item => item.group === group).map(item => {
+                    const Icon = item.icon
+                    const isActive = active === item.id
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          setActive(item.id)
+                          if (item.id === 'chat') chatRef.current?.openSessions()
+                        }}
+                        className={`group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${
+                          isActive
+                            ? 'bg-smara-300/10 text-white shadow-sm shadow-smara-950/20'
+                            : 'text-neutral-500 hover:bg-neutral-900/60 hover:text-neutral-100'
+                        }`}
+                      >
+                        {isActive && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-smara-300/80 shadow-[0_0_14px_rgba(190,242,100,.45)]" />}
+                        <span className={`grid h-8 w-8 place-items-center rounded-lg transition-colors ${isActive ? 'bg-smara-300/12 text-smara-200' : 'bg-neutral-900/50 text-neutral-500 group-hover:text-smara-200'}`}>
+                          <Icon className="w-4 h-4" />
+                        </span>
+                        <span className="truncate text-left">{item.label}</span>
+                        {item.id === 'chat' && (
+                          <span className="ml-auto rounded-full bg-smara-300/10 px-2 py-0.5 text-[10px] text-smara-200">
+                            Sesi
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </nav>
 
@@ -180,6 +190,7 @@ export default function App() {
       <main className="relative z-10 flex-1 overflow-hidden p-4">
         <div className="h-full overflow-hidden rounded-[1.65rem] bg-[#151d10]/96 shadow-2xl shadow-black/22 backdrop-blur-xl ring-1 ring-black/35">
           <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat ref={chatRef} /></PageErrorBoundary></div>
+          <div className={active === 'image-flow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><ImageFlow /></Suspense></div>
           <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
           <div className={active === 'magic-pointer' ? 'h-full' : 'hidden'}><MagicPointer /></div>
           <div className={active === 'voice' ? 'h-full' : 'hidden'}><VoiceAssistant /></div>

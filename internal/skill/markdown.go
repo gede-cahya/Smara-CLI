@@ -17,6 +17,7 @@ type markdownFrontmatter struct {
 	Tags        []string   `yaml:"tags,omitempty"`
 	Author      string     `yaml:"author,omitempty"`
 	SourceURL   string     `yaml:"source_url,omitempty"`
+	Trigger     string     `yaml:"trigger,omitempty"`
 	Params      []ParamDef `yaml:"params,omitempty"`
 	Steps       []Step     `yaml:"steps"`
 }
@@ -74,6 +75,7 @@ func ParseMarkdownSkill(data []byte) (*Skill, error) {
 		Tags:        fm.Tags,
 		Author:      fm.Author,
 		SourceURL:   fm.SourceURL,
+		Trigger:     fm.Trigger,
 		Params:      fm.Params,
 	}
 
@@ -94,6 +96,7 @@ func (s *Skill) ToMarkdown() ([]byte, error) {
 		Tags:        s.Tags,
 		Author:      s.Author,
 		SourceURL:   s.SourceURL,
+		Trigger:     s.Trigger,
 		Params:      s.Params,
 		Steps:       s.Steps,
 	}

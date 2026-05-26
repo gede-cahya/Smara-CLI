@@ -10,7 +10,7 @@ import (
 
 func TestModePrompts_ContainSSHInstructions(t *testing.T) {
 	modes := AllModes()
-	require.Len(t, modes, 5)
+	require.Len(t, modes, 6)
 
 	for _, m := range modes {
 		if m.Name == ModeTest || m.Name == ModeWorkflow {

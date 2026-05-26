@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,25 +13,31 @@ import (
 // OpenRouterProvider implements the Provider interface for OpenRouter API.
 // OpenRouter is an OpenAI-compatible gateway that supports 100+ models.
 type OpenRouterProvider struct {
-	apiKey string
-	model  string
-	host   string // default: https://openrouter.ai/api/v1
-	client *http.Client
+	apiKey          string
+	model           string
+	host            string // default: https://openrouter.ai/api/v1
+	reasoningEffort string
+	client          *http.Client
 }
 
 // NewOpenRouterProvider creates a new OpenRouter provider.
-func NewOpenRouterProvider(apiKey, model, host string) *OpenRouterProvider {
+func NewOpenRouterProvider(apiKey, model, host string, reasoningEffort ...string) *OpenRouterProvider {
 	if model == "" {
 		model = "anthropic/claude-sonnet-4"
 	}
 	if host == "" {
 		host = "https://openrouter.ai/api/v1"
 	}
+	effort := ""
+	if len(reasoningEffort) > 0 {
+		effort = normalizeReasoningEffort(reasoningEffort[0])
+	}
 	return &OpenRouterProvider{
-		apiKey: apiKey,
-		model:  model,
-		host:   host,
-		client: &http.Client{Timeout: 5 * time.Minute},
+		apiKey:          apiKey,
+		model:           model,
+		host:            host,
+		reasoningEffort: effort,
+		client:          &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -40,9 +47,10 @@ func (o *OpenRouterProvider) Name() string {
 
 func (o *OpenRouterProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Stream:   false,
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Stream:          false,
+		ReasoningEffort: o.reasoningEffort,
 	}
 
 	resp, err := o.doChat(req)
@@ -67,10 +75,11 @@ func (o *OpenRouterProvider) ChatWithTools(messages []Message, tools []ToolFunct
 	}
 
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Tools:    openAITools,
-		Stream:   false,
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Tools:           openAITools,
+		Stream:          false,
+		ReasoningEffort: o.reasoningEffort,
 	}
 
 	body, err := o.doChat(req)
@@ -110,16 +119,25 @@ func (o *OpenRouterProvider) ChatWithTools(messages []Message, tools []ToolFunct
 
 // ChatStream implements the Streamer interface.
 func (o *OpenRouterProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	return o.ChatStreamWithContext(context.Background(), messages, callback)
+}
+
+func (o *OpenRouterProvider) ChatStreamWithContext(ctx context.Context, messages []Message, callback StreamCallback) (*ChatResponse, error) {
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		ReasoningEffort: o.reasoningEffort,
 	}
-	resp, _, err := streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+	resp, _, err := streamOpenAIWithContext(ctx, o.client, o.host, o.apiKey, req, callback)
 	return resp, err
 }
 
 // ChatStreamWithTools implements the Streamer interface.
 func (o *OpenRouterProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	return o.ChatStreamWithToolsWithContext(context.Background(), messages, tools, callback)
+}
+
+func (o *OpenRouterProvider) ChatStreamWithToolsWithContext(ctx context.Context, messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
 	openAITools := make([]openAITool, len(tools))
 	for i, t := range tools {
 		openAITools[i] = openAITool{
@@ -133,11 +151,12 @@ func (o *OpenRouterProvider) ChatStreamWithTools(messages []Message, tools []Too
 	}
 
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Tools:    openAITools,
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Tools:           openAITools,
+		ReasoningEffort: o.reasoningEffort,
 	}
-	return streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+	return streamOpenAIWithContext(ctx, o.client, o.host, o.apiKey, req, callback)
 }
 
 // OpenRouter doesn't have native embeddings.

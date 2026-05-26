@@ -236,6 +236,250 @@ func TestSupervisor_TruncatesLargeToolResultBeforeModelAndCallback(t *testing.T)
 	assert.Equal(t, callbackOutput, toolMessage.Content)
 }
 
+func TestSupervisor_ContinuesToFinalResponseOnFileToolError(t *testing.T) {
+	path := t.TempDir() + "/duplicate.txt"
+	require.NoError(t, os.WriteFile(path, []byte("needle\nneedle\n"), 0644))
+
+	mock := &mockSSHProvider{
+		returnToolCall: true,
+		toolCalls: []llm.ToolCall{
+			{
+				ID:       "call_edit",
+				Function: "edit_file",
+				Args: map[string]interface{}{
+					"path":        path,
+					"old_content": "needle",
+					"new_content": "replacement",
+				},
+			},
+		},
+		finalContent: "done",
+	}
+
+	s := NewSupervisor(mock, nil)
+	s.SetMode(ModeRush)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnConfirm:     func(message string) bool { return true },
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "edit file duplicate content")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 2, mock.calls, "file tool errors should still allow the model to compose a final answer")
+	assert.Equal(t, "done", result.Response)
+	assert.NotContains(t, result.Response, "Perubahan file gagal")
+	assert.NotContains(t, result.Response, "Response final LLM")
+	assert.Contains(t, result.ToolsExecuted, "edit_file")
+}
+
+func TestSupervisor_ContinuesToFinalResponseOnFileToolSuccess(t *testing.T) {
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("needle\n"), 0644))
+
+	mock := &mockSSHProvider{
+		returnToolCall: true,
+		toolCalls: []llm.ToolCall{
+			{
+				ID:       "call_edit",
+				Function: "edit_file",
+				Args: map[string]interface{}{
+					"path":        path,
+					"old_content": "needle",
+					"new_content": "replacement",
+				},
+			},
+		},
+		finalContent: "done",
+	}
+
+	s := NewSupervisor(mock, nil)
+	s.SetMode(ModeRush)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnConfirm:     func(message string) bool { return true },
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "edit file target content")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 2, mock.calls, "file tool success should allow the model to compose a final answer")
+	assert.Equal(t, "done", result.Response)
+	assert.NotContains(t, result.Response, "Perubahan file selesai")
+	assert.NotContains(t, result.Response, "Response final LLM")
+	assert.Contains(t, result.ToolsExecuted, "edit_file")
+}
+
+type postToolWaitProvider struct {
+	mu           sync.Mutex
+	calls        int
+	chatCalls    int
+	path         string
+	quickDelay   time.Duration
+	quickContent string
+	quickErr     error
+	finalDelay   time.Duration
+	finalContent string
+	finalErr     error
+}
+
+func (p *postToolWaitProvider) Name() string { return "post-tool-wait" }
+
+func (p *postToolWaitProvider) Chat(messages []llm.Message) (*llm.ChatResponse, error) {
+	p.mu.Lock()
+	p.chatCalls++
+	delay := p.quickDelay
+	content := p.quickContent
+	err := p.quickErr
+	p.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if content == "" {
+		content = needMoreToolsMarker
+	}
+	return &llm.ChatResponse{Content: content}, nil
+}
+
+func (p *postToolWaitProvider) ChatWithTools(messages []llm.Message, tools []llm.ToolFunction) (*llm.ChatResponse, []llm.ToolCall, error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	delay := p.finalDelay
+	content := p.finalContent
+	finalErr := p.finalErr
+	p.mu.Unlock()
+
+	if call == 1 {
+		return &llm.ChatResponse{Content: "Membaca file."}, []llm.ToolCall{{
+			ID:       "call_view",
+			Function: "view_file",
+			Args:     map[string]interface{}{"path": p.path},
+		}}, nil
+	}
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	if finalErr != nil {
+		return nil, nil, finalErr
+	}
+	if content == "" {
+		content = "jawaban final selesai"
+	}
+	return &llm.ChatResponse{Content: content}, nil, nil
+}
+
+func (p *postToolWaitProvider) GenerateEmbedding(text string) ([]float32, error) {
+	return nil, nil
+}
+
+func TestSupervisor_WaitsForPostToolFinalResponseByDefault(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 0
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &postToolWaitProvider{path: path, finalDelay: 40 * time.Millisecond, finalContent: "final setelah tool"}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeRush)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	start := time.Now()
+	result, err := s.ProcessPrompt(context.Background(), "lihat file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.GreaterOrEqual(t, time.Since(start), 40*time.Millisecond)
+	assert.Equal(t, "final setelah tool", result.Response)
+	assert.Contains(t, result.ToolsExecuted, "view_file")
+	assert.Equal(t, 2, provider.calls)
+	assert.Equal(t, 0, provider.chatCalls, "post-tool path should not use a no-tool finalizer")
+}
+
+func TestSupervisor_QuickFinishAvoidsSlowPostToolLoop(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 100 * time.Millisecond
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &postToolWaitProvider{
+		path:         path,
+		quickContent: "final cepat dari hasil tool",
+		finalDelay:   200 * time.Millisecond,
+		finalContent: "final lambat",
+	}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeRush)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	start := time.Now()
+	result, err := s.ProcessPrompt(context.Background(), "lihat file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Less(t, time.Since(start), 150*time.Millisecond)
+	assert.Equal(t, "final cepat dari hasil tool", result.Response)
+	assert.Equal(t, 1, provider.calls)
+	assert.Equal(t, 1, provider.chatCalls)
+}
+
+func TestSupervisor_PostToolErrorReturnsFallbackSummary(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 0
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &postToolWaitProvider{path: path, finalErr: fmt.Errorf("fetch failed")}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeRush)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "lihat file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Contains(t, result.Response, "fetch failed")
+	assert.Contains(t, result.Response, "Hasil tool terakhir")
+	assert.Contains(t, result.Response, "view_file")
+	assert.Equal(t, 0, provider.chatCalls, "post-tool errors should not be converted through a finalizer")
+}
+
 func TestPromptResult_Struct(t *testing.T) {
 	r := PromptResult{
 		Response:      "hello",

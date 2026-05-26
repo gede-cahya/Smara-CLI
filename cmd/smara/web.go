@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 
@@ -51,7 +50,7 @@ func init() {
 	webCmd.Flags().StringVar(&webPort, "port", "8080", "port HTTP server")
 	webCmd.Flags().StringVar(&webHost, "host", "127.0.0.1", "host HTTP server (use 0.0.0.0 untuk akses dari network)")
 	webCmd.Flags().BoolVar(&webNoOpen, "no-open", false, "jangan buka browser otomatis")
-	webCmd.Flags().StringVar(&webMode, "mode", "ask", "mode agen default: ask, rush, plan")
+	webCmd.Flags().StringVar(&webMode, "mode", "ask", "mode agen default: ask, rush, plan, test, image, workflow")
 	webCmd.Flags().StringVar(&webToken, "auth-token", "", "token akses remote opsional (header Authorization: Bearer atau ?token=)")
 	webCmd.Flags().StringVar(&desktopAgentAddr, "desktop-agent", "", "URL desktop-agent untuk auto-pair remote desktop, contoh http://127.0.0.1:8765")
 	webCmd.Flags().StringVar(&desktopAgentToken, "desktop-token", "", "Token desktop-agent untuk auto-pair")
@@ -75,10 +74,11 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	ui.PrintInfo("Menghubungkan ke %s (%s)...", cfg.Provider, cfg.Model)
 
 	providerCfg := llm.ProviderConfig{
-		Name:   cfg.Provider,
-		Model:  cfg.Model,
-		Host:   cfg.OllamaHost,
-		APIKey: "",
+		Name:            cfg.Provider,
+		Model:           cfg.Model,
+		Host:            cfg.OllamaHost,
+		APIKey:          "",
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
 	switch cfg.Provider {
@@ -202,13 +202,6 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 	mcpConfigs = deduped
 
-	type mcpConnResult struct {
-		Name   string
-		Client *mcp.Client
-		Tools  []mcp.Tool
-		Err    error
-	}
-
 	var enabledConfigs []mcp.MCPServerConfig
 	for _, cfg := range mcpConfigs {
 		if cfg.Enabled {
@@ -216,48 +209,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(enabledConfigs) > 0 {
-		ui.PrintInfo("Menghubungkan %d MCP server secara paralel...", len(enabledConfigs))
-		results := make(chan mcpConnResult, len(enabledConfigs))
-		var wg sync.WaitGroup
-		for _, mcpCfg := range enabledConfigs {
-			wg.Add(1)
-			go func(cfg mcp.MCPServerConfig) {
-				defer wg.Done()
-				var client *mcp.Client
-				var err error
-				switch cfg.Type {
-				case "remote":
-					client, err = mcp.NewRemoteClient(cfg)
-				default:
-					client, err = mcp.NewClient(cfg)
-				}
-				if err != nil {
-					results <- mcpConnResult{Name: cfg.Name, Err: err}
-					return
-				}
-				tools, _ := client.ListTools()
-				results <- mcpConnResult{Name: cfg.Name, Client: client, Tools: tools}
-			}(mcpCfg)
-		}
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-		for res := range results {
-			if res.Err != nil {
-				ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", res.Name, res.Err)
-				continue
-			}
-			supervisor.RegisterMCPClient(res.Name, res.Client)
-			if len(res.Tools) > 0 {
-				supervisor.UpdateMCPInfo(res.Name, res.Tools)
-				ui.PrintSuccess("MCP '%s' terhubung (%d tools)", res.Name, len(res.Tools))
-			} else {
-				ui.PrintSuccess("MCP '%s' terhubung", res.Name)
-			}
-		}
-	}
+	connectMCPServersForStartup(supervisor, enabledConfigs)
 
 	// 5. Setup metrics
 	smaraDir := filepath.Dir(cfg.DBPath)
@@ -284,6 +236,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	addr := fmt.Sprintf("%s:%s", webHost, webPort)
 	server := web.NewServer(addr, supervisor, memStore, collector, cfg)
 	server.WebSessions = web.NewWebSessionManager(provider, providerCfg, memStore, activeWorkspaceName, cfg.ActiveWorkspaceID, cfg.AgentMaxIterations, filepath.Join(filepath.Dir(cfg.DBPath), "web-sessions.json"))
+	server.WebSessions.SetMCPConnections(supervisor.GetMCPClients(), supervisor.GetMCPInfo())
 	server.RemoteDesktop = web.NewRemoteDesktopManager(filepath.Join(filepath.Dir(cfg.DBPath), "remote-desktop-devices.json"))
 	if desktopAgentAddr != "" {
 		if _, err := server.RemoteDesktop.Upsert("local-desktop", desktopAgentAddr, desktopAgentToken); err != nil {

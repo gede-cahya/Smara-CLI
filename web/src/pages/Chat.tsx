@@ -5,11 +5,11 @@ import mermaid from 'mermaid'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import {
   Send, Bot, User, RefreshCw, Plus, Trash2, MessageSquare, Clock,
-  Zap, ClipboardList, FlaskConical, ArrowRightLeft, MessageCircle,
+  Zap, ClipboardList, FlaskConical, ArrowRightLeft, MessageCircle, ImageIcon,
   CheckCircle2, BrainCircuit, Copy, Check, X,
   Paperclip, FileText, FileCode, FileJson, File as FileIcon, Upload,
   Terminal, ChevronDown, ChevronRight, Loader2, AlertCircle, Wrench,
-  Archive, ArchiveRestore, StopCircle, Pencil, Server,
+  Archive, ArchiveRestore, StopCircle, Pencil, Server, Settings,
 } from 'lucide-react'
 import type { ChatMessage, WebSessionItem, WebSessionStatus } from '../api'
 import {
@@ -408,6 +408,7 @@ const MODES: Array<{ id: string; label: string; emoji: string; icon: typeof Mess
   { id: 'rush', label: 'Rush', emoji: '\u26A1', icon: Zap, bg: 'bg-yellow-600', border: 'border-yellow-500', text: 'text-yellow-400' },
   { id: 'plan', label: 'Plan', emoji: '\uD83D\uDCCB', icon: ClipboardList, bg: 'bg-lime-600', border: 'border-lime-500', text: 'text-lime-400' },
   { id: 'test', label: 'Test', emoji: '\uD83E\uDDEA', icon: FlaskConical, bg: 'bg-green-600', border: 'border-green-500', text: 'text-green-400' },
+  { id: 'image', label: 'Image', emoji: '\uD83C\uDFA8', icon: ImageIcon, bg: 'bg-purple-600', border: 'border-purple-500', text: 'text-purple-400' },
   { id: 'workflow', label: 'Workflow', emoji: '\uD83D\uDD04', icon: ArrowRightLeft, bg: 'bg-smara-600', border: 'border-smara-500', text: 'text-smara-400' },
 ]
 
@@ -419,6 +420,71 @@ interface PlanQuest {
   title: string
   options: string[]
   allowCustom: boolean
+}
+
+interface PlanInsight {
+  title: string
+  steps: string[]
+}
+
+interface ActivePhase {
+  phase: string
+  description: string
+  status: 'running' | 'done'
+  startedAt?: number // Date.now() timestamp
+}
+
+interface AnalysisEvent {
+  id: string
+  kind: 'phase' | 'thinking' | 'tool' | 'log'
+  title: string
+  detail: string
+  status: 'running' | 'done'
+  level?: 'info' | 'warning' | 'error'
+  event?: string
+  tool?: string
+  timestamp: Date
+}
+
+type AnalysisFilter = 'all' | 'model' | 'tool' | 'warning' | 'error'
+
+const ANALYSIS_FILTERS: Array<{ id: AnalysisFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'model', label: 'Model' },
+  { id: 'tool', label: 'Tool' },
+  { id: 'warning', label: 'Warning' },
+  { id: 'error', label: 'Error' },
+]
+
+function analysisEventMatchesFilter(event: AnalysisEvent, filter: AnalysisFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'model') return event.kind === 'phase' || event.kind === 'thinking'
+  if (filter === 'tool') return event.kind === 'tool' || !!event.tool || Boolean(event.event?.startsWith('tool_'))
+  if (filter === 'warning') return event.level === 'warning' || /peringatan|warning|heartbeat|timeout|idle/i.test(`${event.title} ${event.detail} ${event.event || ''}`)
+  if (filter === 'error') return event.level === 'error' || /error|gagal|failed/i.test(`${event.title} ${event.detail} ${event.event || ''}`)
+  return true
+}
+
+interface RunStatus {
+  state: 'starting' | 'thinking' | 'running' | 'waiting' | 'completed' | 'cancelled' | 'error'
+  startedAt: number
+  updatedAt: number
+  prompt: string
+  mode: string
+  lastEvent: string
+  lastMessage: string
+  runID?: string
+  currentPhase?: string
+  currentTool?: string
+  logPath?: string
+  provider?: string
+  model?: string
+  reasoningEffort?: string
+  customDisableStream?: boolean
+  providerIdleMs?: number
+  heartbeatLastEvent?: string
+  toolCount: number
+  heartbeatCount: number
 }
 
 function parsePlanQuest(content: string): { cleanContent: string; quest: PlanQuest | null } {
@@ -471,6 +537,154 @@ function parsePlanQuest(content: string): { cleanContent: string; quest: PlanQue
   const rawFull = end >= 0 ? content.slice(start, end + endToken.length) : content.slice(start)
   const cleanContent = content.replace(rawFull, '').replace(/\n{3,}/g, '\n\n').trim()
   return { cleanContent, quest: options.length > 0 || title ? { title, options, allowCustom } : null }
+}
+
+function isPlanApprovalQuest(quest: PlanQuest): boolean {
+  return /lanjut|eksekusi|approval|setuju/i.test(`${quest.title} ${quest.options.join(' ')}`)
+}
+
+function cleanPlanStep(line: string): string {
+  return line
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '')
+    .replace(/^\[[ xX-]\]\s+/, '')
+    .replace(/\*\*/g, '')
+    .replace(/`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function parsePlanInsight(content: string): PlanInsight | null {
+  const text = content.replace(/```[\s\S]*?```/g, '')
+  const lines = text.split(/\r?\n/)
+  const sectionStart = /^(?:#{1,4}\s*)?(?:roadmap|roadmap table|steps|langkah|rencana implementasi|implementation plan|implementation steps)\s*:?\s*$/i
+  const nextSection = /^(?:#{1,4}\s*)?(?:context|assumptions|open questions|recommended approach|files\/tools|files|tools|verification|risks|rollback|flow diagram)\s*:?\s*$/i
+  const steps: string[] = []
+  let collecting = false
+
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) {
+      if (collecting && steps.length > 0) break
+      continue
+    }
+    if (sectionStart.test(line)) {
+      collecting = true
+      continue
+    }
+    if (collecting && nextSection.test(line)) break
+    if (!collecting) continue
+    if (/^\|/.test(line)) {
+      const cells = line.split('|').map(x => x.trim()).filter(Boolean)
+      const candidate = cells.find((cell, idx) => idx > 0 && !/^no\.?$/i.test(cell) && !/^langkah$/i.test(cell) && !/^output$/i.test(cell) && !/^status$/i.test(cell))
+      if (candidate && !/^[-:]+$/.test(candidate)) steps.push(cleanPlanStep(candidate))
+      continue
+    }
+    if (/^\s*(?:[-*+]|\d+[.)])\s+/.test(raw)) steps.push(cleanPlanStep(raw))
+  }
+
+  if (steps.length < 2) {
+    for (const raw of lines) {
+      if (/^\s*\d+[.)]\s+/.test(raw)) steps.push(cleanPlanStep(raw))
+      if (steps.length >= 8) break
+    }
+  }
+
+  const unique = Array.from(new Set(steps.filter(step => step.length >= 8))).slice(0, 10)
+  if (unique.length < 2) return null
+  const planish = /(context|assumptions|recommended approach|verification|risks|rollback|roadmap|mermaid|lanjutkan|eksekusi)/i.test(content)
+  if (!planish) return null
+  return { title: 'Roadmap Plan', steps: unique }
+}
+
+function planFlowMermaid(steps: string[]): string {
+  const safe = (value: string) => value.replace(/[|[\]{}"]/g, '').slice(0, 48)
+  const body = steps.map((step, idx) => `  S${idx + 1}["${idx + 1}. ${safe(step)}"]`).join('\n')
+  const edges = steps.slice(1).map((_, idx) => `  S${idx + 1} --> S${idx + 2}`).join('\n')
+  return `flowchart TD\n${body}\n${edges}`
+}
+
+function planStepState(step: string, idx: number, activePhases: ActivePhase[], runStatus: RunStatus | null): 'done' | 'running' | 'planned' {
+  if (!runStatus || runStatus.state === 'completed' || runStatus.state === 'cancelled' || runStatus.state === 'error') return 'planned'
+  const haystack = activePhases.map(p => `${p.phase} ${p.description}`).join(' ').toLowerCase()
+  const keywords = cleanPlanStep(step).toLowerCase().split(/\s+/).filter(w => w.length > 5).slice(0, 4)
+  if (keywords.some(word => haystack.includes(word))) return 'running'
+  if (activePhases.length > idx && activePhases[idx]?.status === 'done') return 'done'
+  if (activePhases.length === idx + 1 && activePhases[idx]?.status === 'running') return 'running'
+  return 'planned'
+}
+
+function PlanInsightCard({
+  insight,
+  activePhases,
+  runStatus,
+  showApproval,
+  onApprove,
+  onReject,
+}: {
+  insight: PlanInsight
+  activePhases: ActivePhase[]
+  runStatus: RunStatus | null
+  showApproval: boolean
+  onApprove: () => void
+  onReject: () => void
+}) {
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-[#31421f]/60 bg-[#20291a]/78">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/60 px-3 py-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-lime-100">
+          <ClipboardList className="h-3.5 w-3.5 text-smara-300" />
+          {insight.title}
+        </div>
+        {showApproval && (
+          <div className="flex gap-1.5">
+            <button onClick={onApprove} className="inline-flex items-center gap-1 rounded-lg bg-smara-300 px-2.5 py-1.5 text-[11px] font-semibold text-black hover:bg-smara-200">
+              <Check className="h-3 w-3" /> Lanjutkan
+            </button>
+            <button onClick={onReject} className="inline-flex items-center gap-1 rounded-lg border border-[#5f7446]/35 bg-[#26331d]/72 px-2.5 py-1.5 text-[11px] font-medium text-gray-300 hover:bg-[#2f3f23]">
+              <X className="h-3 w-3" /> Tidak
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="grid gap-3 p-3 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="overflow-hidden rounded-lg border border-[#31421f]/45">
+          <table className="min-w-full text-left text-xs">
+            <thead className="bg-[#26331d]/80 text-neutral-400">
+              <tr>
+                <th className="w-12 px-2 py-2 font-medium">No</th>
+                <th className="px-2 py-2 font-medium">Langkah</th>
+                <th className="w-24 px-2 py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#31421f]/45">
+              {insight.steps.map((step, idx) => {
+                const state = planStepState(step, idx, activePhases, runStatus)
+                return (
+                  <tr key={`${idx}-${step}`} className="bg-[#1a2314]/54">
+                    <td className="px-2 py-2 font-mono text-neutral-500">{idx + 1}</td>
+                    <td className="px-2 py-2 text-gray-200">{step}</td>
+                    <td className="px-2 py-2">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
+                        state === 'done' ? 'bg-emerald-400/10 text-emerald-300'
+                        : state === 'running' ? 'bg-smara-500/10 text-smara-200'
+                        : 'bg-[#26331d]/80 text-neutral-400'
+                      }`}>
+                        {state === 'done' ? <CheckCircle2 className="h-3 w-3" /> : state === 'running' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Clock className="h-3 w-3" />}
+                        {state === 'done' ? 'done' : state === 'running' ? 'running' : 'planned'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="min-w-0">
+          <MermaidBlock code={planFlowMermaid(insight.steps)} />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 interface ChatSession {
@@ -550,8 +764,10 @@ const MAX_LOG_LINES = 50
 const MAX_RUNTIME_MESSAGES = 60
 const SESSION_LIST_HISTORY_LIMIT = 1
 const SESSION_VIEW_HISTORY_LIMIT = 60
-const MAX_RUNTIME_OUTPUT_CHARS = 20_000
+// const MAX_RUNTIME_OUTPUT_CHARS = 20_000 // reserved for future use
 const MAX_RUNTIME_LOG_LINES = 120
+const MAX_ANALYSIS_EVENTS = 18
+const MAX_ANALYSIS_DETAIL_CHARS = 1800
 
 const MAX_SESSION_BYTES = 800 * 1024
 
@@ -586,15 +802,64 @@ function capRuntimeMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.slice(-MAX_RUNTIME_MESSAGES)
 }
 
-function capRuntimeOutput(output?: string): string | undefined {
-  if (!output || output.length <= MAX_RUNTIME_OUTPUT_CHARS) return output
-  return output.slice(-MAX_RUNTIME_OUTPUT_CHARS)
-}
-
 function capRuntimeLogs(logs: string[]): string[] {
   if (logs.length <= MAX_RUNTIME_LOG_LINES) return logs
   const dropped = logs.length - MAX_RUNTIME_LOG_LINES
   return [`[... ${dropped} earlier live lines truncated ...]`, ...logs.slice(-MAX_RUNTIME_LOG_LINES)]
+}
+
+function capAnalysisDetail(detail: string): string {
+  if (detail.length <= MAX_ANALYSIS_DETAIL_CHARS) return detail
+  return detail.slice(-MAX_ANALYSIS_DETAIL_CHARS)
+}
+
+function analysisID(kind: AnalysisEvent['kind']): string {
+  return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function runStateLabel(state: RunStatus['state']): string {
+  switch (state) {
+    case 'starting': return 'Mulai'
+    case 'thinking': return 'Menganalisis'
+    case 'running': return 'Menjalankan'
+    case 'waiting': return 'Menunggu'
+    case 'completed': return 'Selesai'
+    case 'cancelled': return 'Dibatalkan'
+    case 'error': return 'Error'
+    default: return state
+  }
+}
+
+function runStateClass(state: RunStatus['state']): string {
+  switch (state) {
+    case 'completed': return 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
+    case 'cancelled': return 'border-amber-400/25 bg-amber-500/10 text-amber-300'
+    case 'error': return 'border-red-400/30 bg-red-500/10 text-red-300'
+    case 'running': return 'border-smara-400/30 bg-smara-500/10 text-smara-200'
+    case 'waiting': return 'border-yellow-400/25 bg-yellow-500/10 text-yellow-200'
+    default: return 'border-[#5f7446]/30 bg-[#31421f]/30 text-gray-300'
+  }
+}
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return '<1s'
+  const total = Math.floor(ms / 1000)
+  const min = Math.floor(total / 60)
+  const sec = total % 60
+  if (min <= 0) return `${sec}s`
+  return `${min}m ${sec.toString().padStart(2, '0')}s`
+}
+
+function stringFromDetail(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function numberFromDetail(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function boolFromDetail(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
 }
 
 function rawSetItem(key: string, value: string): boolean {
@@ -720,8 +985,12 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const [showSessions, setShowSessions] = useState(false)
   const [mode, setMode] = useState('ask')
   const [spinnerIdx, setSpinnerIdx] = useState(0)
+  const [elapsedTick, setElapsedTick] = useState(0) // bumped every ~1s for elapsed display
   const [statusStats, setStatusStats] = useState<{ prompts: number; inputTokens: number; outputTokens: number; tokens: number; duration: string; cost: number } | null>(null)
-  const [activePhases, setActivePhases] = useState<Array<{ phase: string; description: string; status: 'running' | 'done' }>>([])
+  const [activePhases, setActivePhases] = useState<ActivePhase[]>([])
+  const [analysisEvents, setAnalysisEvents] = useState<AnalysisEvent[]>([])
+  const [analysisFilter, setAnalysisFilter] = useState<AnalysisFilter>('all')
+  const [runStatus, setRunStatus] = useState<RunStatus | null>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
@@ -737,6 +1006,9 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const spinnerTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const sessionIdRef = useRef(sessionId)
+  const streamingAssistantRef = useRef(false)
+  const streamBufferRef = useRef('')
+  const closingWsRef = useRef(false)
   sessionIdRef.current = sessionId
 
   useImperativeHandle(ref, () => ({
@@ -785,6 +1057,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setSessionId(s.id)
     setItemSafe(CURRENT_SESSION_KEY, s.id)
     setActivePhases([])
+    setRunStatus(null)
     setActivePlanQuest(null)
     try {
       const fresh = webToChatSession(await getWebSession(s.id, SESSION_VIEW_HISTORY_LIMIT))
@@ -815,7 +1088,58 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, thinking, activePhases, activePlanQuest])
+  }, [messages, thinking, activePhases, analysisEvents, activePlanQuest])
+
+  const pushAnalysisEvent = useCallback((event: Omit<AnalysisEvent, 'id' | 'timestamp'>) => {
+    setAnalysisEvents(prev => {
+      const next = [
+        ...prev.map(item => item.status === 'running' && item.kind === event.kind ? { ...item, status: 'done' as const } : item),
+        { ...event, id: analysisID(event.kind), timestamp: new Date() },
+      ]
+      return next.slice(-MAX_ANALYSIS_EVENTS)
+    })
+  }, [])
+
+  const completeAnalysisEvent = useCallback((kind: AnalysisEvent['kind'], detail?: string) => {
+    setAnalysisEvents(prev => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].kind === kind && next[i].status === 'running') {
+          next[i] = {
+            ...next[i],
+            detail: detail ? capAnalysisDetail(detail) : next[i].detail,
+            status: 'done',
+            timestamp: new Date(),
+          }
+          return next.slice(-MAX_ANALYSIS_EVENTS)
+        }
+      }
+      return prev
+    })
+  }, [])
+
+  const appendThinkingAnalysis = useCallback((chunk: string) => {
+    setAnalysisEvents(prev => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].kind === 'thinking' && next[i].status === 'running') {
+          next[i] = { ...next[i], detail: capAnalysisDetail(`${next[i].detail}${chunk}`), timestamp: new Date() }
+          return next.slice(-MAX_ANALYSIS_EVENTS)
+        }
+      }
+      next.push({
+        id: analysisID('thinking'),
+        kind: 'thinking',
+        title: 'Analisis model',
+        detail: capAnalysisDetail(chunk),
+        status: 'running',
+        level: 'info',
+        event: 'thinking',
+        timestamp: new Date(),
+      })
+      return next.slice(-MAX_ANALYSIS_EVENTS)
+    })
+  }, [])
 
   const newSession = async () => {
     try {
@@ -880,23 +1204,42 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     }
   }
 
+  const openConfigTab = () => {
+    try {
+      localStorage.setItem('smara_active_tab', 'config')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'smara_active_tab', newValue: 'config' }))
+    } catch {
+      showToast('Buka tab Config dari sidebar untuk mengubah provider.')
+    }
+  }
+
   const connectWs = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) return
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current)
+      reconnectTimer.current = null
+    }
+    closingWsRef.current = false
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`)
     wsRef.current = ws
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return
       setConnected(true)
       ws.send(JSON.stringify({ type: 'session', payload: sessionIdRef.current, session_id: sessionIdRef.current }))
     }
     ws.onclose = () => {
+      if (wsRef.current !== ws) return
       setConnected(false)
       wsRef.current = null
-      reconnectTimer.current = setTimeout(connectWs, 3000)
+      if (!closingWsRef.current) reconnectTimer.current = setTimeout(connectWs, 3000)
     }
     ws.onerror = () => {
+      if (wsRef.current !== ws) return
       setConnected(false)
-      wsRef.current = null
     }
 
     ws.onmessage = (event) => {
@@ -908,9 +1251,37 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
         case 'thinking':
           setThinking(msg.payload === 'true')
           if (msg.payload === 'true') {
+            streamBufferRef.current = ''
+            setAnalysisFilter('all')
+            setRunStatus(prev => ({
+              state: 'starting',
+              startedAt: prev?.startedAt || Date.now(),
+              updatedAt: Date.now(),
+              prompt: prev?.prompt || '',
+              mode: prev?.mode || mode,
+              lastEvent: 'request',
+              lastMessage: 'Request diterima.',
+              logPath: prev?.logPath,
+              toolCount: prev?.toolCount || 0,
+              heartbeatCount: prev?.heartbeatCount || 0,
+            }))
+            setAnalysisEvents([{
+              id: analysisID('phase'),
+              kind: 'phase',
+              title: 'Request diterima',
+              detail: 'Menyiapkan konteks, mode, dan koneksi sesi.',
+              status: 'running',
+              level: 'info',
+              event: 'request',
+              timestamp: new Date(),
+            }])
             if (!spinnerTimer.current) {
+              let tickCounter = 0
               spinnerTimer.current = setInterval(() => {
                 setSpinnerIdx(i => (i + 1) % spinnerFrames.length)
+                tickCounter++
+                // Update elapsed display roughly every second (80ms * 12 ≈ 960ms)
+                if (tickCounter % 12 === 0) setElapsedTick(t => t + 1)
               }, 80)
             }
           } else {
@@ -922,12 +1293,20 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
+          setRunStatus(prev => prev ? {
+            ...prev,
+            state: 'completed',
+            updatedAt: Date.now(),
+            lastEvent: 'run_complete',
+            lastMessage: 'Response final diterima.',
+            currentTool: undefined,
+          } : prev)
           const parsed = parsePlanQuest(String(msg.payload || ''))
           setActivePlanQuest(parsed.quest)
-          const content = parsed.cleanContent || (parsed.quest ? '' : msg.payload)
+          const content = (parsed.cleanContent || (parsed.quest ? '' : msg.payload) || streamBufferRef.current).trim()
           if (content.trim()) {
             markAutoScrollIfNearBottom()
-            setMessages(prev => capRuntimeMessages([...prev, {
+            const finalMessage: ChatMessage = {
               role: 'assistant',
               content,
               timestamp: new Date(),
@@ -940,31 +1319,106 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
               duration: msg.stats?.duration,
               durationMs: msg.stats?.duration_ms,
               estimatedCostUSD: msg.stats?.estimated_cost_usd ?? msg.stats?.cost,
-            }]))
+            }
+            setMessages(prev => {
+              if (streamingAssistantRef.current) {
+                const idx = prev.map(m => m.role).lastIndexOf('assistant')
+                if (idx >= 0) {
+                  const next = [...prev]
+                  next[idx] = finalMessage
+                  return capRuntimeMessages(next)
+                }
+              }
+              const normalizedFinal = content.trim().replace(/\s+/g, ' ')
+              for (let i = prev.length - 1; i >= 0; i--) {
+                const candidate = prev[i]
+                if (candidate.role !== 'assistant') continue
+                const normalizedCandidate = candidate.content.trim().replace(/\s+/g, ' ')
+                if (
+                  normalizedCandidate === normalizedFinal ||
+                  normalizedFinal.startsWith(normalizedCandidate) ||
+                  normalizedCandidate.startsWith(normalizedFinal)
+                ) {
+                  const next = [...prev]
+                  next[i] = finalMessage
+                  return capRuntimeMessages(next)
+                }
+              }
+              return capRuntimeMessages([...prev, finalMessage])
+            })
           }
+          streamingAssistantRef.current = false
+          streamBufferRef.current = ''
           break
         }
         case 'error':
           setThinking(false)
           if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
           setActivePhases([])
+          setRunStatus(prev => prev ? {
+            ...prev,
+            state: 'error',
+            updatedAt: Date.now(),
+            lastEvent: 'error',
+            lastMessage: String(msg.payload || 'Proses gagal.'),
+            currentTool: undefined,
+          } : prev)
+          streamingAssistantRef.current = false
           markAutoScrollIfNearBottom()
           setMessages(prev => capRuntimeMessages([...prev, { role: 'error', content: msg.payload, timestamp: new Date() }]))
           break
-        case 'phase':
-          setActivePhases(prev => {
-            const next: Array<{ phase: string; description: string; status: 'running' | 'done' }> = prev.map(p => ({ ...p, status: 'done' }))
-            const idx = next.findIndex(p => p.phase === msg.phase)
+        case 'stream': {
+          const isThinking = Boolean(msg.args?.is_thinking)
+          const chunk = String(msg.payload || '')
+          if (!chunk) break
+          if (isThinking) {
+            markAutoScrollIfNearBottom()
+            appendThinkingAnalysis(chunk)
+            break
+          }
+          streamBufferRef.current += chunk
+          // Saat token jawaban mulai mengalir, pastikan panel proses menampilkan
+          // tahap Generating, bukan langsung lompat ke bubble jawaban.
+          pushAnalysisEvent({
+            kind: 'phase',
+            title: 'Generating',
+            detail: 'Composing final response...',
+            status: 'running',
+            level: 'info',
+            event: 'stream',
+          })
+          setActivePhases(prev => { const _now = Date.now()
+            const next: ActivePhase[] = prev.map(p => ({ ...p, status: 'done' }))
+            const idx = next.findIndex(p => p.phase === 'Generating')
             if (idx >= 0) {
-              next[idx] = { phase: msg.phase, description: msg.description || msg.phase, status: 'running' }
+              next[idx] = { phase: 'Generating', description: 'Composing final response...', status: 'running', startedAt: _now }
             } else {
-              next.push({ phase: msg.phase, description: msg.description || msg.phase, status: 'running' })
+              next.push({ phase: 'Generating', description: 'Composing final response...', status: 'running', startedAt: _now })
             }
             return next.slice(-12)
           })
           break
+        }
         case 'tool_call':
           markAutoScrollIfNearBottom()
+          setRunStatus(prev => prev ? {
+            ...prev,
+            state: 'running',
+            updatedAt: Date.now(),
+            lastEvent: 'tool_start',
+            lastMessage: `Menjalankan ${msg.tool || 'tool'}.`,
+            currentTool: msg.tool || 'tool',
+            toolCount: prev.toolCount + 1,
+          } : prev)
+          pushAnalysisEvent({
+            kind: 'tool',
+            title: `Tool: ${msg.tool || 'tool'}`,
+            detail: msg.server ? `Server ${msg.server}` : 'Menjalankan tool.',
+            status: 'running',
+            level: 'info',
+            event: 'tool_start',
+            tool: msg.tool || 'tool',
+          })
           setMessages(prev => capRuntimeMessages([...prev, {
             role: 'tool_call',
             content: msg.tool || 'tool',
@@ -979,27 +1433,145 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           break
         case 'tool_result':
           markAutoScrollIfNearBottom()
+          setRunStatus(prev => prev ? {
+            ...prev,
+            state: 'waiting',
+            updatedAt: Date.now(),
+            lastEvent: 'tool_done',
+            lastMessage: 'Tool selesai, menunggu langkah berikutnya.',
+            currentTool: undefined,
+          } : prev)
+          completeAnalysisEvent('tool', String(msg.output || msg.content || 'Tool selesai.'))
           setMessages(prev => {
             const next = [...prev]
             for (let i = next.length - 1; i >= 0; i--) {
               if (next[i].role === 'tool_call' && next[i].status === 'running') {
                 next[i] = {
                   ...next[i],
-                  output: capRuntimeOutput(msg.output),
                   status: 'done',
-                  // Auto-collapse cards with bulky output to reduce noise.
-                  collapsed: (next[i].logs?.length || 0) > 6,
+                  output: msg.output || msg.content,
+                  content: next[i].content || msg.tool || 'tool',
                 }
                 return capRuntimeMessages(next)
               }
             }
-            // No open card — surface as a standalone block (rare).
-            next.push({ role: 'tool_result', content: '', output: capRuntimeOutput(msg.output), timestamp: new Date() })
-            return capRuntimeMessages(next)
+            return capRuntimeMessages([...next, {
+              role: 'tool_result',
+              content: msg.output || msg.content || '',
+              output: msg.output || msg.content,
+              timestamp: new Date(),
+            }])
+          })
+          // Setelah tool selesai, agent biasanya masuk tahap menyusun jawaban akhir.
+          // Tampilkan phase ini langsung agar user melihat proses "Generating" meskipun
+          // event backend datang sangat cepat/berdekatan dengan final response.
+          pushAnalysisEvent({
+            kind: 'phase',
+            title: 'Generating',
+            detail: 'Reviewing tool results and composing final response...',
+            status: 'running',
+            level: 'info',
+            event: 'tool_done',
+          })
+          setActivePhases(prev => { const _now = Date.now()
+            const next: ActivePhase[] = prev.map(p => ({ ...p, status: 'done' as const }))
+            const idx = next.findIndex(p => p.phase === 'Generating')
+            if (idx >= 0) {
+              next[idx] = { phase: 'Generating', description: 'Reviewing tool results and composing final response...', status: 'running', startedAt: _now }
+            } else {
+              next.push({ phase: 'Generating', description: 'Reviewing tool results and composing final response...', status: 'running', startedAt: _now })
+            }
+            return next.slice(-12)
           })
           break
+        case 'process_log': {
+          if (msg.payload !== undefined) {
+            const role = String(msg.role || 'process').toLowerCase()
+            const eventName = String(msg.args?.event || 'process_log')
+            const level = String(msg.args?.level || role)
+            const tool = String(msg.args?.tool || '')
+            const logPath = String(msg.args?.log_path || '')
+            const phase = String(msg.args?.phase || '')
+            const details = (msg.args?.details && typeof msg.args.details === 'object') ? msg.args.details as Record<string, unknown> : {}
+            const runID = stringFromDetail(msg.args?.run_id)
+            const provider = stringFromDetail(details.provider)
+            const modelName = stringFromDetail(details.model)
+            const reasoningEffort = stringFromDetail(details.reasoning_effort)
+            const customDisableStream = boolFromDetail(details.custom_disable_stream)
+            const providerIdleMs = eventName === 'heartbeat' ? numberFromDetail(details.silence_ms) : undefined
+            const heartbeatLastEvent = eventName === 'heartbeat' ? stringFromDetail(details.last_event) : undefined
+            const logLevel: AnalysisEvent['level'] =
+              level === 'error' || role === 'error' ? 'error'
+              : level === 'warning' || role === 'warning' || eventName === 'heartbeat' || eventName === 'tool_timeout' ? 'warning'
+              : 'info'
+            setRunStatus(prev => {
+              const base: RunStatus = prev || {
+                state: 'starting',
+                startedAt: Date.now(),
+                updatedAt: Date.now(),
+                prompt: '',
+                mode,
+                lastEvent: eventName,
+                lastMessage: String(msg.payload),
+                runID,
+                toolCount: 0,
+                heartbeatCount: 0,
+              }
+              let state = base.state
+              if (level === 'error') state = 'error'
+              else if (eventName === 'run_complete') state = 'completed'
+              else if (eventName === 'run_cancelled') state = 'cancelled'
+              else if (eventName === 'tool_start') state = 'running'
+              else if (eventName === 'heartbeat') state = 'waiting'
+              else if (eventName === 'phase' && phase === 'Waiting') state = 'waiting'
+              else if (eventName === 'phase' || eventName === 'iteration') state = base.toolCount > 0 ? 'waiting' : 'thinking'
+              return {
+                ...base,
+                state,
+                updatedAt: Date.now(),
+                lastEvent: eventName === 'heartbeat' ? base.lastEvent : eventName,
+                lastMessage: String(msg.payload),
+                runID: runID || base.runID,
+                currentPhase: phase || base.currentPhase,
+                currentTool: tool || base.currentTool,
+                logPath: logPath || base.logPath,
+                provider: provider || base.provider,
+                model: modelName || base.model,
+                reasoningEffort: reasoningEffort || base.reasoningEffort,
+                customDisableStream: customDisableStream ?? base.customDisableStream,
+                providerIdleMs: providerIdleMs ?? base.providerIdleMs,
+                heartbeatLastEvent: heartbeatLastEvent || base.heartbeatLastEvent,
+                heartbeatCount: eventName === 'heartbeat' ? base.heartbeatCount + 1 : base.heartbeatCount,
+              }
+            })
+            pushAnalysisEvent({
+              kind: eventName.startsWith('tool_') ? 'tool' : 'log',
+              title: role === 'error' ? 'Error proses' : role === 'warning' ? 'Peringatan proses' : eventName.startsWith('tool_') ? 'Progress tool' : 'Log proses',
+              detail: String(msg.payload),
+              status: role === 'warning' ? 'running' : 'done',
+              level: logLevel,
+              event: eventName,
+              tool: tool || undefined,
+            })
+          }
+          break
+        }
         case 'log':
           markAutoScrollIfNearBottom()
+          if (msg.role !== 'Terminal' && msg.role !== 'terminal') {
+            if (msg.payload !== undefined) {
+              const role = String(msg.role || 'log').toLowerCase()
+              pushAnalysisEvent({
+                kind: 'log',
+                title: role === 'error' ? 'Error proses' : role === 'warning' ? 'Peringatan proses' : role === 'process' ? 'Log proses' : msg.role || 'Log',
+                detail: String(msg.payload),
+                status: role === 'warning' ? 'running' : 'done',
+                level: role === 'error' ? 'error' : role === 'warning' ? 'warning' : 'info',
+                event: 'log',
+              })
+            }
+            break
+          }
           setMessages(prev => {
             const next = [...prev]
             // Terminal logs from run_command stream into the most recent
@@ -1008,7 +1580,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             if ((msg.role === 'Terminal' || msg.role === 'terminal') && msg.payload !== undefined) {
               for (let i = next.length - 1; i >= 0; i--) {
                 if (next[i].role === 'tool_call' && next[i].status === 'running') {
-                  const logs = capRuntimeLogs([...(next[i].logs || []), msg.payload])
+                  const logs = capRuntimeLogs([...(next[i].logs || []), String(msg.payload)])
                   next[i] = { ...next[i], logs }
                   return capRuntimeMessages(next)
                 }
@@ -1019,8 +1591,22 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           })
           break
         case 'session_status':
-          setSessions(prev => prev.map(s => s.id === msg.session_id ? { ...s, status: msg.payload as WebSessionStatus, updatedAt: new Date().toISOString() } : s))
-          if (msg.session_id === sessionIdRef.current) setCurrentRaw(c => ({ ...c, status: msg.payload as WebSessionStatus }))
+          if (msg.session_id === sessionIdRef.current) {
+            setCurrentRaw(c => ({ ...c, status: msg.payload as WebSessionStatus }))
+            if (msg.payload === 'completed' || msg.payload === 'cancelled' || msg.payload === 'error') {
+              setThinking(false)
+              setActivePhases([])
+              setRunStatus(prev => prev ? {
+                ...prev,
+                state: msg.payload === 'completed' ? 'completed' : msg.payload === 'cancelled' ? 'cancelled' : 'error',
+                updatedAt: Date.now(),
+                lastEvent: String(msg.payload),
+                currentTool: undefined,
+              } : prev)
+              streamingAssistantRef.current = false
+              if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
+            }
+          }
           break
         case 'mode':
           setMode(msg.mode || 'ask')
@@ -1039,12 +1625,14 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           break
       }
     }
-  }, [])
+  }, [appendThinkingAnalysis, completeAnalysisEvent, markAutoScrollIfNearBottom, mode, pushAnalysisEvent])
 
   useEffect(() => {
     connectWs()
     return () => {
+      closingWsRef.current = true
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      reconnectTimer.current = null
       if (spinnerTimer.current) clearInterval(spinnerTimer.current)
       spinnerTimer.current = null
       wsRef.current?.close()
@@ -1074,6 +1662,21 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setInput('')
     setAttachments([])
     setActivePlanQuest(null)
+    setAnalysisEvents([])
+    setAnalysisFilter('all')
+    streamingAssistantRef.current = false
+    streamBufferRef.current = ''
+    setRunStatus({
+      state: 'starting',
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      prompt: messageText,
+      mode,
+      lastEvent: 'queued',
+      lastMessage: 'Menunggu koneksi proses.',
+      toolCount: 0,
+      heartbeatCount: 0,
+    })
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       connectWs()
@@ -1088,6 +1691,50 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     const text = `Saya pilih: ${answer}`
     setInput('')
     setActivePlanQuest(null)
+    setAnalysisEvents([])
+    setAnalysisFilter('all')
+    streamingAssistantRef.current = false
+    streamBufferRef.current = ''
+    setRunStatus({
+      state: 'starting',
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      prompt: text,
+      mode,
+      lastEvent: 'queued',
+      lastMessage: 'Menunggu koneksi proses.',
+      toolCount: 0,
+      heartbeatCount: 0,
+    })
+    shouldAutoScrollRef.current = true
+    setMessages(prev => capRuntimeMessages([...prev, { role: 'user', content: text, timestamp: new Date() }]))
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWs()
+      return
+    }
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode, session_id: sessionIdRef.current }))
+    setThinking(true)
+  }, [connectWs, mode])
+
+  const sendPlanApproval = useCallback((approved: boolean) => {
+    const text = approved ? 'Ya, lanjutkan eksekusi rencana.' : 'Tidak, jangan lanjutkan dulu. Revisi rencana sebelum eksekusi.'
+    setInput('')
+    setActivePlanQuest(null)
+    setAnalysisEvents([])
+    setAnalysisFilter('all')
+    streamingAssistantRef.current = false
+    streamBufferRef.current = ''
+    setRunStatus({
+      state: 'starting',
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      prompt: text,
+      mode,
+      lastEvent: 'queued',
+      lastMessage: 'Menunggu koneksi proses.',
+      toolCount: 0,
+      heartbeatCount: 0,
+    })
     shouldAutoScrollRef.current = true
     setMessages(prev => capRuntimeMessages([...prev, { role: 'user', content: text, timestamp: new Date() }]))
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -1109,6 +1756,26 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setToast(msg)
     window.setTimeout(() => setToast(null), 2500)
   }
+
+  const uploadImageDataUrl = useCallback(async (dataUrl: string, name = 'pasted-image.png') => {
+    setUploading(true)
+    try {
+      const res = await uploadClipboardImage(dataUrl)
+      setAttachments(prev => [...prev, {
+        path: res.path,
+        size: res.size,
+        kind: 'image',
+        name,
+        preview: dataUrl,
+        mime: res.mime || 'image/png',
+      }])
+      showToast(`📎 ${(res.size / 1024).toFixed(0)} KB → ${res.path.split('/').pop()}`)
+    } catch (err) {
+      showToast(`Upload gagal: ${err instanceof Error ? err.message : 'unknown'}`)
+    } finally {
+      setUploading(false)
+    }
+  }, [])
 
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true)
@@ -1160,15 +1827,31 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData?.items || [])
     const fileItems = items.filter(it => it.kind === 'file')
-    if (fileItems.length === 0) return // fall through to default text paste
-    e.preventDefault()
-    const files: File[] = []
-    for (const it of fileItems) {
-      const f = it.getAsFile()
-      if (f) files.push(f)
+    if (fileItems.length > 0) {
+      e.preventDefault()
+      const files: File[] = []
+      for (const it of fileItems) {
+        const f = it.getAsFile()
+        if (f) files.push(f)
+      }
+      if (files.length > 0) await uploadFiles(files)
+      return
     }
-    if (files.length > 0) await uploadFiles(files)
-  }, [uploadFiles])
+
+    const plain = e.clipboardData?.getData('text/plain')?.trim() || ''
+    if (plain.startsWith('data:image/') && plain.includes(';base64,')) {
+      e.preventDefault()
+      await uploadImageDataUrl(plain)
+      return
+    }
+
+    const html = e.clipboardData?.getData('text/html') || ''
+    const match = html.match(/<img[^>]+src=["'](data:image\/[^"']+;base64,[^"']+)["']/i)
+    if (match?.[1]) {
+      e.preventDefault()
+      await uploadImageDataUrl(match[1].replace(/&amp;/g, '&'))
+    }
+  }, [uploadFiles, uploadImageDataUrl])
 
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -1227,6 +1910,25 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       return next
     })
   }
+
+  const providerWaitActive = !!runStatus && runStatus.toolCount === 0 && runStatus.state === 'waiting'
+  const providerIdleMs = runStatus?.providerIdleMs || 0
+  const providerIdleText = providerIdleMs > 0 ? formatElapsed(providerIdleMs) : ''
+  const providerLabel = [runStatus?.provider, runStatus?.model].filter(Boolean).join(' / ')
+  const streamModeLabel = runStatus?.customDisableStream === true
+    ? 'stream off'
+    : runStatus?.customDisableStream === false
+    ? 'stream on'
+    : undefined
+  const visibleAnalysisEvents = analysisEvents.filter(event => analysisEventMatchesFilter(event, analysisFilter))
+  const latestToolEvent = [...analysisEvents].reverse().find(event => event.kind === 'tool' || event.tool)
+  const idleRisk = providerIdleMs >= 180000 || (runStatus?.heartbeatCount || 0) >= 2
+  const latestAssistantIndex = (() => {
+    for (let idx = messages.length - 1; idx >= 0; idx--) {
+      if (messages[idx].role === 'assistant') return idx
+    }
+    return -1
+  })()
 
   return (
     <div
@@ -1407,17 +2109,17 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
               }`}>
                 {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-smara-200" />}
               </div>
-              <div className={`max-w-[90%] md:max-w-[76%] rounded-[1.45rem] px-5 py-4 text-sm leading-relaxed relative shadow-xl backdrop-blur-md overflow-hidden transition-all duration-200 ${
+              <div className={`relative overflow-hidden text-sm shadow-xl backdrop-blur-md transition-all duration-200 ${
                 msg.role === 'user'
-                  ? 'bg-[#49751a]/96 text-white shadow-smara-950/18'
+                  ? 'max-w-[90%] rounded-[1.45rem] bg-[#49751a]/96 px-5 py-4 leading-relaxed text-white shadow-smara-950/18 md:max-w-[76%]'
                   : msg.role === 'error'
-                  ? 'bg-gradient-to-br from-red-950/70 to-neutral-950/60 border border-red-600/40 text-red-100 shadow-red-950/20'
-                  : 'bg-[#2b3522]/98 text-gray-50 shadow-black/12'
+                  ? 'max-w-[90%] rounded-[1.45rem] border border-red-600/40 bg-gradient-to-br from-red-950/70 to-neutral-950/60 px-5 py-4 leading-relaxed text-red-100 shadow-red-950/20 md:max-w-[76%]'
+                  : 'max-w-[min(78ch,calc(100%-3.25rem))] rounded-xl bg-[#2b3522]/98 px-4 py-3 leading-6 text-gray-50 shadow-black/12'
               }`}>
                 {msg.role !== 'user' && msg.role !== 'error' && (
-                  <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-smara-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-smara-300/85" />
-                    Smara Response
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-smara-200/90">
+                    <span className="h-1 w-1 rounded-full bg-smara-300/80" />
+                    Smara
                   </div>
                 )}
                 {msg.attachments && msg.attachments.length > 0 && (
@@ -1452,6 +2154,20 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                 ) : (
                   <>
                     <div className="text-gray-100"><SmaraMarkdown content={msg.content} /></div>
+                    {(() => {
+                      const insight = parsePlanInsight(msg.content)
+                      if (!insight) return null
+                      return (
+                        <PlanInsightCard
+                          insight={insight}
+                          activePhases={activePhases}
+                          runStatus={runStatus}
+                          showApproval={mode === 'plan' && i === latestAssistantIndex && !thinking && !activePlanQuest}
+                          onApprove={() => sendPlanApproval(true)}
+                          onReject={() => sendPlanApproval(false)}
+                        />
+                      )
+                    })()}
                     {msg.requestPrompt && (
                       <details className="mt-3 rounded-lg border border-[#31421f]/60 bg-[#20291a]/78 px-2 py-1 text-[10px] text-gray-400">
                         <summary className="cursor-pointer select-none text-smara-200">Request prompt</summary>
@@ -1461,7 +2177,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                   </>
                 )}
                 {(msg.role !== 'user' && msg.role !== 'error' && (msg.inputTokens !== undefined || msg.outputTokens !== undefined || msg.totalTokens !== undefined || msg.duration || msg.estimatedCostUSD !== undefined || msg.model || msg.provider)) ? (
-                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-neutral-800/60 pt-2 text-[10px] text-gray-400">
+                  <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-neutral-800/60 pt-1.5 text-[10px] text-gray-400">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       {(msg.provider || msg.model) && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">{msg.provider ? `${msg.provider}/` : ''}{msg.model || 'unknown'}</span>}
                       {msg.inputTokens !== undefined && <span className="rounded-full bg-[#20291a]/78 px-2 py-0.5">in {msg.inputTokens}</span>}
@@ -1473,7 +2189,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                     <div className="shrink-0 text-right">{new Date(msg.timestamp).toLocaleTimeString()}</div>
                   </div>
                 ) : (
-                  <div className="mt-3 flex justify-end border-t border-neutral-800/60 pt-2 text-[10px] text-gray-400">
+                  <div className="mt-2.5 flex justify-end border-t border-neutral-800/60 pt-1.5 text-[10px] text-gray-400">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </div>
                 )}
@@ -1490,20 +2206,169 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           )
         })}
 
-        {thinking && (
+        {runStatus && (thinking || runStatus.state !== 'completed') && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center shrink-0">
               <Bot className="w-4 h-4 text-smara-300" />
             </div>
-            <div className="flex-1 max-w-lg space-y-2">
+            <div className="flex-1 max-w-3xl space-y-2">
               {/* Active phase stepper */}
-              {activePhases.length > 0 && (
-                <div className="bg-[#20291a]/82 border border-[#223018]/75 rounded-lg p-3 space-y-1.5">
-                  <div className="flex items-center gap-2 text-[10px] text-neutral-400 uppercase tracking-wider font-medium mb-1">
+              <div className="bg-[#20291a]/82 border border-[#223018]/75 rounded-lg p-3 shadow-lg shadow-black/15">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-[10px] text-neutral-400 uppercase tracking-wider font-medium">
                     <BrainCircuit className="w-3 h-3" />
                     Proses Berjalan
                   </div>
-                  {activePhases.map((ph, idx) => (
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${runStateClass(runStatus.state)}`}>
+                      {runStateLabel(runStatus.state)}
+                    </span>
+                    <span className="text-[10px] text-smara-300 font-mono">{spinnerFrames[spinnerIdx]}</span>
+                  </div>
+                </div>
+
+                <div className="mb-3 grid gap-2 rounded-lg border border-[#31421f]/50 bg-[#1a2314]/62 p-2.5 text-xs text-gray-300 md:grid-cols-[1fr_auto]">
+                  <div className="min-w-0">
+                    <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                      <span className="rounded bg-[#26331d]/85 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-smara-300">{runStatus.mode}</span>
+                      <span className="rounded bg-[#26331d]/85 px-1.5 py-0.5 text-[10px] text-gray-300">
+                        {formatElapsed(Date.now() - runStatus.startedAt)}
+                      </span>
+                      <span className="rounded bg-[#26331d]/85 px-1.5 py-0.5 text-[10px] text-gray-300">
+                        tool {runStatus.toolCount}
+                      </span>
+                      {providerLabel && (
+                        <span className="max-w-[220px] truncate rounded bg-[#26331d]/85 px-1.5 py-0.5 text-[10px] text-gray-300" title={providerLabel}>
+                          {providerLabel}
+                        </span>
+                      )}
+                      {runStatus.reasoningEffort && (
+                        <span className="rounded bg-[#26331d]/85 px-1.5 py-0.5 text-[10px] text-gray-300">
+                          reasoning {runStatus.reasoningEffort}
+                        </span>
+                      )}
+                      {streamModeLabel && (
+                        <span className="rounded bg-[#26331d]/85 px-1.5 py-0.5 text-[10px] text-gray-300">
+                          {streamModeLabel}
+                        </span>
+                      )}
+                      {runStatus.heartbeatCount > 0 && (
+                        <span className="rounded border border-yellow-400/25 bg-yellow-500/10 px-1.5 py-0.5 text-[10px] text-yellow-200">
+                          idle {runStatus.heartbeatCount}
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate text-gray-100" title={runStatus.prompt || undefined}>
+                      {runStatus.currentTool
+                        ? `Menjalankan ${runStatus.currentTool}`
+                        : runStatus.toolCount === 0 && runStatus.state === 'waiting'
+                        ? 'Menunggu respons provider/model'
+                        : runStatus.toolCount === 0 && (runStatus.state === 'thinking' || runStatus.state === 'waiting')
+                        ? 'Belum ada tool call dari model'
+                        : runStatus.lastEvent === 'queued'
+                        ? 'Menunggu proses dimulai'
+                        : runStatus.lastEvent}
+                    </div>
+                    <div className="mt-1 max-h-10 overflow-hidden break-words text-[11px] leading-5 text-gray-400">
+                      {runStatus.lastMessage}
+                    </div>
+                    <div className="mt-2 grid gap-1.5 text-[10px] text-neutral-400 sm:grid-cols-3">
+                      <div className="rounded-md border border-[#31421f]/45 bg-[#20291a]/70 px-2 py-1">
+                        <span className="text-neutral-500">Provider idle</span>
+                        <div className={idleRisk ? 'font-mono text-yellow-200' : 'font-mono text-gray-300'}>
+                          {providerIdleText || '0s'}
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-[#31421f]/45 bg-[#20291a]/70 px-2 py-1">
+                        <span className="text-neutral-500">Current tool</span>
+                        <div className="truncate text-gray-300" title={runStatus.currentTool || latestToolEvent?.tool || undefined}>
+                          {runStatus.currentTool || latestToolEvent?.tool || '-'}
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-[#31421f]/45 bg-[#20291a]/70 px-2 py-1">
+                        <span className="text-neutral-500">Last event</span>
+                        <div className="truncate text-gray-300" title={runStatus.lastEvent}>
+                          {runStatus.lastEvent}
+                        </div>
+                      </div>
+                    </div>
+                    {runStatus.logPath && (
+                      <button
+                        onClick={() => copyMessage(-1, runStatus.logPath || '')}
+                        className="mt-1 max-w-full truncate font-mono text-[10px] text-smara-300 hover:text-smara-200"
+                        title="Salin path log"
+                      >
+                        {runStatus.logPath}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-start justify-end gap-2">
+                  {providerWaitActive && (
+                    <button
+                      onClick={openConfigTab}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-[#5f7446]/35 bg-[#26331d]/72 px-2.5 text-[11px] font-medium text-smara-200 transition-colors hover:bg-[#2f3f23]"
+                      title="Buka Config"
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                      Config
+                    </button>
+                  )}
+                  {thinking && (
+                    <button
+                      onClick={() => cancelSession(sessionId)}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-amber-400/25 bg-amber-500/10 px-2.5 text-[11px] font-medium text-amber-200 transition-colors hover:bg-amber-500/16"
+                    >
+                      <StopCircle className="h-3.5 w-3.5" />
+                      Stop
+                    </button>
+                  )}
+                  </div>
+                </div>
+
+                {providerWaitActive && (
+                  <div className="mb-3 rounded-lg border border-yellow-400/25 bg-yellow-500/10 p-3 text-xs text-yellow-50">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-yellow-300" />
+                      <span className="font-medium">
+                        Smara sedang menunggu token pertama dari provider/model.
+                      </span>
+                      {providerIdleText && (
+                        <span className="rounded bg-yellow-200/10 px-1.5 py-0.5 font-mono text-[10px] text-yellow-100">
+                          tanpa event {providerIdleText}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 grid gap-2 text-[11px] leading-5 text-yellow-100/82 md:grid-cols-3">
+                      <div>
+                        <span className="font-medium text-yellow-50">Status:</span> belum ada stream, tool call, atau final response.
+                      </div>
+                      <div>
+                        <span className="font-medium text-yellow-50">Kemungkinan:</span> model lama berpikir, router menahan SSE, atau tunnel idle.
+                      </div>
+                      <div>
+                        <span className="font-medium text-yellow-50">Aksi cepat:</span> stop, turunkan reasoning, atau aktifkan disable streaming.
+                      </div>
+                    </div>
+                    {runStatus.runID && (
+                      <button
+                        onClick={() => copyMessage(-1, runStatus.runID || '')}
+                        className="mt-2 max-w-full truncate font-mono text-[10px] text-yellow-100/75 hover:text-yellow-50"
+                        title="Salin run id"
+                      >
+                        run={runStatus.runID}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {activePhases.length > 0 ? (
+                  <div className="space-y-1.5">
+                  {activePhases.map((ph, idx) => {
+                    // Compute elapsed seconds for running phases
+                    const elapsedMs = (ph.status === 'running' && ph.startedAt) ? (Date.now() - ph.startedAt) : 0
+                    void elapsedTick // force re-render on tick
+                    const elapsedStr = elapsedMs >= 1000 ? `${Math.floor(elapsedMs / 1000)}s` : ''
+                    return (
                     <div key={ph.phase + idx} className="flex items-center gap-2 text-xs">
                       {ph.status === 'running' ? (
                         <span className="text-smara-400 font-mono w-4 text-center">{spinnerFrames[spinnerIdx]}</span>
@@ -1513,16 +2378,91 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                       <span className={ph.status === 'running' ? 'text-gray-200 font-medium' : 'text-neutral-400'}>
                         {ph.description || ph.phase}
                       </span>
+                      {ph.status === 'running' && elapsedStr && (
+                        <span className="text-[10px] text-smara-300/70 font-mono tabular-nums">{elapsedStr}</span>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
-              {activePhases.length === 0 && (
-                <div className="bg-[#20291a]/78 border border-[#223018]/75 rounded-lg px-4 py-3 flex items-center gap-2">
-                  <span className="text-smara-400 text-sm font-mono">{spinnerFrames[spinnerIdx]}</span>
-                  <span className="text-xs text-gray-400">Menghasilkan...</span>
-                </div>
-              )}
+                    )
+                  })}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <span className="text-smara-400 font-mono">{spinnerFrames[spinnerIdx]}</span>
+                    Menunggu event analisis pertama...
+                  </div>
+                )}
+
+                {analysisEvents.length > 0 && (
+                  <div className="mt-3 border-t border-[#31421f]/60 pt-2">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Live timeline</div>
+                        <div className="mt-0.5 text-[10px] text-neutral-500">
+                          {analysisEvents.length} event, {visibleAnalysisEvents.length} tampil
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1 rounded-lg border border-[#31421f]/50 bg-[#1a2314]/70 p-1">
+                        {ANALYSIS_FILTERS.map(filter => (
+                          <button
+                            key={filter.id}
+                            onClick={() => setAnalysisFilter(filter.id)}
+                            className={`rounded-md px-2 py-1 text-[10px] transition-colors ${
+                              analysisFilter === filter.id
+                                ? 'bg-smara-300/16 text-smara-100'
+                                : 'text-neutral-500 hover:bg-[#26331d]/80 hover:text-gray-300'
+                            }`}
+                          >
+                            {filter.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                      {visibleAnalysisEvents.length === 0 ? (
+                        <div className="rounded-lg border border-[#31421f]/45 bg-[#1a2314]/55 px-3 py-2 text-xs text-neutral-500">
+                          Tidak ada event untuk filter ini.
+                        </div>
+                      ) : visibleAnalysisEvents.map(event => {
+                        const levelClass = event.level === 'error'
+                          ? 'border-red-400/22 bg-red-500/8'
+                          : event.level === 'warning'
+                          ? 'border-yellow-400/22 bg-yellow-500/8'
+                          : 'border-[#31421f]/45 bg-[#1a2314]/70'
+                        const markerClass = event.level === 'error'
+                          ? 'text-red-300'
+                          : event.level === 'warning'
+                          ? 'text-yellow-300'
+                          : event.kind === 'tool'
+                          ? 'text-smara-300'
+                          : 'text-green-400'
+                        return (
+                          <div key={event.id} className={`grid grid-cols-[74px_1fr] gap-3 rounded-lg border px-2.5 py-2 text-xs ${levelClass}`}>
+                            <div className="flex items-start gap-1.5 text-[10px] text-neutral-500">
+                              {event.status === 'running' ? (
+                                <span className={`mt-0.5 font-mono ${markerClass}`}>{spinnerFrames[spinnerIdx]}</span>
+                              ) : event.level === 'warning' ? (
+                                <AlertCircle className={`mt-0.5 h-3 w-3 shrink-0 ${markerClass}`} />
+                              ) : (
+                                <CheckCircle2 className={`mt-0.5 h-3 w-3 shrink-0 ${markerClass}`} />
+                              )}
+                              <span>{event.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                                <span className={event.status === 'running' ? 'font-medium text-gray-100' : 'font-medium text-gray-400'}>{event.title}</span>
+                                <span className="rounded bg-[#26331d]/75 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-smara-300">{event.kind}</span>
+                                {event.event && <span className="rounded bg-[#26331d]/75 px-1.5 py-0.5 text-[9px] text-neutral-400">{event.event}</span>}
+                                {event.tool && <span className="max-w-[160px] truncate rounded bg-[#26331d]/75 px-1.5 py-0.5 text-[9px] text-neutral-300">{event.tool}</span>}
+                              </div>
+                              <pre className="max-h-28 whitespace-pre-wrap break-words overflow-y-auto font-sans text-[11px] leading-5 text-gray-300">{event.detail || '...'}</pre>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1575,7 +2515,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
         {activePlanQuest && (
           <div className="rounded-2xl border border-[#31421f]/60 bg-[#20291a]/78 p-3 shadow-lg shadow-lime-950/20">
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-lime-200">
-              <ClipboardList className="h-3.5 w-3.5" /> Open question
+              <ClipboardList className="h-3.5 w-3.5" /> {isPlanApprovalQuest(activePlanQuest) ? 'Plan approval' : 'Open question'}
             </div>
             <div className="mb-3 text-sm font-medium text-gray-100">{activePlanQuest.title}</div>
             <div className="flex flex-wrap gap-2">

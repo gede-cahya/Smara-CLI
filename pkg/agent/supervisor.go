@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gede-cahya/Smara-CLI/pkg/config"
 	"github.com/gede-cahya/Smara-CLI/pkg/llm"
 	"github.com/gede-cahya/Smara-CLI/pkg/mcp"
 	"github.com/gede-cahya/Smara-CLI/pkg/memory"
@@ -52,12 +53,13 @@ type PromptResult struct {
 
 // AgenticCallback defines callbacks for agentic loop events.
 type AgenticCallback struct {
-	OnToolCall   func(server, tool string, args map[string]interface{})
-	OnToolResult func(output string)
-	OnIteration  func(current, max int)
-	OnStream     func(chunk string, isThinking bool)
-	OnLog        func(role, content string)
-	OnConfirm    func(message string) bool
+	OnToolCall    func(server, tool string, args map[string]interface{})
+	OnToolResult  func(output string)
+	OnIteration   func(current, max int)
+	OnStream      func(chunk string, isThinking bool)
+	OnPhaseChange func(phase, description string)
+	OnLog         func(role, content string)
+	OnConfirm     func(message string) bool
 }
 
 // Supervisor orchestrates multi-agent task execution.
@@ -82,6 +84,7 @@ type Supervisor struct {
 	autoDiscovered  bool
 	workspaceID     int64 // active workspace ID
 	stats           Stats // usage statistics
+	lastToolTrace   []changeTraceStep
 }
 
 // toolRouteInfo stores routing info for a registered tool.
@@ -395,6 +398,10 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
+	if tc.Function == "generate_image" && s.mode != ModeImage {
+		return "Tool generate_image hanya tersedia di mode image. Ganti mode ke image untuk membuat gambar.", nil
+	}
+
 	// Check if confirmation is needed for critical tools
 	if s.isCriticalCall(s.mode, tc.Function, tc.Args) && s.callback.OnConfirm != nil {
 		if !s.callback.OnConfirm(fmt.Sprintf("Tool: %s\nArgs: %v", tc.Function, tc.Args)) {
@@ -581,6 +588,7 @@ func DetectWorkflowIntent(prompt string) bool {
 
 // ProcessPrompt handles a user prompt using the current agent mode.
 func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*PromptResult, error) {
+	s.lastToolTrace = nil
 	s.discoverProjectContext()
 	startTime := time.Now()
 
@@ -592,11 +600,39 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 	}
 
+	// Fast-path image-edit / image-to-image prompts before the normal attachment
+	// steering asks the model to analyze the image. In image mode, call edit_image
+	// directly to prevent analyze_image -> generate_image loops.
+	if hasImageAttachment(userPrompt) && isImageEditRequest(userPrompt) {
+		if s.mode == ModeImage {
+			imagePath := firstImageAttachmentPath(userPrompt)
+			result, err := ExecuteBuiltinTool("edit_image", map[string]interface{}{
+				"image_path": imagePath,
+				"prompt":     userPrompt,
+				"size":       "1024x1024",
+				"quality":    "high",
+			}, nil)
+			if err != nil {
+				result = fmt.Sprintf("Error: %s", err)
+			}
+			return &PromptResult{
+				Response:      result,
+				ToolsExecuted: []string{"edit_image"},
+				Duration:      time.Since(startTime),
+			}, nil
+		}
+		return &PromptResult{
+			Response:      imageEditUnsupportedResponse(),
+			ToolsExecuted: []string{},
+			Duration:      time.Since(startTime),
+		}, nil
+	}
+
 	// Direct fast-path for image/logo requests. Some chat models fail to emit a
 	// native tool call for very short prompts (e.g. "buatkan logo smara") and keep
 	// cycling until the iteration budget is exhausted. If the user's intent is
 	// clearly image generation, run the image tool directly and return its result.
-	if isDirectImageGenerationRequest(userPrompt) {
+	if s.mode == ModeImage && isDirectImageGenerationRequest(userPrompt) {
 		result, err := ExecuteBuiltinTool("generate_image", map[string]interface{}{
 			"prompt":  enhanceImagePrompt(userPrompt),
 			"size":    "1024x1024",
@@ -605,11 +641,13 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		if err != nil {
 			result = fmt.Sprintf("Error: %s", err)
 		}
-		return &PromptResult{
+		promptResult := &PromptResult{
 			Response:      result,
 			ToolsExecuted: []string{"generate_image"},
 			Duration:      time.Since(startTime),
-		}, nil
+		}
+		s.captureChangeJournalAsync(userPrompt, promptResult)
+		return promptResult, nil
 	}
 
 	modeInfo := GetModeInfo(s.mode)
@@ -692,7 +730,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	}
 
 	// Use agentic loop if tools are available, regardless of mode (with different behavior)
-	tools := s.ConvertMCPToolsToToolFunctions()
+	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
 
 	if len(tools) > 0 {
 		resp, thinking, thoughts, executed, err := s.RunAgenticLoop(ctx, userPrompt)
@@ -702,7 +740,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 
 		finalResp = resp
 		finalThinking = thinking
-		return &PromptResult{
+		promptResult := &PromptResult{
 			Response:      finalResp,
 			Thinking:      finalThinking,
 			Thoughts:      thoughts,
@@ -711,11 +749,23 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 			OutputTokens:  s.stats.OutputTokens,
 			TotalTokens:   s.stats.InputTokens + s.stats.OutputTokens,
 			Duration:      time.Since(startTime),
-		}, nil
+		}
+		s.captureChangeJournalAsync(userPrompt, promptResult)
+		return promptResult, nil
 	} else {
 		var resp *llm.ChatResponse
 		var err error
-		if streamer, ok := s.provider.(llm.Streamer); ok {
+		var useStream = false
+		if _, ok := s.provider.(llm.Streamer); ok {
+			if s.providerConfig.Name == "custom" && config.Get().CustomDisableStream {
+				useStream = false
+			} else {
+				useStream = true
+			}
+		}
+
+		if useStream {
+			streamer := s.provider.(llm.Streamer)
 			streamCb := func(chunk string, isThinking bool, _ llm.PhaseHint) {
 				if s.callback.OnStream != nil {
 					s.callback.OnStream(chunk, isThinking)
@@ -787,6 +837,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		embedding, _ := s.provider.GenerateEmbedding(content)
 		s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
 	}
+	s.captureChangeJournalAsync(userPrompt, result)
 
 	return result, nil
 }
@@ -877,7 +928,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	})
 
 	// 3. Get available tools
-	tools := s.ConvertMCPToolsToToolFunctions()
+	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
 
 	var allThinking []string
 	var toolsExecuted []string
@@ -899,7 +950,17 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		var toolCalls []llm.ToolCall
 		var err error
 
-		if streamer, ok := s.provider.(llm.Streamer); ok {
+		var useStream = false
+		if _, ok := s.provider.(llm.Streamer); ok {
+			if s.providerConfig.Name == "custom" && config.Get().CustomDisableStream {
+				useStream = false
+			} else {
+				useStream = true
+			}
+		}
+
+		if useStream {
+			streamer := s.provider.(llm.Streamer)
 			streamCb := func(chunk string, isThinking bool, _ llm.PhaseHint) {
 				if ctx.Err() != nil {
 					return
@@ -969,6 +1030,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		// Update toolsExecuted list
 		for _, tc := range toolCalls {
 			toolsExecuted = append(toolsExecuted, tc.Function)
+			s.lastToolTrace = append(s.lastToolTrace, changeTraceStep{Tool: tc.Function, Args: tc.Args})
 		}
 
 		// LLM requested tool calls — execute them
@@ -1023,6 +1085,10 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		if len(imageToolOutputs) > 0 {
 			return strings.Join(imageToolOutputs, "\n\n"), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+		}
+
+		if s.callback.OnPhaseChange != nil {
+			s.callback.OnPhaseChange("Generating", "Reviewing tool results and composing final response...")
 		}
 
 		// Loop continues — LLM will process tool results and either call more tools or give final answer

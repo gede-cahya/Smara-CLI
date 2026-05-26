@@ -307,7 +307,7 @@ export default function SkillTree() {
 
       {!loading && view === 'hierarchy' && (
         <div className="flex-1 overflow-hidden">
-          <SkillHierarchy skills={skills} />
+          <SkillHierarchy skills={skills} onSkillsChanged={reload} />
         </div>
       )}
 

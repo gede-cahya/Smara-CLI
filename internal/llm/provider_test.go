@@ -38,15 +38,17 @@ func TestAvailableProviders_ProviderInfo(t *testing.T) {
 
 func TestProviderConfig_Struct(t *testing.T) {
 	cfg := ProviderConfig{
-		Name:   "openai",
-		Model:  "gpt-4o",
-		Host:   "https://api.openai.com",
-		APIKey: "sk-test",
+		Name:            "openai",
+		Model:           "gpt-4o",
+		Host:            "https://api.openai.com",
+		APIKey:          "sk-test",
+		ReasoningEffort: "high",
 	}
 	assert.Equal(t, "openai", cfg.Name)
 	assert.Equal(t, "gpt-4o", cfg.Model)
 	assert.Equal(t, "https://api.openai.com", cfg.Host)
 	assert.Equal(t, "sk-test", cfg.APIKey)
+	assert.Equal(t, "high", cfg.ReasoningEffort)
 }
 
 func TestNewProvider_Ollama(t *testing.T) {
@@ -108,6 +110,30 @@ func TestNewProvider_Unknown(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tidak dikenali")
 	assert.Contains(t, err.Error(), "unknown")
+}
+
+func TestNewProvider_Custom_ReasoningEffort(t *testing.T) {
+	provider, err := NewProvider(ProviderConfig{
+		Name:            "custom",
+		Model:           "gpt-5.5",
+		Host:            "http://localhost:8317/v1",
+		APIKey:          "key",
+		ReasoningEffort: "HIGH",
+	})
+	require.NoError(t, err)
+
+	custom, ok := provider.(*CustomProvider)
+	require.True(t, ok)
+	assert.Equal(t, "high", custom.reasoningEffort)
+}
+
+func TestNormalizeReasoningEffort(t *testing.T) {
+	assert.Equal(t, "", normalizeReasoningEffort(""))
+	assert.Equal(t, "low", normalizeReasoningEffort(" low "))
+	assert.Equal(t, "medium", normalizeReasoningEffort("MEDIUM"))
+	assert.Equal(t, "high", normalizeReasoningEffort("high"))
+	assert.Equal(t, "xhigh", normalizeReasoningEffort("XHIGH"))
+	assert.Equal(t, "", normalizeReasoningEffort("max"))
 }
 
 func TestPhaseHint_Constants(t *testing.T) {

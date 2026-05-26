@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,25 +12,31 @@ import (
 
 // OpenAIProvider implements the Provider interface for OpenAI API.
 type OpenAIProvider struct {
-	apiKey string
-	model  string
-	host   string // default: https://api.openai.com/v1
-	client *http.Client
+	apiKey          string
+	model           string
+	host            string // default: https://api.openai.com/v1
+	reasoningEffort string
+	client          *http.Client
 }
 
 // NewOpenAIProvider creates a new OpenAI provider.
-func NewOpenAIProvider(apiKey, model, host string) *OpenAIProvider {
+func NewOpenAIProvider(apiKey, model, host string, reasoningEffort ...string) *OpenAIProvider {
 	if model == "" {
 		model = "gpt-4o"
 	}
 	if host == "" {
 		host = "https://api.openai.com/v1"
 	}
+	effort := ""
+	if len(reasoningEffort) > 0 {
+		effort = normalizeReasoningEffort(reasoningEffort[0])
+	}
 	return &OpenAIProvider{
-		apiKey: apiKey,
-		model:  model,
-		host:   host,
-		client: &http.Client{Timeout: 15 * time.Minute},
+		apiKey:          apiKey,
+		model:           model,
+		host:            host,
+		reasoningEffort: effort,
+		client:          &http.Client{Timeout: 15 * time.Minute},
 	}
 }
 
@@ -38,15 +45,28 @@ func (o *OpenAIProvider) Name() string {
 }
 
 func (o *OpenAIProvider) GenerateImage(prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
-	opts.Prompt = prompt
-	return generateOpenAIImage(o.client, o.host, o.apiKey, o.model, opts)
+	return o.GenerateImageWithContext(context.Background(), prompt, opts)
 }
 
+func (o *OpenAIProvider) GenerateImageWithContext(ctx context.Context, prompt string, opts ImageGenerationOptions) (*ImageGenerationResult, error) {
+	opts.Prompt = prompt
+	return generateOpenAIImageWithContext(ctx, o.client, o.host, o.apiKey, o.model, opts)
+}
+
+func (o *OpenAIProvider) EditImage(imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error) {
+	return o.EditImageWithContext(context.Background(), imagePath, prompt, opts)
+}
+
+func (o *OpenAIProvider) EditImageWithContext(ctx context.Context, imagePath, prompt string, opts ImageEditOptions) (*ImageGenerationResult, error) {
+	opts.Prompt = prompt
+	return editOpenAIImageWithContext(ctx, o.client, o.host, o.apiKey, o.model, imagePath, opts)
+}
 func (o *OpenAIProvider) Chat(messages []Message) (*ChatResponse, error) {
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Stream:   false,
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Stream:          false,
+		ReasoningEffort: o.reasoningEffort,
 	}
 
 	resp, err := o.doChat(req)
@@ -71,10 +91,11 @@ func (o *OpenAIProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 	}
 
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Tools:    openAITools,
-		Stream:   false,
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Tools:           openAITools,
+		Stream:          false,
+		ReasoningEffort: o.reasoningEffort,
 	}
 
 	body, err := o.doChat(req)
@@ -114,16 +135,25 @@ func (o *OpenAIProvider) ChatWithTools(messages []Message, tools []ToolFunction)
 
 // ChatStream implements the Streamer interface.
 func (o *OpenAIProvider) ChatStream(messages []Message, callback StreamCallback) (*ChatResponse, error) {
+	return o.ChatStreamWithContext(context.Background(), messages, callback)
+}
+
+func (o *OpenAIProvider) ChatStreamWithContext(ctx context.Context, messages []Message, callback StreamCallback) (*ChatResponse, error) {
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		ReasoningEffort: o.reasoningEffort,
 	}
-	resp, _, err := streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+	resp, _, err := streamOpenAIWithContext(ctx, o.client, o.host, o.apiKey, req, callback)
 	return resp, err
 }
 
 // ChatStreamWithTools implements the Streamer interface.
 func (o *OpenAIProvider) ChatStreamWithTools(messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
+	return o.ChatStreamWithToolsWithContext(context.Background(), messages, tools, callback)
+}
+
+func (o *OpenAIProvider) ChatStreamWithToolsWithContext(ctx context.Context, messages []Message, tools []ToolFunction, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
 	openAITools := make([]openAITool, len(tools))
 	for i, t := range tools {
 		openAITools[i] = openAITool{
@@ -137,11 +167,12 @@ func (o *OpenAIProvider) ChatStreamWithTools(messages []Message, tools []ToolFun
 	}
 
 	req := openAIChatRequest{
-		Model:    o.model,
-		Messages: convertMessagesToOpenAI(messages),
-		Tools:    openAITools,
+		Model:           o.model,
+		Messages:        convertMessagesToOpenAI(messages),
+		Tools:           openAITools,
+		ReasoningEffort: o.reasoningEffort,
 	}
-	return streamOpenAI(o.client, o.host, o.apiKey, req, callback)
+	return streamOpenAIWithContext(ctx, o.client, o.host, o.apiKey, req, callback)
 }
 
 func (o *OpenAIProvider) GenerateEmbedding(text string) ([]float32, error) {

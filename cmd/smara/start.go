@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	stdsync "sync"
 	"syscall"
 	"time"
 
@@ -48,7 +47,7 @@ Alur: Config → SQLite Init → Sync Daemon → Supervisor Agent → REPL`,
 func init() {
 	startCmd.Flags().StringVarP(&model, "model", "m", "", "model LLM yang digunakan (default: dari config)")
 	startCmd.Flags().BoolVar(&offline, "offline", false, "jalankan tanpa sync daemon")
-	startCmd.Flags().StringVar(&startMode, "mode", "ask", "mode agen: ask, rush, plan, test, workflow")
+	startCmd.Flags().StringVar(&startMode, "mode", "ask", "mode agen: ask, rush, plan, test, image, workflow")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -79,10 +78,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// Build provider config with appropriate API key
 	providerCfg := llm.ProviderConfig{
-		Name:   cfg.Provider,
-		Model:  cfg.Model,
-		Host:   cfg.OllamaHost,
-		APIKey: "",
+		Name:            cfg.Provider,
+		Model:           cfg.Model,
+		Host:            cfg.OllamaHost,
+		APIKey:          "",
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
 	// Set API key based on provider
@@ -288,14 +288,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	mcpConfigs = deduped
 
-	// Connect to all MCP servers in parallel
-	type mcpConnResult struct {
-		Name   string
-		Client *mcp.Client
-		Tools  []mcp.Tool
-		Err    error
-	}
-
 	var enabledConfigs []mcp.MCPServerConfig
 	for _, cfg := range mcpConfigs {
 		if cfg.Enabled {
@@ -303,58 +295,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(enabledConfigs) > 0 {
-		ui.PrintInfo("Menghubungkan %d MCP server secara paralel...", len(enabledConfigs))
-
-		results := make(chan mcpConnResult, len(enabledConfigs))
-		var wg stdsync.WaitGroup
-
-		for _, mcpCfg := range enabledConfigs {
-			wg.Add(1)
-			go func(cfg mcp.MCPServerConfig) {
-				defer wg.Done()
-				var client *mcp.Client
-				var err error
-
-				switch cfg.Type {
-				case "remote":
-					client, err = mcp.NewRemoteClient(cfg)
-				default:
-					client, err = mcp.NewClient(cfg)
-				}
-
-				if err != nil {
-					results <- mcpConnResult{Name: cfg.Name, Err: err}
-					return
-				}
-
-				// List available tools
-				tools, _ := client.ListTools()
-				results <- mcpConnResult{Name: cfg.Name, Client: client, Tools: tools}
-			}(mcpCfg)
-		}
-
-		// Close channel when all goroutines finish
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
-		// Collect results and register to supervisor
-		for res := range results {
-			if res.Err != nil {
-				ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", res.Name, res.Err)
-				continue
-			}
-			supervisor.RegisterMCPClient(res.Name, res.Client)
-			if len(res.Tools) > 0 {
-				supervisor.UpdateMCPInfo(res.Name, res.Tools)
-				ui.PrintSuccess("MCP '%s' terhubung (%d tools)", res.Name, len(res.Tools))
-			} else {
-				ui.PrintSuccess("MCP '%s' terhubung", res.Name)
-			}
-		}
-	}
+	connectMCPServersForStartup(supervisor, enabledConfigs)
 
 	// Show startup time
 	elapsed := time.Since(startTime)
