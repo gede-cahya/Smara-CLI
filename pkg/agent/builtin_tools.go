@@ -269,6 +269,51 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "skill_run",
+			Description: "Menjalankan skill otomasi tersimpan yang telah dibuat user. Skill adalah resep multi-step tool calls.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Nama skill yang tersimpan (misal: deploy-react)",
+					},
+				},
+				"required": []string{"skill_name"},
+			},
+		},
+		{
+			Name:        "skill_create",
+			Description: "Membuat atau meng-upgrade skill otomasi (resep tool calls) ke ~/.smara/skills/.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string"},
+					"description": map[string]interface{}{"type": "string"},
+					"steps": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"tool": map[string]interface{}{"type": "string"},
+								"args": map[string]interface{}{"type": "object"},
+							},
+							"required": []string{"tool", "args"},
+						},
+					},
+					"tags":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"params":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "object"}},
+					"overwrite": map[string]interface{}{"type": "boolean"},
+				},
+				"required": []string{"name", "description", "steps"},
+			},
+		},
+		{
+			Name:        "skill_list",
+			Description: "Daftar semua skill yang tersimpan di ~/.smara/skills/.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
 			Name:        "web_search",
 			Description: "Mencari informasi di internet secara anonim (menggunakan DuckDuckGo). Gunakan ini jika anda membutuhkan data terbaru atau informasi di luar workspace.",
 			Parameters: map[string]interface{}{

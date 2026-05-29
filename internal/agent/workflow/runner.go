@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,10 @@ func NewRunner(bp Blueprint, workers map[string]*agent.Worker, state *SharedStat
 // Run executes the blueprint in dependency-resolved waves.
 func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[string][]agent.TaskResult, error) {
 	// Build dependency graph
-	waves := r.buildWaves()
+	waves, err := r.BuildWaves()
+	if err != nil {
+		return nil, err
+	}
 	completed := make(map[string][]agent.TaskResult)
 
 	totalWaves := len(waves)
@@ -81,18 +85,37 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 	return completed, nil
 }
 
-// buildWaves groups agents into parallel waves based on DependsOn.
-func (r *Runner) buildWaves() [][]string {
-	// Map role → remaining dependencies
+// BuildWaves groups agents into deterministic parallel waves based on DependsOn.
+func (r *Runner) BuildWaves() ([][]string, error) {
 	deps := make(map[string]map[string]bool)
 	roleSet := make(map[string]bool)
 	for _, spec := range r.Blueprint.Agents {
+		if strings.TrimSpace(spec.Role) == "" {
+			return nil, fmt.Errorf("agent role cannot be empty")
+		}
+		if roleSet[spec.Role] {
+			return nil, fmt.Errorf("duplicate agent role %q", spec.Role)
+		}
 		roleSet[spec.Role] = true
 		depMap := make(map[string]bool)
 		for _, d := range spec.DependsOn {
+			if strings.TrimSpace(d) == "" {
+				continue
+			}
 			depMap[d] = true
 		}
 		deps[spec.Role] = depMap
+	}
+
+	for role, depMap := range deps {
+		for dep := range depMap {
+			if !roleSet[dep] {
+				return nil, fmt.Errorf("agent %q depends on unknown role %q", role, dep)
+			}
+			if dep == role {
+				return nil, fmt.Errorf("agent %q cannot depend on itself", role)
+			}
+		}
 	}
 
 	var waves [][]string
@@ -100,11 +123,11 @@ func (r *Runner) buildWaves() [][]string {
 
 	for len(completed) < len(roleSet) {
 		var wave []string
-		for role := range roleSet {
+		roles := sortedKeys(roleSet)
+		for _, role := range roles {
 			if completed[role] {
 				continue
 			}
-			// Check if all dependencies are completed
 			ready := true
 			for dep := range deps[role] {
 				if !completed[dep] {
@@ -118,12 +141,14 @@ func (r *Runner) buildWaves() [][]string {
 		}
 
 		if len(wave) == 0 {
-			// Circular dependency or missing dependency — force remaining
+			remaining := make([]string, 0, len(roleSet)-len(completed))
 			for role := range roleSet {
 				if !completed[role] {
-					wave = append(wave, role)
+					remaining = append(remaining, role)
 				}
 			}
+			sort.Strings(remaining)
+			return nil, fmt.Errorf("circular dependency detected among roles: %s", strings.Join(remaining, ", "))
 		}
 
 		for _, role := range wave {
@@ -132,7 +157,25 @@ func (r *Runner) buildWaves() [][]string {
 		waves = append(waves, wave)
 	}
 
+	return waves, nil
+}
+
+// buildWaves preserves the historical test/helper API. It returns nil when the blueprint is invalid.
+func (r *Runner) buildWaves() [][]string {
+	waves, err := r.BuildWaves()
+	if err != nil {
+		return nil
+	}
 	return waves
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // runWave executes all roles in a wave concurrently.

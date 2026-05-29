@@ -127,6 +127,14 @@ type openAIImageResponse struct {
 	Created int64                  `json:"created"`
 	Data    []openAIImageDataItem  `json:"data"`
 	Output  []openAIResponseOutput `json:"output,omitempty"`
+	Error   *openAIAPIError        `json:"error,omitempty"`
+}
+
+type openAIAPIError struct {
+	Message string `json:"message,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Param   string `json:"param,omitempty"`
 }
 
 type openAIImageDataItem struct {
@@ -390,7 +398,7 @@ func generateOpenAIImageWithContext(ctx context.Context, client *http.Client, ho
 		return nil, fmt.Errorf("gagal membaca image response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("image provider error (status %d): %s", resp.StatusCode, string(body))
+		return nil, decodeOpenAIImageError(resp.StatusCode, body)
 	}
 
 	return decodeOpenAIImageResponse(client, body, model)
@@ -513,7 +521,7 @@ func editOpenAIImageWithContext(ctx context.Context, client *http.Client, host, 
 		return nil, fmt.Errorf("gagal membaca image edit response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("image edit provider error (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, decodeOpenAIImageError(resp.StatusCode, respBody)
 	}
 	return decodeOpenAIImageResponse(client, respBody, model)
 }
@@ -571,6 +579,10 @@ func decodeOpenAIImageResponse(client *http.Client, body []byte, model string) (
 	var imageResp openAIImageResponse
 	if err := json.Unmarshal(body, &imageResp); err != nil {
 		return nil, fmt.Errorf("gagal decode image response: %w", err)
+	}
+
+	if imageResp.Error != nil {
+		return nil, formatOpenAIImageAPIError(0, imageResp.Error)
 	}
 
 	var b64, url, revised string
@@ -642,6 +654,46 @@ func decodeOpenAIImageResponse(client *http.Client, body []byte, model string) (
 		MIME:          mime,
 		Extension:     imageExtension(mime),
 	}, nil
+}
+
+func decodeOpenAIImageError(status int, body []byte) error {
+	var imageResp openAIImageResponse
+	if err := json.Unmarshal(body, &imageResp); err == nil && imageResp.Error != nil {
+		return formatOpenAIImageAPIError(status, imageResp.Error)
+	}
+	preview := strings.TrimSpace(string(body))
+	if len(preview) > 600 {
+		preview = preview[:600] + "..."
+	}
+	if status > 0 {
+		return fmt.Errorf("image provider error (status %d): %s", status, preview)
+	}
+	return fmt.Errorf("image provider error: %s", preview)
+}
+
+func formatOpenAIImageAPIError(status int, apiErr *openAIAPIError) error {
+	if apiErr == nil {
+		return fmt.Errorf("image provider error")
+	}
+	message := strings.TrimSpace(apiErr.Message)
+	if message == "" {
+		message = "unknown provider error"
+	}
+	parts := []string{fmt.Sprintf("image provider error: %s", message)}
+	meta := make([]string, 0, 3)
+	if status > 0 {
+		meta = append(meta, fmt.Sprintf("status=%d", status))
+	}
+	if strings.TrimSpace(apiErr.Type) != "" {
+		meta = append(meta, "type="+strings.TrimSpace(apiErr.Type))
+	}
+	if strings.TrimSpace(apiErr.Code) != "" {
+		meta = append(meta, "code="+strings.TrimSpace(apiErr.Code))
+	}
+	if len(meta) > 0 {
+		parts = append(parts, "("+strings.Join(meta, ", ")+")")
+	}
+	return fmt.Errorf("%s", strings.Join(parts, " "))
 }
 
 func firstNonEmpty(values ...string) string {

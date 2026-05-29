@@ -11,7 +11,7 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.NotNil(t, cfg)
 	assert.Equal(t, "custom", cfg.Provider)
-	assert.Equal(t, "deepseek-v4-pro", cfg.Model)
+	assert.Equal(t, "cx/gpt-5.5", cfg.Model)
 	assert.Equal(t, "http://localhost:11434", cfg.OllamaHost)
 	assert.Equal(t, "", cfg.OpenAIAPIKey)
 	assert.Equal(t, "gpt-4o", cfg.OpenAIModel)
@@ -19,8 +19,9 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-sonnet-4", cfg.OpenRouterModel)
 	assert.Equal(t, "", cfg.AnthropicAPIKey)
 	assert.Equal(t, "claude-sonnet-4-20250514", cfg.AnthropicModel)
-	assert.Equal(t, "your-api-key-1", cfg.CustomAPIKey)
-	assert.Equal(t, "http://localhost:8317/v1", cfg.CustomBaseURL)
+	assert.Equal(t, "sk-63a768fa898cb6e0-9r8iio-0a23c1a1", cfg.CustomAPIKey)
+	assert.Equal(t, "http://localhost:20128/v1", cfg.CustomBaseURL)
+	assert.Equal(t, "cx/gpt-5.5", cfg.CustomModel)
 	assert.Equal(t, 15, cfg.SyncInterval)
 	assert.Empty(t, cfg.MCPServers)
 	assert.False(t, cfg.Verbose)
@@ -43,6 +44,27 @@ func TestDefaultConfig_Platforms(t *testing.T) {
 	assert.Equal(t, 3, cfg.Platforms.WhatsApp.RateBurst)
 	assert.Equal(t, 4000, cfg.Platforms.MaxResponseLen)
 	assert.True(t, cfg.Platforms.TypingIndicator)
+}
+
+func TestDefaultConfig_ParallelOrchestration(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.True(t, cfg.ParallelOrchestration.Enabled)
+	assert.Equal(t, 4, cfg.ParallelOrchestration.MaxConcurrency)
+	assert.True(t, cfg.ParallelOrchestration.RequireApprovalHigh)
+	assert.True(t, cfg.ParallelOrchestration.RequireApprovalRemote)
+	assert.False(t, cfg.ParallelOrchestration.DryRun)
+	assert.True(t, cfg.ParallelOrchestration.SerialFallback)
+	assert.Equal(t, "complex", cfg.ParallelOrchestration.AutoThreshold)
+}
+
+func TestSetParallelOrchestration_NormalizesConfig(t *testing.T) {
+	cfg = DefaultConfig()
+	SetParallelOrchestration(ParallelOrchestrationConfig{Enabled: true, MaxConcurrency: 0, AutoThreshold: "AGGRESSIVE"})
+	assert.Equal(t, 1, cfg.ParallelOrchestration.MaxConcurrency)
+	assert.Equal(t, "aggressive", cfg.ParallelOrchestration.AutoThreshold)
+
+	SetParallelOrchestration(ParallelOrchestrationConfig{Enabled: true, MaxConcurrency: 2, AutoThreshold: "unknown"})
+	assert.Equal(t, "complex", cfg.ParallelOrchestration.AutoThreshold)
 }
 
 func TestSmaraConfig_Struct(t *testing.T) {

@@ -100,6 +100,7 @@ func BuildRoleTasks(spec AgentSpec, state *SharedState) []agent.Task {
 			ID:          fmt.Sprintf("%s-%s", spec.Role, t.ID),
 			Description: contextPrefix + t.Description,
 			AssignedTo:  spec.Role,
+			Type:        t.Type,
 			MCPServer:   t.MCPServer,
 			ToolName:    t.ToolName,
 			ToolArgs:    t.ToolArgs,

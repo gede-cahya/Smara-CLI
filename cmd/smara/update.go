@@ -136,30 +136,48 @@ func findMatchingAsset(release *Release) (*Asset, error) {
 	osName := runtime.GOOS
 	archName := runtime.GOARCH
 
-	ext := ".tar.gz"
-	if osName == "windows" {
-		ext = ".zip"
+	versionPart := strings.TrimPrefix(release.TagName, "v")
+	expectedBase := fmt.Sprintf("smara-%s-%s-%s", versionPart, osName, archName)
+	expectedBaseWithV := fmt.Sprintf("smara-v%s-%s-%s", versionPart, osName, archName)
+
+	// Current releases may publish raw executable assets without .tar.gz/.zip,
+	// while older updater versions expected archives. Accept both formats.
+	validName := func(name string) bool {
+		if name == expectedBase || name == expectedBaseWithV {
+			return true
+		}
+		if osName == "windows" && (name == expectedBase+".exe" || name == expectedBaseWithV+".exe") {
+			return true
+		}
+		for _, ext := range []string{".tar.gz", ".zip"} {
+			if name == expectedBase+ext || name == expectedBaseWithV+ext {
+				return true
+			}
+		}
+		return false
 	}
 
-	// Try exact match: smara-VERSION-OS-ARCH.ext
-	expectedPrefix := fmt.Sprintf("smara-%s-%s-%s", strings.TrimPrefix(release.TagName, "v"), osName, archName)
 	for _, a := range release.Assets {
-		if strings.HasPrefix(a.Name, expectedPrefix) && strings.HasSuffix(a.Name, ext) {
+		if validName(a.Name) {
 			return &a, nil
 		}
 	}
 
-	// Fallback: any asset containing OS-ARCH
+	// Fallback: any installable asset containing OS-ARCH, excluding checksum files.
 	osArch := fmt.Sprintf("%s-%s", osName, archName)
 	for _, a := range release.Assets {
-		if strings.Contains(a.Name, osArch) && strings.HasSuffix(a.Name, ext) {
+		name := a.Name
+		if strings.Contains(name, osArch) && !strings.Contains(strings.ToLower(name), "sha256") && !strings.HasSuffix(name, ".txt") {
 			return &a, nil
 		}
 	}
 
-	return nil, fmt.Errorf("tidak dapat menemukan binary yang sesuai untuk sistem Anda (%s/%s)", osName, archName)
+	var names []string
+	for _, a := range release.Assets {
+		names = append(names, a.Name)
+	}
+	return nil, fmt.Errorf("tidak dapat menemukan binary yang sesuai untuk sistem Anda (%s/%s). Asset tersedia: %s", osName, archName, strings.Join(names, ", "))
 }
-
 func downloadAsset(url string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -288,7 +306,10 @@ func extractAndApply(archivePath, filename string) error {
 			return err
 		}
 	} else {
-		return fmt.Errorf("format arsip tidak didukung: %s", filename)
+		// Raw binary release asset (current release format).
+		if err := copyFile(archivePath, tmpExtractPath); err != nil {
+			return fmt.Errorf("gagal menyalin binary release: %w", err)
+		}
 	}
 
 	// Make the extracted binary executable
@@ -304,6 +325,23 @@ func extractAndApply(archivePath, filename string) error {
 	}
 
 	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // extractFirstFileFromTarGz extracts the first regular file from a .tar.gz archive.

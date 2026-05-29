@@ -61,7 +61,6 @@ func TestRunner_buildWaves_MixedDeps(t *testing.T) {
 }
 
 func TestRunner_buildWaves_Circular(t *testing.T) {
-	// Edge case: circular dependency should force remaining into one wave
 	bp := Blueprint{
 		Agents: []AgentSpec{
 			{Role: "a", DependsOn: []string{"b"}},
@@ -70,11 +69,28 @@ func TestRunner_buildWaves_Circular(t *testing.T) {
 	}
 
 	r := NewRunner(bp, nil, nil)
-	waves := r.buildWaves()
-	assert.Len(t, waves, 1)
-	assert.Len(t, waves[0], 2)
-	assert.Contains(t, waves[0], "a")
-	assert.Contains(t, waves[0], "b")
+	waves, err := r.BuildWaves()
+	require.Error(t, err)
+	assert.Nil(t, waves)
+	assert.Contains(t, err.Error(), "circular dependency")
+}
+
+func TestRunner_BuildWaves_UnknownDependency(t *testing.T) {
+	bp := Blueprint{Agents: []AgentSpec{{Role: "frontend", DependsOn: []string{"backend"}}}}
+	r := NewRunner(bp, nil, nil)
+	waves, err := r.BuildWaves()
+	require.Error(t, err)
+	assert.Nil(t, waves)
+	assert.Contains(t, err.Error(), "unknown role")
+}
+
+func TestRunner_BuildWaves_DuplicateRole(t *testing.T) {
+	bp := Blueprint{Agents: []AgentSpec{{Role: "backend"}, {Role: "backend"}}}
+	r := NewRunner(bp, nil, nil)
+	waves, err := r.BuildWaves()
+	require.Error(t, err)
+	assert.Nil(t, waves)
+	assert.Contains(t, err.Error(), "duplicate agent role")
 }
 
 func TestBuildRoleTasks(t *testing.T) {

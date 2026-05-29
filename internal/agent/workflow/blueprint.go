@@ -248,27 +248,73 @@ func GenerateBlueprint(supervisor *agent.Supervisor, prompt string) (Blueprint, 
 // It handles: JSON inside a quoted string, markdown code fences, bare JSON, etc.
 func extractJSON(raw string) string {
 	raw = strings.TrimSpace(raw)
-
-	// Case 1: the entire response is a quoted JSON string → unquote it
 	if strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`) {
 		if unquoted, err := strconv.Unquote(raw); err == nil {
 			raw = strings.TrimSpace(unquoted)
 		}
 	}
-
-	// Case 2: find first { or [
+	re := regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
+	if m := re.FindStringSubmatch(raw); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
 	idx := strings.IndexAny(raw, "{[")
 	if idx < 0 {
 		return raw
 	}
-
-	// Case 3: strip markdown fences (```json ... ```)
-	re := regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
-	if m := re.FindStringSubmatch(raw); len(m) > 1 {
-		return m[1]
+	if balanced := extractBalancedJSON(raw[idx:]); balanced != "" {
+		return balanced
 	}
-
 	return raw[idx:]
+}
+
+func extractBalancedJSON(s string) string {
+	if s == "" {
+		return ""
+	}
+	open := s[0]
+	close := byte('}')
+	if open == '[' {
+		close = ']'
+	} else if open != '{' {
+		return ""
+	}
+	stack := []byte{close}
+	inString := false
+	escaped := false
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) == 0 || c != stack[len(stack)-1] {
+				return ""
+			}
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return strings.TrimSpace(s[:i+1])
+			}
+		}
+	}
+	return ""
 }
 
 func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]agent.MCPServerInfo, prompt string) (Blueprint, error) {
@@ -305,11 +351,8 @@ func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]age
 		return bp, fmt.Errorf("gagal generate blueprint: %w", err)
 	}
 
-	// Extract JSON from response (handle escaped strings, markdown fences, bare JSON)
 	content := extractJSON(resp.Content)
-
 	if err := json.Unmarshal([]byte(content), &bp); err != nil {
-		// Retry once with error feedback
 		retryMsgs := append(messages,
 			llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
 			llm.Message{Role: llm.RoleUser, Content: fmt.Sprintf("JSON tidak valid: %v. Mohon ulangi dengan format JSON yang benar sesuai schema.", err)},
@@ -319,7 +362,6 @@ func GenerateBlueprintWithProvider(provider llm.Provider, mcpInfo map[string]age
 			return bp, fmt.Errorf("gagal generate blueprint (retry): %w", err2)
 		}
 		content2 := extractJSON(resp2.Content)
-
 		if err := json.Unmarshal([]byte(content2), &bp); err != nil {
 			return bp, fmt.Errorf("gagal parse blueprint JSON setelah retry: %w", err)
 		}

@@ -64,8 +64,8 @@ export default function MemoryGraph({ workspace }: { workspace?: string }) {
   const [renderer, setRenderer] = useState<'auto' | 'detail' | 'fast'>('auto')
   const [graphMode, setGraphMode] = useState<'overview' | 'neighborhood' | 'search'>('overview')
   const [focusNodeId, setFocusNodeId] = useState<number | null>(null)
-  const [nodeLimit, setNodeLimit] = useState(1000)
-  const [edgeLimit, setEdgeLimit] = useState(2500)
+  const [nodeLimit, setNodeLimit] = useState(300)
+  const [edgeLimit, setEdgeLimit] = useState(800)
   const [minWeight, setMinWeight] = useState(0)
   const [includeAuto, setIncludeAuto] = useState(true)
   const [includeManual, setIncludeManual] = useState(true)
@@ -133,28 +133,33 @@ export default function MemoryGraph({ workspace }: { workspace?: string }) {
   const highlightedNeighborIds = useMemo(() => { const ids = new Set<number>(); if (highlightedId === null) return ids; ids.add(highlightedId); data.edges.forEach(e => { if (e.from === highlightedId) ids.add(e.to); if (e.to === highlightedId) ids.add(e.from) }); return ids }, [highlightedId, data.edges])
   const connectedEdgeIds = useMemo(() => { const ids = new Set<string>(); if (highlightedId === null) return ids; data.edges.forEach((e, i) => { if (e.from === highlightedId || e.to === highlightedId) ids.add(`e${i}`) }); return ids }, [highlightedId, data.edges])
 
+  const useFastRenderer = renderer === 'fast' || (renderer === 'auto' && (data.nodes.length > 200 || data.edges.length > 500))
+
   const flowNodes = useMemo<Node[]>(() => {
+    if (useFastRenderer) return []
     const positions = layoutNodes(data.nodes, data.edges)
     return data.nodes.map(n => {
       const c = nodeColor(n.degree); const dimByFilter = visibleIds && !visibleIds.has(n.id); const dimByHighlight = highlightedId !== null && !highlightedNeighborIds.has(n.id); const selectedNode = highlightedId === n.id; const neighborNode = highlightedId !== null && highlightedNeighborIds.has(n.id) && !selectedNode; const size = nodeSize(n.degree)
       const glow = selectedNode ? '0 0 0 6px rgba(250,204,21,0.22), 0 0 34px rgba(250,204,21,0.85)' : neighborNode ? '0 0 0 4px rgba(34,211,238,0.16), 0 0 26px rgba(34,211,238,0.72)' : `0 0 ${Math.max(7, size * 0.72)}px ${c.glow}`
       return { id: String(n.id), position: positions.get(n.id) || { x: 0, y: 0 }, data: { label: '' }, style: { width: size, height: size, minWidth: size, minHeight: size, padding: 0, background: selectedNode ? 'radial-gradient(circle at 38% 32%, #ffffff 0%, #fde68a 18%, #facc15 58%, #78350f 100%)' : neighborNode ? 'radial-gradient(circle at 38% 32%, #ffffff 0%, #a5f3fc 18%, #22d3ee 58%, #164e63 100%)' : `radial-gradient(circle at 38% 32%, #ffffff 0%, ${c.bg} 18%, ${c.bg} 58%, #172033 100%)`, border: selectedNode ? '2px solid #fef3c7' : neighborNode ? '2px solid #cffafe' : `1px solid ${c.border}`, borderRadius: 999, boxShadow: glow, opacity: dimByFilter || dimByHighlight ? 0.13 : 1, transition: data.nodes.length < 700 ? 'opacity 200ms, box-shadow 180ms' : 'none', cursor: 'grab' }, ariaLabel: `Memory ${n.id}: ${n.label || shortText(n.content, 40)}. Degree ${n.degree}`, className: `memory-dot-node ${n.degree >= 6 ? 'memory-dot-hub' : ''}`, draggable: true }
     })
-  }, [data.nodes, data.edges, visibleIds, highlightedId, highlightedNeighborIds])
+  }, [useFastRenderer, data.nodes, data.edges, visibleIds, highlightedId, highlightedNeighborIds])
 
-  const flowEdges = useMemo<Edge[]>(() => data.edges.map((e, i): Edge => {
+  const flowEdges = useMemo<Edge[]>(() => {
+    if (useFastRenderer) return []
+    return data.edges.map((e, i): Edge => {
     const id = `e${i}`; const dimByFilter = visibleIds && (!visibleIds.has(e.from) || !visibleIds.has(e.to)); const highlighted = highlightedId !== null && connectedEdgeIds.has(id); const dimByHighlight = highlightedId !== null && !highlighted
     return { id, source: String(e.from), target: String(e.to), animated: highlighted || (!e.auto && data.edges.length < 1200), label: data.edges.length < 900 && e.relation !== 'similar' ? e.relation : '', labelStyle: { fontSize: 9, fill: highlighted ? '#fde68a' : '#9ca3af' }, labelBgStyle: { fill: '#0b1120', fillOpacity: 0.75 }, style: { stroke: highlighted ? 'rgba(250,204,21,0.95)' : e.auto ? 'rgba(148,163,184,0.30)' : 'rgba(148,163,184,0.55)', strokeWidth: highlighted ? Math.max(2.2, Math.min(4.4, e.weight * 4.2)) : Math.max(0.55, Math.min(2.4, e.weight * 2.6)), opacity: dimByFilter || dimByHighlight ? 0.07 : highlighted ? 1 : 0.72, transition: data.edges.length < 1200 ? 'opacity 180ms, stroke 180ms, stroke-width 180ms' : 'none' } }
-  }), [data.edges, visibleIds, highlightedId, connectedEdgeIds])
+  })
+  }, [useFastRenderer, data.edges, visibleIds, highlightedId, connectedEdgeIds])
 
-  useEffect(() => { setNodes(flowNodes) }, [flowNodes, setNodes])
-  useEffect(() => { setEdges(flowEdges) }, [flowEdges, setEdges])
+  useEffect(() => { setNodes(useFastRenderer ? [] : flowNodes) }, [useFastRenderer, flowNodes, setNodes])
+  useEffect(() => { setEdges(useFastRenderer ? [] : flowEdges) }, [useFastRenderer, flowEdges, setEdges])
 
   const focusNeighborhood = async (mem: MemGraphNode) => { setSelected(mem); setHighlightedId(mem.id); setFocusNodeId(mem.id); setGraphMode('neighborhood'); await load({ mode: 'neighborhood', focusId: mem.id }) }
   const backToOverview = async () => { setGraphMode('overview'); setFocusNodeId(null); await load({ mode: 'overview', focusId: null }) }
   const runSearchGraph = async () => { if (!filter.trim()) { await backToOverview(); return }; setGraphMode('search'); await load({ mode: 'search' }) }
 
-  const useFastRenderer = renderer === 'fast' || (renderer === 'auto' && (data.nodes.length > 500 || data.edges.length > 1500))
   const stats = `${data.nodes.length}${data.meta?.total_nodes ? `/${data.meta.total_nodes}` : ''} nodes · ${data.edges.length}${data.meta?.total_edges ? `/${data.meta.total_edges}` : ''} edges${data.meta?.virtual_edges ? ` · ${data.meta.virtual_edges} hints` : ''} · ${data.meta?.mode || graphMode}${useFastRenderer ? ' · fast LOD' : ''}`
 
   return <div className="relative flex h-full overflow-hidden">

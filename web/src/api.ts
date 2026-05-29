@@ -174,6 +174,112 @@ export function cancelWebSession(id: string): Promise<{ status: string }> {
   return fetchJSON<{ status: string }>(`/api/web-sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
 }
 
+export interface RoadmapFileResponse {
+  path: string
+  relative_path: string
+  name: string
+  content: string
+  size: number
+  updated_at: string
+  workspace: string
+}
+
+export function fetchRoadmapFile(path: string): Promise<RoadmapFileResponse> {
+  return fetchJSON<RoadmapFileResponse>(`/api/roadmap?path=${encodeURIComponent(path)}`)
+}
+
+export interface ParallelOrchestrationConfig {
+  enabled: boolean
+  max_concurrency: number
+  require_approval_high?: boolean
+  require_approval_remote?: boolean
+  dry_run?: boolean
+  serial_fallback?: boolean
+  auto_threshold?: string
+}
+
+export interface ParallelOrchestrationSummary {
+  total: number
+  running: number
+  success: number
+  failed: number
+  skipped: number
+  gated: number
+}
+
+export interface ParallelSubtask {
+  id: string
+  title: string
+  description?: string
+  status: string
+  agent_id?: string
+  kind?: string
+  risk?: string
+  depends_on?: string[]
+  duration_ms?: number
+  output?: string
+  error?: string
+  progress?: number
+}
+
+export interface ParallelBatch {
+  id: string
+  name: string
+  mode: string
+  status: string
+  subtasks: ParallelSubtask[]
+}
+
+export interface ParallelAgent {
+  id: string
+  name: string
+  role: string
+  status: string
+  current_task_id?: string
+  completed: number
+  total: number
+}
+
+export interface ParallelEvent {
+  id: string
+  time: string
+  agent_id?: string
+  task_id?: string
+  type: string
+  message: string
+  status?: string
+}
+
+export interface ParallelOrchestrationSnapshot {
+  active: boolean
+  status: string
+  run_id: string
+  plan_id?: string
+  title: string
+  started_at?: string
+  ended_at?: string
+  updated_at: string
+  config: ParallelOrchestrationConfig
+  summary: ParallelOrchestrationSummary
+  agents?: ParallelAgent[]
+  tasks?: ParallelSubtask[]
+  batches: ParallelBatch[]
+  events?: ParallelEvent[]
+  report_markdown?: string
+  error?: string
+}
+
+export function fetchParallelTasksStatus(): Promise<ParallelOrchestrationSnapshot> {
+  return fetchJSON<ParallelOrchestrationSnapshot>('/api/orchestration/status')
+}
+
+export function updateParallelTasksConfig(config: ParallelOrchestrationConfig): Promise<ParallelOrchestrationConfig> {
+  return fetchJSON<ParallelOrchestrationConfig>('/api/orchestration/config', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  })
+}
+
 export interface UploadResponse {
   path: string
   size: number

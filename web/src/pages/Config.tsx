@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AlertCircle, CheckCircle2, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Mic, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
 import { fetchJSON } from '../api'
 
 type MCPServer = {
@@ -19,10 +19,10 @@ type Field = { key: string; label: string; type?: 'text' | 'password' | 'number'
 
 const providerFields: Field[] = [
   { key: 'provider', label: 'Active Provider', type: 'select', options: ['custom', 'openai', 'anthropic', 'openrouter', 'ollama'], placeholder: 'custom' },
-  { key: 'model', label: 'Default Model', placeholder: 'deepseek-v4-pro / gpt-4o / llama3.1' },
+  { key: 'model', label: 'Default Model', placeholder: 'cx/gpt-5.5 / gpt-4o / llama3.1' },
   { key: 'reasoning_effort', label: 'Reasoning Effort', type: 'select', options: ['', 'low', 'medium', 'high', 'xhigh'], placeholder: 'default' },
-  { key: 'custom_provider_name', label: 'Custom Provider Name', placeholder: 'CLIProxyAPI' },
-  { key: 'custom_base_url', label: 'Custom Base URL', placeholder: 'http://localhost:8317/v1' },
+  { key: 'custom_provider_name', label: 'Custom Provider Name', placeholder: '9router' },
+  { key: 'custom_base_url', label: 'Custom Base URL', placeholder: 'http://localhost:20128/v1' },
   { key: 'custom_api_key', label: 'Custom API Key', type: 'password' },
   { key: 'custom_model', label: 'Custom Model' },
   { key: 'custom_disable_stream', label: 'Disable Custom Streaming', type: 'boolean' },
@@ -80,8 +80,27 @@ const imageFields: Field[] = [
   { key: 'image_output_dir', label: 'Image Output Directory', placeholder: '~/.smara/images' },
 ]
 
-const allFields = [...providerFields, ...imageFields, ...agentFields, ...generalFields, ...cloudFields, ...smaraMCPFields]
+const voiceFields: Field[] = [
+  { key: 'voice_provider', label: 'Voice Provider', type: 'select', options: ['elevenlabs', 'browser', 'auto', 'piper'], placeholder: 'elevenlabs' },
+  { key: 'voice_api_key', label: 'Voice API Key', type: 'password', placeholder: 'ElevenLabs API key' },
+  { key: 'voice_base_url', label: 'Voice Base URL', placeholder: 'https://api.elevenlabs.io' },
+  { key: 'voice_character', label: 'Voice ID / Character', placeholder: 'ngvNHfiCrXLPAHcTrZK1' },
+  { key: 'voice_model_id', label: 'Voice Model', type: 'select', options: ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5', 'eleven_v3'], placeholder: 'eleven_multilingual_v2' },
+  { key: 'voice_language', label: 'Voice Language', placeholder: 'id-ID' },
+  { key: 'voice_speed', label: 'Voice Speed', type: 'number', placeholder: '1' },
+  { key: 'voice_volume', label: 'Voice Volume', type: 'number', placeholder: '1' },
+  { key: 'voice_streaming', label: 'Voice Streaming', type: 'boolean' },
+]
 
+const allFields: Field[] = [
+  ...providerFields,
+  ...imageFields,
+  ...voiceFields,
+  ...agentFields,
+  ...generalFields,
+  ...cloudFields,
+  ...smaraMCPFields,
+]
 function getValue(obj: any, path: string) {
   return path.split('.').reduce((acc, key) => acc?.[key], obj)
 }
@@ -203,6 +222,10 @@ export default function Config() {
 
       <Section icon={Image} title="Image Generation" desc="Provider, model, API key, base URL, dan direktori output untuk image flow.">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{imageFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div>
+      </Section>
+
+      <Section icon={Mic} title="Voice AI" desc="Atur provider suara, Voice ID, model ElevenLabs, bahasa, speed, dan volume untuk mode Voice di chat.">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{voiceFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div>
       </Section>
 
       <Section icon={Wrench} title="MCP Servers" desc="Kelola server MCP lokal atau remote. Klik Save di atas untuk menyimpan semua perubahan sekaligus.">

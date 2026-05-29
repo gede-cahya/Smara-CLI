@@ -4,19 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/browser"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
+	"github.com/gede-cahya/Smara-CLI/internal/orchestration"
+	"log"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 // maxMessageLength is the maximum length of a single message on most platforms.
@@ -192,7 +194,16 @@ func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error
 		return g.handleCommand(ctx, msg)
 	}
 
-	// 5. Process as prompt
+	// 5. Route explicit workflow prompts from adapters (WA/Telegram/etc.)
+	// through the custom workflow runner so parallel waves are used automatically.
+	if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ "+err.Error())
+		}
+		return g.sendReply(ctx, msg, response)
+	}
+
+	// 6. Process as prompt
 	log.Printf("[gateway] Processing prompt via supervisor (mode=%s)", g.supervisor.GetMode())
 	return g.processPrompt(ctx, msg)
 }
@@ -238,10 +249,20 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		if len(msg.CommandArgs) == 0 {
 			return g.sendReply(ctx, msg, "❌ Gunakan: /ask <pertanyaan>")
 		}
-		// Reconstruct prompt from args
+		// Reconstruct prompt from args and pass it through the same explicit
+		// custom-workflow router used by normal adapter messages before falling
+		// back to generic prompt processing. This keeps `/ask jalankan custom
+		// workflow ...` on the saved workflow runner instead of the generic
+		// auto-orchestration path.
 		prompt := strings.Join(msg.CommandArgs, " ")
 		promptMsg := msg
 		promptMsg.Content = prompt
+		if response, handled, err := g.tryRunCustomWorkflowPrompt(promptMsg); handled {
+			if err != nil {
+				return g.sendReply(ctx, msg, "❌ "+err.Error())
+			}
+			return g.sendReply(ctx, msg, response)
+		}
 		return g.processPrompt(ctx, promptMsg)
 
 	case "prd":
@@ -263,6 +284,7 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		info := agent.GetModeInfo(agent.Mode(newMode))
 		return g.sendReply(ctx, msg, fmt.Sprintf("%s Mode diubah ke *%s*\n%s", info.Emoji, info.Label, info.Description))
 
+	case "mcp":
 		mcpInfo := g.supervisor.GetMCPInfo()
 		if len(mcpInfo) == 0 {
 			return g.sendReply(ctx, msg, "ℹ️ Tidak ada MCP server yang terhubung.")
@@ -365,6 +387,194 @@ func (g *Gateway) handleMemoryAutolinkCommand(ctx context.Context, msg IncomingM
 	return g.sendReply(ctx, msg, reply)
 }
 
+func (g *Gateway) tryRunCustomWorkflowPrompt(msg IncomingMessage) (string, bool, error) {
+	candidate, ok := extractWorkflowRunName(msg.Content)
+	if !ok {
+		return "", false, nil
+	}
+	cw, matched, err := findCustomWorkflow(candidate)
+	if err != nil || cw == nil {
+		return "", false, nil
+	}
+	log.Printf("[gateway] Routing %s/%s prompt to parallel custom workflow: %s", msg.Platform, msg.ChannelID, matched)
+	result, err := workflow.RunCustomWorkflow(g.supervisor, g.supervisor.GetProvider(), cw)
+	if err != nil {
+		return "", true, fmt.Errorf("gagal menjalankan custom workflow '%s': %w", matched, err)
+	}
+	return formatWorkflowRunResponse(matched, result), true, nil
+}
+
+func extractWorkflowRunName(prompt string) (string, bool) {
+	text := strings.Trim(strings.TrimSpace(prompt), " \t\n\r`'\".,!")
+	if text == "" {
+		return "", false
+	}
+	lower := strings.ToLower(text)
+	prefixes := []string{"jalankan custom workflow ", "jalankan workflow ", "run custom workflow ", "run workflow ", "execute custom workflow ", "execute workflow ", "mulai custom workflow ", "mulai workflow ", "start custom workflow ", "start workflow ", "jalankan ", "run ", "execute ", "mulai ", "start "}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			name := strings.Trim(strings.TrimSpace(text[len(prefix):]), " \t\n\r`'\".,!")
+			return name, name != ""
+		}
+	}
+	return "", false
+}
+
+func findCustomWorkflow(candidate string) (*workflow.CustomWorkflow, string, error) {
+	workflows, err := workflow.LoadAllCustomWorkflows()
+	if err != nil {
+		return nil, "", err
+	}
+	norm := normalizeWorkflowName(candidate)
+	for _, cw := range workflows {
+		if normalizeWorkflowName(cw.Name) == norm {
+			return cw, cw.Name, nil
+		}
+	}
+	for _, cw := range workflows {
+		if strings.Contains(normalizeWorkflowName(cw.Name), norm) || strings.Contains(norm, normalizeWorkflowName(cw.Name)) {
+			return cw, cw.Name, nil
+		}
+		for _, a := range cw.Agents {
+			if normalizeWorkflowName(a.Role) == norm || strings.Contains(normalizeWorkflowName(a.Role), norm) {
+				return cw, cw.Name, nil
+			}
+		}
+	}
+	return nil, "", nil
+}
+
+func normalizeWorkflowName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') }), "-")
+}
+
+func formatWorkflowRunResponse(name string, result *workflow.CustomWorkflowResult) string {
+	if result == nil {
+		return "✅ Workflow selesai."
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("✅ Parallel custom workflow '%s' selesai\n", name))
+	if result.FinalSummary != "" {
+		sb.WriteString("\n")
+		sb.WriteString(result.FinalSummary)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\nParallel execution:\n")
+	if result.ParallelExecution {
+		sb.WriteString("- Ya, minimal satu wave berisi beberapa role yang berjalan bersamaan sesuai dependency.\n")
+	} else {
+		sb.WriteString("- Tidak ada wave paralel; dependency workflow membuat eksekusi serial atau hanya ada satu role per wave.\n")
+	}
+	if waves := formatWorkflowWavesForGateway(result.Waves); waves != "" {
+		sb.WriteString(waves)
+	}
+	if result.QAResult.Status != "" {
+		sb.WriteString(fmt.Sprintf("\nQA: %s", result.QAResult.Status))
+		if len(result.QAResult.Issues) > 0 {
+			sb.WriteString(fmt.Sprintf(" (%d issue(s))", len(result.QAResult.Issues)))
+		}
+		sb.WriteString("\n")
+	}
+	if result.ProjectPath != "" {
+		sb.WriteString(fmt.Sprintf("Project: %s\n", result.ProjectPath))
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func formatWorkflowWavesForGateway(waves [][]string) string {
+	if len(waves) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, wave := range waves {
+		if len(wave) == 0 {
+			continue
+		}
+		roles := append([]string(nil), wave...)
+		sort.Strings(roles)
+		mode := "serial"
+		if len(roles) > 1 {
+			mode = "parallel"
+		}
+		sb.WriteString(fmt.Sprintf("- Wave %d (%s): %s\n", i+1, mode, strings.Join(roles, ", ")))
+	}
+	return sb.String()
+}
+
+func (g *Gateway) tryRunAgentSwarmWorkflowPrompt(msg IncomingMessage) (string, bool, error) {
+	if !orchestration.IsAgentSwarmWorkflowPrompt(msg.Content) {
+		return "", false, nil
+	}
+	log.Printf("[gateway] Routing %s/%s prompt to Agent Swarm Workflow", msg.Platform, msg.ChannelID)
+	result, err := workflow.RunWorkflow(g.supervisor, g.supervisor.GetProvider(), msg.Content)
+	if err != nil {
+		return "", true, fmt.Errorf("Agent Swarm Workflow gagal: %w", err)
+	}
+	return formatAgentSwarmWorkflowResponse(result), true, nil
+}
+
+func formatAgentSwarmWorkflowResponse(result *workflow.WorkflowResult) string {
+	if result == nil {
+		return "✅ Agent Swarm Workflow selesai."
+	}
+	summary := strings.TrimSpace(result.FinalSummary)
+	if summary == "" {
+		summary = "Workflow selesai tanpa ringkasan tambahan."
+	}
+	var sb strings.Builder
+	sb.WriteString("✅ Agent Swarm Workflow selesai\n\n")
+	sb.WriteString("Mode: multi-agent task decomposition, agent spawning, parallel wave execution, result merge, QA.\n\n")
+	sb.WriteString(summary)
+	sb.WriteString("\n\nParallel execution:\n")
+	if result.ParallelExecution {
+		sb.WriteString(fmt.Sprintf("- Ya, wave paralel aktif dengan max concurrency %d.\n", result.MaxConcurrency))
+	} else {
+		sb.WriteString(fmt.Sprintf("- Tidak ada wave paralel; eksekusi serial atau hanya satu agent per wave. Max concurrency %d.\n", result.MaxConcurrency))
+	}
+	if waves := formatWorkflowWavesForGateway(result.ExecutionWaves); waves != "" {
+		sb.WriteString(waves)
+	}
+	if result.QAResult.Status != "" {
+		sb.WriteString(fmt.Sprintf("QA: %s", result.QAResult.Status))
+		if len(result.QAResult.Issues) > 0 {
+			sb.WriteString(fmt.Sprintf(" (%d issue)", len(result.QAResult.Issues)))
+		}
+		sb.WriteString("\n")
+	}
+	if result.ProjectPath != "" {
+		sb.WriteString(fmt.Sprintf("Project: %s", result.ProjectPath))
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func (g *Gateway) tryRunAutoParallelOrchestrationPrompt(msg IncomingMessage) (string, bool, error) {
+	if !shouldAutoParallelOrchestrate(msg.Content, g.supervisor.GetMode()) {
+		return "", false, nil
+	}
+	log.Printf("[gateway] Auto-routing complex %s/%s prompt to parallel orchestration", msg.Platform, msg.ChannelID)
+	result, err := workflow.RunWorkflow(g.supervisor, g.supervisor.GetProvider(), msg.Content)
+	if err != nil {
+		return "", true, fmt.Errorf("auto parallel orchestration gagal: %w", err)
+	}
+	return formatAutoWorkflowResponse(result), true, nil
+}
+
+func shouldAutoParallelOrchestrate(prompt string, mode agent.Mode) bool {
+	return orchestration.ShouldAutoParallelOrchestrate(prompt, mode)
+}
+
+func formatAutoWorkflowResponse(result *workflow.WorkflowResult) string {
+	if result == nil {
+		return "✅ Auto parallel orchestration selesai."
+	}
+	summary := strings.TrimSpace(result.FinalSummary)
+	if summary == "" {
+		summary = "Workflow selesai tanpa ringkasan tambahan."
+	}
+	return fmt.Sprintf("✅ Auto parallel orchestration selesai\n\n%s\nProject: %s", summary, result.ProjectPath)
+}
+
 // processPrompt sends a user prompt to the supervisor and relays the response.
 // It provides real-time UX feedback by sending and updating a status message.
 func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error {
@@ -440,6 +650,27 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 
 	if browser.IsBrowserPrompt(msg.Content) {
 		return g.processBrowserPrompt(ctx, msg)
+	}
+
+	if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ "+err.Error())
+		}
+		return g.sendReply(ctx, msg, response)
+	}
+
+	if response, handled, err := g.tryRunAgentSwarmWorkflowPrompt(msg); handled {
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ "+err.Error())
+		}
+		return g.sendReply(ctx, msg, response)
+	}
+
+	if response, handled, err := g.tryRunAutoParallelOrchestrationPrompt(msg); handled {
+		if err != nil {
+			return g.sendReply(ctx, msg, "❌ "+err.Error())
+		}
+		return g.sendReply(ctx, msg, response)
 	}
 
 	// 1. Send initial status message

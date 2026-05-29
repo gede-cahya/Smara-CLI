@@ -21,6 +21,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/nudge"
+	"github.com/gede-cahya/Smara-CLI/internal/orchestration"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 	smarassh "github.com/gede-cahya/Smara-CLI/internal/ssh"
 	"github.com/gede-cahya/Smara-CLI/internal/ui/clipboard"
@@ -970,55 +971,35 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, dotTickCmd())
 
-				// If in workflow mode, run the multi-agent workflow engine
-				if sup.GetMode() == agent.ModeWorkflow {
+				if orchestration.IsAgentSwarmWorkflowPrompt(processedPrompt) || orchestration.ShouldAutoParallelOrchestrate(processedPrompt, sup.GetMode()) {
 					if agentSup, ok := sup.(*agent.Supervisor); ok {
 						cmds = append(cmds, func() tea.Msg {
 							result, err := workflow.RunWorkflow(agentSup, agentSup.GetProvider(), processedPrompt)
 							if err != nil {
 								return ProcessMsg{Result: nil, Err: err}
 							}
+							label := "# Auto parallel orchestration selesai\n\n"
+							if orchestration.IsAgentSwarmWorkflowPrompt(processedPrompt) {
+								label = "# Agent Swarm Workflow selesai\n\n"
+							}
 							var sb strings.Builder
-							sb.WriteString(fmt.Sprintf("# Workflow Complete: %s\n\n", result.FinalSummary))
-							sb.WriteString(fmt.Sprintf("**Domain:** %s\n\n", result.Domain))
-							sb.WriteString("## PRD\n\n")
-							sb.WriteString(result.PRD)
-							sb.WriteString("\n\n## Architecture / Workflow Design\n\n")
-							sb.WriteString(result.Architecture)
-							sb.WriteString("\n\n## QA Result\n\n")
-							sb.WriteString(fmt.Sprintf("- Status: %s\n", result.QAResult.Status))
-							sb.WriteString(fmt.Sprintf("- Score: %d/100\n", result.QAResult.Score))
-							if len(result.QAResult.Issues) > 0 {
-								sb.WriteString("- Issues:\n")
-								for _, issue := range result.QAResult.Issues {
-									sb.WriteString(fmt.Sprintf("  - %s\n", issue))
-								}
+							sb.WriteString(label)
+							sb.WriteString(result.FinalSummary)
+							sb.WriteString(fmt.Sprintf("\n\n**Parallel:** %t | **Max Concurrency:** %d\n", result.ParallelExecution, result.MaxConcurrency))
+							for i, wave := range result.ExecutionWaves {
+								sb.WriteString(fmt.Sprintf("- Wave %d: %s\n", i+1, strings.Join(wave, ", ")))
 							}
 							sb.WriteString(fmt.Sprintf("\n**Project Directory:** %s\n", result.ProjectPath))
-							thinking := fmt.Sprintf("Domain: %s | Agents: %d | QA: %s", result.Domain, len(result.AgentOutputs), result.QAResult.Status)
-							return ProcessMsg{Result: &agent.PromptResult{
-								Response:     sb.String(),
-								Thinking:     thinking,
-								InputTokens:  0,
-								OutputTokens: 0,
-								TotalTokens:  0,
-								Duration:     0,
-							}, Err: nil}
+							return ProcessMsg{Result: &agent.PromptResult{Response: sb.String()}, Err: nil}
 						})
 					} else {
-						// Fallback to normal processing if type assertion fails
-						cmds = append(cmds, cursorBlinkCmd())
-						cmds = append(cmds, waveTickCmd())
-						cmds = append(cmds, func() tea.Msg {
+						cmds = append(cmds, cursorBlinkCmd(), waveTickCmd(), func() tea.Msg {
 							result, err := sup.ProcessPrompt(ctx, processedPrompt)
 							return ProcessMsg{Result: result, Err: err}
 						})
 					}
 				} else {
-					// Normal supervisor processing
-					cmds = append(cmds, cursorBlinkCmd())
-					cmds = append(cmds, waveTickCmd())
-					cmds = append(cmds, func() tea.Msg {
+					cmds = append(cmds, cursorBlinkCmd(), waveTickCmd(), func() tea.Msg {
 						result, err := sup.ProcessPrompt(ctx, processedPrompt)
 						return ProcessMsg{Result: result, Err: err}
 					})

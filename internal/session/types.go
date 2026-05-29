@@ -77,6 +77,7 @@ type Task struct {
 	Status      Status                 `json:"status"`
 	AssignedTo  string                 `json:"assigned_to,omitempty"`
 	ParentID    string                 `json:"parent_id,omitempty"`
+	Type        string                 `json:"type,omitempty"`
 	MCPServer   string                 `json:"mcp_server,omitempty"`
 	ToolName    string                 `json:"tool_name,omitempty"`
 	ToolArgs    map[string]interface{} `json:"tool_args,omitempty"`

@@ -14,14 +14,17 @@ import (
 
 // Orchestrator runs the full workflow: blueprint → workers → QA → result.
 type Orchestrator struct {
-	Supervisor  *agent.Supervisor
-	Provider    llm.Provider
-	MCPInfo     map[string]agent.MCPServerInfo
-	ProjectDir  string
-	SharedState *SharedState
-	Blueprint   Blueprint
-	Result      *WorkflowResult
-	OnProgress  func(step, status string) // Callback for TUI
+	Supervisor       *agent.Supervisor
+	Provider         llm.Provider
+	MCPInfo          map[string]agent.MCPServerInfo
+	ProjectDir       string
+	SharedState      *SharedState
+	Blueprint        Blueprint
+	Result           *WorkflowResult
+	OnProgress       func(step, status string) // Callback for TUI
+	OnBlueprintReady func(Blueprint, [][]string)
+	OnRoleStart      func(role string)
+	OnTaskComplete   func(role, taskID string, result agent.TaskResult)
 }
 
 // NewOrchestrator creates a workflow orchestrator.
@@ -88,14 +91,33 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	}
 
 	runner := NewRunner(bp, workerMap, o.SharedState)
+	executionWaves := [][]string(nil)
+	if waves, err := runner.BuildWaves(); err == nil {
+		executionWaves = waves
+		if o.OnBlueprintReady != nil {
+			o.OnBlueprintReady(bp, waves)
+		}
+	} else {
+		return nil, fmt.Errorf("dependency wave build failed: %w", err)
+	}
 	runner.OnWaveStart = func(wave int, roles []string) {
 		if o.OnProgress != nil {
 			o.OnProgress("runner", fmt.Sprintf("wave %d: %s", wave, roles))
+		}
+		if o.OnRoleStart != nil {
+			for _, role := range roles {
+				o.OnRoleStart(role)
+			}
 		}
 	}
 	runner.OnWaveComplete = func(wave int, results map[string][]agent.TaskResult) {
 		if o.OnProgress != nil {
 			o.OnProgress(fmt.Sprintf("wave-%d", wave), "complete")
+		}
+	}
+	runner.OnTaskComplete = func(role, taskID string, result agent.TaskResult) {
+		if o.OnTaskComplete != nil {
+			o.OnTaskComplete(role, taskID, result)
 		}
 	}
 
@@ -117,13 +139,23 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	log.Printf("[workflow] QA review complete: %s, %v", qaResult.Status, time.Since(phaseStart))
 
 	// 5. Build result
+	parallelExecution := false
+	for _, wave := range executionWaves {
+		if len(wave) > 1 {
+			parallelExecution = true
+			break
+		}
+	}
 	result := &WorkflowResult{
-		ProjectPath:  o.ProjectDir,
-		Domain:       bp.Domain,
-		PRD:          bp.PRD,
-		Architecture: bp.Architecture,
-		AgentOutputs: allResults,
-		QAResult:     qaResult,
+		ProjectPath:       o.ProjectDir,
+		Domain:            bp.Domain,
+		PRD:               bp.PRD,
+		Architecture:      bp.Architecture,
+		AgentOutputs:      allResults,
+		QAResult:          qaResult,
+		ExecutionWaves:    executionWaves,
+		MaxConcurrency:    runner.MaxConcurrency,
+		ParallelExecution: parallelExecution,
 	}
 
 	if qaResult.Status == "PASS" {
@@ -171,12 +203,15 @@ func (o *Orchestrator) saveBlueprint() error {
 
 // WorkflowResult aggregates all workflow outputs.
 type WorkflowResult struct {
-	ProjectPath  string                        `json:"project_path"`
-	Domain       string                        `json:"domain"`
-	PRD          string                        `json:"prd"`
-	Architecture string                        `json:"architecture"`
-	AgentOutputs map[string][]agent.TaskResult `json:"agent_outputs"`
-	QAResult     QAResult                      `json:"qa_result"`
-	FinalSummary string                        `json:"final_summary"`
-	CompletedAt  time.Time                     `json:"completed_at"`
+	ProjectPath       string                        `json:"project_path"`
+	Domain            string                        `json:"domain"`
+	PRD               string                        `json:"prd"`
+	Architecture      string                        `json:"architecture"`
+	AgentOutputs      map[string][]agent.TaskResult `json:"agent_outputs"`
+	QAResult          QAResult                      `json:"qa_result"`
+	FinalSummary      string                        `json:"final_summary"`
+	CompletedAt       time.Time                     `json:"completed_at"`
+	ExecutionWaves    [][]string                    `json:"execution_waves,omitempty"`
+	MaxConcurrency    int                           `json:"max_concurrency,omitempty"`
+	ParallelExecution bool                          `json:"parallel_execution,omitempty"`
 }

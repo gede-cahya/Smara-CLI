@@ -385,7 +385,11 @@ func externalToolTasks(spec externalAgentSpec) []Task {
 			ID:          id + "-tools",
 			Description: externalToolTaskDescription(stage),
 			Type:        "tool",
-			ToolName:    externalStageToolName(stage),
+			MCPServer:   "builtin",
+			ToolName:    "run_command",
+			ToolArgs: map[string]interface{}{
+				"command": externalStageCommand(stage),
+			},
 		})
 	}
 	if len(tasks) == 0 {
@@ -433,6 +437,19 @@ func externalToolTaskDescription(stage externalAgentStage) string {
 		parts = append(parts, fmt.Sprintf("Condition blocks: %d", len(stage.Conditions)))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func externalStageCommand(stage externalAgentStage) string {
+	for _, raw := range stage.Actions {
+		var action map[string]interface{}
+		if err := json.Unmarshal(raw, &action); err != nil {
+			continue
+		}
+		if run := firstString(action, "run", "command", "script", "shell"); run != "" {
+			return run
+		}
+	}
+	return fmt.Sprintf("echo %q && exit 1", "external workflow stage has no executable shell command: "+firstNonEmpty(stage.ID, stage.Name, "stage"))
 }
 
 func externalStageToolName(stage externalAgentStage) string {

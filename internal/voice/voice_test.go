@@ -17,8 +17,8 @@ func TestPlanCommandMagicPointer(t *testing.T) {
 }
 
 func TestDefaultSettings(t *testing.T) {
-	s := NormalizeSettings(Settings{})
-	if s.Language != "id-ID" || s.Provider != ProviderBrowser || s.Speed != 1 || s.Volume != 1 {
+	s := DefaultSettings()
+	if s.Language != "id-ID" || s.Provider != ProviderBrowser || s.Speed != 1 || s.Volume != 1 || s.BaseURL == "" {
 		t.Fatalf("bad defaults: %+v", s)
 	}
 }

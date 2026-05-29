@@ -41,6 +41,29 @@ func TestCustomProviderGenerateImage(t *testing.T) {
 	assert.Equal(t, ".png", result.Extension)
 }
 
+func TestCustomProviderGenerateImageProviderErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"message": "stream error: stream ID 1; INTERNAL_ERROR; received from peer",
+				"type":    "server_error",
+				"code":    "internal_server_error",
+			},
+		})
+	}))
+	defer server.Close()
+
+	provider := NewCustomProvider("custom", "test-key", "gpt-image-2", server.URL)
+	_, err := provider.GenerateImage("robot terminal", ImageGenerationOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "image provider error")
+	assert.Contains(t, err.Error(), "stream error")
+	assert.Contains(t, err.Error(), "type=server_error")
+	assert.Contains(t, err.Error(), "code=internal_server_error")
+	assert.NotContains(t, err.Error(), "image response kosong")
+}
+
 func TestCustomProviderGenerateImageEmptyPrompt(t *testing.T) {
 	provider := NewCustomProvider("custom", "test-key", "gpt-image-2", "http://example.test")
 	_, err := provider.GenerateImage(" ", ImageGenerationOptions{})

@@ -45,6 +45,8 @@ export default function Memory() {
   const [newCatName, setNewCatName] = useState('')
   const [newCatKeywords, setNewCatKeywords] = useState('')
   const [view, setView] = useState<'list' | 'graph'>('list')
+  const [newMemory, setNewMemory] = useState('')
+  const [newTags, setNewTags] = useState('')
 
   const loadWorkspaces = async () => {
     try {
@@ -86,7 +88,7 @@ export default function Memory() {
     try {
       const data = await fetchJSON<{ results: MemoryItem[] }>('/api/memories/search', {
         method: 'POST',
-        body: JSON.stringify({ query, limit: 50 }),
+        body: JSON.stringify({ query, limit: 50, workspace: activeWorkspace }),
       })
       setMemories(data.results || [])
     } catch (e) {
@@ -137,6 +139,24 @@ export default function Memory() {
   const sortedKeys = categoryConfig.map(c => c.name).filter(g => grouped.has(g))
 
   const hash = (s: string) => s.split('').reduce((a,b)=>a+b.charCodeAt(0),0)
+
+  const addMemory = async () => {
+    const content = newMemory.trim()
+    if (!content) return
+    await fetchJSON<MemoryItem>('/api/memories', {
+      method: 'POST',
+      body: JSON.stringify({ content, tags: newTags.split(',').map(s => s.trim()).filter(Boolean), workspace: activeWorkspace }),
+    })
+    setNewMemory('')
+    setNewTags('')
+    await loadMemories(activeWorkspace)
+  }
+
+  const deleteMemory = async (id: number) => {
+    if (!window.confirm(`Hapus memory #${id}?`)) return
+    await fetchJSON(`/api/memories?id=${id}`, { method: 'DELETE' })
+    await loadMemories(activeWorkspace)
+  }
 
   const addCategory = () => {
     if (!newCatName.trim()) return
@@ -281,6 +301,31 @@ export default function Memory() {
           </div>
         )}
 
+        <div className="mb-4 bg-[#0c1009]/72 ring-1 ring-black/35 rounded-lg p-3 space-y-2">
+          <textarea
+            value={newMemory}
+            onChange={e => setNewMemory(e.target.value)}
+            placeholder="Tulis memory baru untuk workspace aktif..."
+            rows={3}
+            className="w-full bg-neutral-950/55 ring-1 ring-black/35 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-smara-300/25"
+          />
+          <div className="flex gap-2">
+            <input
+              value={newTags}
+              onChange={e => setNewTags(e.target.value)}
+              placeholder="Tags, pisah koma"
+              className="flex-1 bg-neutral-950/55 ring-1 ring-black/35 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-smara-300/25"
+            />
+            <button
+              onClick={addMemory}
+              disabled={!newMemory.trim()}
+              className="px-3 py-2 bg-smara-500 hover:bg-smara-400 text-black disabled:opacity-50 rounded-lg transition-colors flex items-center gap-1"
+            >
+              <Plus className="w-4 h-4" /> Tambah Memory
+            </button>
+          </div>
+        </div>
+
         <div className="flex gap-2 mb-4">
           <input
             value={query}
@@ -352,6 +397,9 @@ export default function Memory() {
                               {new Date(m.created_at).toLocaleString()}
                             </span>
                           </div>
+                          <button onClick={() => deleteMemory(m.id)} className="text-gray-600 hover:text-red-400 transition-colors" title="Hapus memory">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                           <span className="text-smara-400">#{m.id}</span>
                         </div>
                       </div>

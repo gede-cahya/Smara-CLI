@@ -168,6 +168,7 @@ type SimGraph = {
 }
 
 const simCache = new Map<string, DrawNode[]>()
+const frameBudget = { edgeDrawLimit: 2500, nodeGradientLimit: 360, zoomedOutGradientLimit: 120, physicsNodeLimit: 900 }
 
 function cacheKey(data: MemGraphData) {
   const first = data.nodes[0]?.id || 0
@@ -209,8 +210,9 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
   const alpha = sim.alpha
   if (alpha < 0.015) return
   const profile = patternProfile(pattern, dense)
+  const physicsStride = dense ? Math.max(1, Math.ceil(nodes.length / frameBudget.physicsNodeLimit)) : 1
 
-  for (let i = 0; i < nodes.length; i++) {
+  for (let i = 0; i < nodes.length; i += physicsStride) {
     const n = nodes[i]
     const target = patternTarget(n, pattern, i, nodes.length)
     const degreeBoost = 1 + Math.min(n.node.degree || 0, 18) * 0.006
@@ -223,8 +225,8 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
     }
   }
 
-  const maxEdgesPerTick = dense ? 4200 : sim.edgePairs.length
-  for (let i = 0; i < sim.edgePairs.length && i < maxEdgesPerTick; i++) {
+  const maxEdgesPerTick = dense ? Math.min(frameBudget.edgeDrawLimit, sim.edgePairs.length) : sim.edgePairs.length
+  for (let i = 0; i < maxEdgesPerTick; i++) {
     const e = sim.edgePairs[i]
     const dx = e.b.x - e.a.x
     const dy = e.b.y - e.a.y
@@ -239,8 +241,8 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
     e.b.vx -= fx; e.b.vy -= fy
   }
 
-  const stride = dense ? Math.max(2, Math.ceil(nodes.length / 620)) : 1
-  for (let i = 0; i < nodes.length; i++) {
+  const stride = dense ? Math.max(4, Math.ceil(nodes.length / 360)) : 1
+  for (let i = 0; i < nodes.length; i += physicsStride) {
     const a = nodes[i]
     for (let j = i + stride; j < nodes.length; j += stride) {
       const b = nodes[j]
@@ -262,17 +264,13 @@ function stepSimulation(sim: SimGraph, dense: boolean, pattern: PatternMode) {
   }
 
   for (const n of nodes) {
-    if (n.fixed) {
-      n.vx = 0
-      n.vy = 0
-      continue
-    }
+    if (n.fixed) { n.vx = 0; n.vy = 0; continue }
     n.vx *= profile.damping
     n.vy *= profile.damping
     n.x += Math.max(-profile.maxVelocity, Math.min(profile.maxVelocity, n.vx))
     n.y += Math.max(-profile.maxVelocity, Math.min(profile.maxVelocity, n.vy))
   }
-  sim.alpha *= profile.cooling
+  sim.alpha *= dense ? Math.min(profile.cooling, 0.975) : profile.cooling
 }
 
 interface Props {
@@ -363,8 +361,8 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
         canvas.style.width = `${rect.width}px`
         canvas.style.height = `${rect.height}px`
       }
-      const dense = data.edges.length > 2500 || data.nodes.length > 1200
-      stepSimulation(sim, dense, pattern)
+      const dense = data.edges.length > 1800 || data.nodes.length > 800
+      if (camera.current.dragging || sim.alpha > 0.015) stepSimulation(sim, dense, pattern)
 
       const ctx = canvas.getContext('2d')!
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -374,33 +372,32 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
       const sy = (y: number) => rect.height / 2 + (y + cam.y) * cam.scale
       const zoomedOut = cam.scale < 0.45
 
-      const bg = ctx.createRadialGradient(rect.width / 2, rect.height / 2, 0, rect.width / 2, rect.height / 2, Math.max(rect.width, rect.height) * 0.6)
-      bg.addColorStop(0, 'rgba(15,23,42,0.06)')
-      bg.addColorStop(1, 'rgba(2,6,23,0.0)')
-      ctx.fillStyle = bg
+      ctx.fillStyle = 'rgba(2,6,23,0.12)'
       ctx.fillRect(0, 0, rect.width, rect.height)
 
       ctx.lineCap = 'round'
-      for (let i = 0; i < data.edges.length; i++) {
+      const edgeStep = dense && highlightedId === null ? Math.max(1, Math.ceil(data.edges.length / frameBudget.edgeDrawLimit)) : 1
+      for (let i = 0; i < data.edges.length; i += edgeStep) {
         const e = data.edges[i]
         const a = sim.byId.get(e.from); const b = sim.byId.get(e.to)
         if (!a || !b) continue
         const active = highlightedId !== null && (e.from === highlightedId || e.to === highlightedId)
         if (!active) {
           if (highlightedId !== null && dense) continue
-          if (zoomedOut && e.auto && e.weight < 0.86) continue
-          if (dense && e.auto && e.weight < 0.8) continue
+          if (zoomedOut && e.auto && e.weight < 0.9) continue
+          if (dense && e.auto && e.weight < 0.84) continue
         }
         const ax = sx(a.x); const ay = sy(a.y); const bx = sx(b.x); const by = sy(b.y)
         if ((ax < -80 && bx < -80) || (ay < -80 && by < -80) || (ax > rect.width + 80 && bx > rect.width + 80) || (ay > rect.height + 80 && by > rect.height + 80)) continue
-        ctx.globalAlpha = active ? 0.95 : e.relation === 'hint' ? (zoomedOut ? 0.18 : 0.34) : zoomedOut ? 0.30 : 0.58
-        ctx.strokeStyle = active ? 'rgba(250,204,21,0.92)' : e.relation === 'hint' ? 'rgba(34,211,238,0.22)' : e.auto ? 'rgba(148,163,184,0.18)' : 'rgba(132,204,22,0.32)'
-        ctx.lineWidth = active ? 2.25 : e.relation === 'hint' ? Math.max(0.25, 0.7 * cam.scale) : Math.max(0.3, Math.min(1.3, e.weight * 1.25 * cam.scale))
-        if (e.relation === 'hint') ctx.setLineDash([2.5, 5])
+        ctx.globalAlpha = active ? 0.95 : e.relation === 'hint' ? (zoomedOut ? 0.14 : 0.26) : zoomedOut ? 0.24 : 0.46
+        ctx.strokeStyle = active ? 'rgba(250,204,21,0.92)' : e.relation === 'hint' ? 'rgba(34,211,238,0.20)' : e.auto ? 'rgba(148,163,184,0.16)' : 'rgba(132,204,22,0.30)'
+        ctx.lineWidth = active ? 2.25 : Math.max(0.25, Math.min(1.15, e.weight * 1.1 * cam.scale))
+        if (!dense && e.relation === 'hint') ctx.setLineDash([2.5, 5])
         else ctx.setLineDash([])
         ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke()
         ctx.setLineDash([])
       }
+      let drawnNodes = 0
       for (const { node, x, y, r } of sim.nodes) {
         const px = sx(x); const py = sy(y)
         const rr = Math.max(1.8, r * Math.max(0.55, Math.min(1.7, cam.scale)))
@@ -411,23 +408,29 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
         const neighbor = sim.neighbors.has(node.id) && highlightedId !== null && !selected
         ctx.globalAlpha = dimFilter || dimHighlight ? 0.12 : 1
 
-        if ((selected || neighbor || node.degree >= 6) && cam.scale > 0.35) {
+        if ((selected || neighbor || (!dense && node.degree >= 6)) && cam.scale > 0.35) {
           ctx.globalAlpha = selected ? 0.32 : neighbor ? 0.18 : 0.10
           ctx.fillStyle = selected ? '#facc15' : neighbor ? '#22d3ee' : colorForDegree(node.degree)
           ctx.beginPath(); ctx.arc(px, py, rr + (selected ? 10 : 6), 0, Math.PI * 2); ctx.fill()
           ctx.globalAlpha = dimFilter || dimHighlight ? 0.12 : 1
         }
 
-        const grad = ctx.createRadialGradient(px - rr * 0.35, py - rr * 0.35, 0, px, py, rr)
-        grad.addColorStop(0, '#ffffff')
-        grad.addColorStop(0.18, selected ? '#fde68a' : neighbor ? '#a5f3fc' : '#e0f2fe')
-        grad.addColorStop(0.52, selected ? '#facc15' : neighbor ? '#22d3ee' : colorForDegree(node.degree))
-        grad.addColorStop(1, '#0f172a')
-        ctx.fillStyle = grad
+        const gradientLimit = zoomedOut ? frameBudget.zoomedOutGradientLimit : frameBudget.nodeGradientLimit
+        if (selected || neighbor || (!dense && drawnNodes < gradientLimit) || (dense && !zoomedOut && node.degree >= 10 && drawnNodes < gradientLimit)) {
+          const grad = ctx.createRadialGradient(px - rr * 0.35, py - rr * 0.35, 0, px, py, rr)
+          grad.addColorStop(0, '#ffffff')
+          grad.addColorStop(0.2, selected ? '#fde68a' : neighbor ? '#a5f3fc' : '#e0f2fe')
+          grad.addColorStop(0.56, selected ? '#facc15' : neighbor ? '#22d3ee' : colorForDegree(node.degree))
+          grad.addColorStop(1, '#0f172a')
+          ctx.fillStyle = grad
+        } else {
+          ctx.fillStyle = selected ? '#facc15' : neighbor ? '#22d3ee' : colorForDegree(node.degree)
+        }
         ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill()
+        drawnNodes++
 
-        ctx.globalAlpha = selected ? 0.9 : 0.45
-        ctx.strokeStyle = selected ? '#fef3c7' : neighbor ? '#cffafe' : 'rgba(226,232,240,0.45)'
+        ctx.globalAlpha = selected ? 0.9 : 0.38
+        ctx.strokeStyle = selected ? '#fef3c7' : neighbor ? '#cffafe' : 'rgba(226,232,240,0.38)'
         ctx.lineWidth = selected ? 1.8 : 0.75
         ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.stroke()
 
@@ -440,11 +443,19 @@ export default function LargeGraphRenderer({ data, highlightedId, filter, onSele
         ctx.globalAlpha = 1
       }
     }
+    const needsAnimation = () => {
+      const sim = simRef.current
+      return camera.current.dragging || !!(sim && sim.alpha > 0.015)
+    }
     const loop = () => {
       drawNow()
-      if (running) raf = requestAnimationFrame(loop)
+      if (running && needsAnimation()) raf = requestAnimationFrame(loop)
     }
-    drawRef.current = () => drawNow()
+    drawRef.current = () => {
+      cancelAnimationFrame(raf)
+      drawNow()
+      if (running && needsAnimation()) raf = requestAnimationFrame(loop)
+    }
     raf = requestAnimationFrame(loop)
     const ro = new ResizeObserver(() => drawRef.current())
     if (wrapRef.current) ro.observe(wrapRef.current)

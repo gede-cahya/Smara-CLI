@@ -33,6 +33,20 @@ type LineageEntry struct {
 	Snapshot    string    `json:"snapshot,omitempty"`
 }
 
+type AutoSkillMetadata struct {
+	Enabled                  bool   `json:"enabled"`
+	Mode                     string `json:"mode,omitempty"`
+	CreatePolicy             string `json:"create_policy,omitempty"`
+	MinimumToolActions       int    `json:"minimum_tool_actions"`
+	RepeatedWorkflowRequired bool   `json:"repeated_workflow_required"`
+	UpgradePolicy            string `json:"upgrade_policy,omitempty"`
+	ExecuteAfterCreate       bool   `json:"execute_after_create"`
+	ExecuteAfterUpgrade      bool   `json:"execute_after_upgrade"`
+	ApprovalRequired         bool   `json:"approval_required"`
+	LineageBackup            bool   `json:"lineage_backup"`
+	MaxAutoUpgradeRetries    int    `json:"max_auto_upgrade_retries,omitempty"`
+}
+
 // Skill is a reusable automation recipe.
 type Skill struct {
 	Name               string              `json:"name"`
@@ -49,8 +63,28 @@ type Skill struct {
 	Dependencies       []string            `json:"dependencies,omitempty"`
 	DependencyWorkflow *DependencyWorkflow `json:"dependency_workflow,omitempty"`
 	Risk               *RiskMetadata       `json:"risk,omitempty"`
+	AutoSkill          *AutoSkillMetadata  `json:"auto_skill,omitempty"`
 	Lineage            []LineageEntry      `json:"lineage,omitempty"`
 	Children           []string            `json:"children,omitempty"`
+}
+
+func cloneAutoSkillMetadata(a *AutoSkillMetadata) *AutoSkillMetadata {
+	if a == nil {
+		return nil
+	}
+	return &AutoSkillMetadata{
+		Enabled:                  a.Enabled,
+		Mode:                     a.Mode,
+		CreatePolicy:             a.CreatePolicy,
+		MinimumToolActions:       a.MinimumToolActions,
+		RepeatedWorkflowRequired: a.RepeatedWorkflowRequired,
+		UpgradePolicy:            a.UpgradePolicy,
+		ExecuteAfterCreate:       a.ExecuteAfterCreate,
+		ExecuteAfterUpgrade:      a.ExecuteAfterUpgrade,
+		ApprovalRequired:         a.ApprovalRequired,
+		LineageBackup:            a.LineageBackup,
+		MaxAutoUpgradeRetries:    a.MaxAutoUpgradeRetries,
+	}
 }
 
 func cloneRiskMetadata(r *RiskMetadata) *RiskMetadata {
@@ -95,7 +129,7 @@ func (s *Skill) WithArgs(runtimeArgs map[string]interface{}) *Skill {
 		Name: s.Name, Description: s.Description, Steps: make([]Step, len(s.Steps)), Version: s.Version,
 		Tags: append([]string(nil), s.Tags...), Author: s.Author, SourceURL: s.SourceURL, Trigger: s.Trigger,
 		Params: append([]ParamDef(nil), s.Params...), ParentID: s.ParentID, CategoryPath: append([]string(nil), s.CategoryPath...),
-		Dependencies: append([]string(nil), s.Dependencies...), DependencyWorkflow: cloneDependencyWorkflow(s.DependencyWorkflow), Risk: cloneRiskMetadata(s.Risk), Lineage: append([]LineageEntry(nil), s.Lineage...),
+		Dependencies: append([]string(nil), s.Dependencies...), DependencyWorkflow: cloneDependencyWorkflow(s.DependencyWorkflow), Risk: cloneRiskMetadata(s.Risk), AutoSkill: cloneAutoSkillMetadata(s.AutoSkill), Lineage: append([]LineageEntry(nil), s.Lineage...),
 		Children: append([]string(nil), s.Children...),
 	}
 	for i, step := range s.Steps {

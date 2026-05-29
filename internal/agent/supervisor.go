@@ -34,6 +34,7 @@ const (
 // request/session context so Smara can keep working until the task completes.
 var postToolLLMTimeout time.Duration
 var postToolQuickFinishTimeout = 4 * time.Second
+var postToolFinalMaxAttempts = 4
 
 const needMoreToolsMarker = "SMARA_NEED_MORE_TOOLS"
 
@@ -169,17 +170,28 @@ func NewSupervisorWithConfig(provider llm.Provider, providerCfg llm.ProviderConf
 func (s *Supervisor) GetStats() Stats {
 	s.stats.mu.RLock()
 	defer s.stats.mu.RUnlock()
-	return s.stats
+	return Stats{
+		PromptCount:     s.stats.PromptCount,
+		TotalTokens:     s.stats.TotalTokens,
+		TotalCost:       s.stats.TotalCost,
+		TotalDuration:   s.stats.TotalDuration,
+		AvgTokensPerReq: s.stats.AvgTokensPerReq,
+		SessionStart:    s.stats.SessionStart,
+		InputTokens:     s.stats.InputTokens,
+		OutputTokens:    s.stats.OutputTokens,
+		LastDuration:    s.stats.LastDuration,
+	}
 }
 
-// updateStats updates usage statistics after a prompt is processed.
 func (s *Supervisor) updateStats(tokens int, cost float64, duration time.Duration) {
 	s.stats.mu.Lock()
 	defer s.stats.mu.Unlock()
+
 	s.stats.PromptCount++
 	s.stats.TotalTokens += tokens
 	s.stats.TotalCost += cost
 	s.stats.TotalDuration += duration
+	s.stats.LastDuration = duration
 	if s.stats.PromptCount > 0 {
 		s.stats.AvgTokensPerReq = s.stats.TotalTokens / s.stats.PromptCount
 	}
@@ -563,15 +575,17 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 				if s.memStore == nil {
 					return "Memory store tidak tersedia.", nil
 				}
-				if s.provider == nil {
-					return "LLM provider tidak tersedia untuk generate embedding.", nil
-				}
 				content, _ := tc.Args["content"].(string)
-				embedding, err := s.provider.GenerateEmbedding(content)
-				if err != nil {
-					return "", fmt.Errorf("gagal generate embedding: %w", err)
+				if strings.TrimSpace(content) == "" {
+					return "", fmt.Errorf("argumen 'content' wajib diisi")
 				}
-				_, err = s.memStore.Save(content, "user_preference", "agent", s.workspaceID, embedding)
+				var embedding []float32
+				if s.provider != nil {
+					if emb, err := s.provider.GenerateEmbedding(content); err == nil {
+						embedding = emb
+					}
+				}
+				_, err := s.memStore.Save(content, "user_preference", "agent", s.workspaceID, embedding)
 				if err != nil {
 					return "", fmt.Errorf("gagal menyimpan memori: %w", err)
 				}
@@ -1249,6 +1263,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		sysPrompt += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx
 	}
 	sysPrompt += buildSkillContext()
+	sysPrompt += buildOrchestrationRuleSkillContext()
 	if BuiltinDB != nil {
 		if profile, err := LoadProfile(BuiltinDB); err == nil {
 			sysPrompt += "\n\n" + profile.ToContext()
@@ -1380,6 +1395,25 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 				s.callback.OnPhaseChange("Waiting", "Waiting for provider response...")
 			}
 			resp, err = s.provider.Chat(messages)
+			if err != nil && shouldRetryPlainChatWithStream(err) {
+				if streamer, ok := s.provider.(llm.Streamer); ok {
+					if s.callback.OnPhaseChange != nil {
+						s.callback.OnPhaseChange("Waiting", "Provider timed out before first token; retrying with streaming...")
+					}
+					streamCb := func(chunk string, isThinking bool, phaseHint llm.PhaseHint) {
+						if s.callback.OnPhaseChange != nil {
+							phaseName := phaseNameFromHint(phaseHint)
+							if phaseName != "" {
+								s.callback.OnPhaseChange(phaseName, phaseDescFromHint(phaseHint))
+							}
+						}
+						if s.callback.OnStream != nil {
+							s.callback.OnStream(chunk, isThinking)
+						}
+					}
+					resp, err = streamer.ChatStream(messages, streamCb)
+				}
+			}
 		}
 
 		if err != nil {
@@ -1485,6 +1519,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		sysPrompt2 += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx2
 	}
 	sysPrompt2 += buildSkillContext()
+	sysPrompt2 += buildOrchestrationRuleSkillContext()
 	if BuiltinDB != nil {
 		if profile, err := LoadProfile(BuiltinDB); err == nil {
 			sysPrompt2 += "\n\n" + profile.ToContext()
@@ -1604,8 +1639,11 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		}
 
 		attempts := 1
-		if postToolCall && postToolLLMTimeout > 0 {
-			attempts = 2
+		if postToolCall {
+			attempts = postToolFinalMaxAttempts
+			if attempts < 1 {
+				attempts = 1
+			}
 		}
 		for attempt := 1; attempt <= attempts; attempt++ {
 			callCtx := ctx
@@ -1662,7 +1700,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				}
 			}
 			cancelCall()
-			if err == nil || !postToolCall || attempt == attempts {
+			if err == nil || !postToolCall || attempt == attempts || !shouldRetryPlainChatWithStream(err) {
 				break
 			}
 			messages = append(messages, llm.Message{
@@ -1673,7 +1711,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 		if err != nil {
 			if postToolCall && len(observedToolOutputs) > 0 {
-				fallback := synthesizeFallbackSummaryFromOutputs(thoughts, toolsExecuted, observedToolOutputs, err)
+				fallback := synthesizeToolOutputSummary(thoughts, toolsExecuted, observedToolOutputs, err)
 				return fallback, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 			}
 			return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
@@ -1710,6 +1748,19 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			content := strings.TrimSpace(resp.Content)
 			if content == "" {
 				content = synthesizeFallbackSummary(thoughts, toolsExecuted)
+			}
+			if shouldRejectFinalAnswer(userPrompt, content, toolsExecuted, observedToolOutputs) {
+				if budget.ShouldContinue(iteration + 1) {
+					messages = append(messages, llm.Message{
+						Role:    llm.RoleSystem,
+						Content: buildFinalAnswerRetryPrompt(content, len(observedToolOutputs) > 0),
+					})
+					continue
+				}
+				if len(observedToolOutputs) > 0 {
+					return synthesizeToolOutputSummary(thoughts, toolsExecuted, observedToolOutputs, nil), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+				}
+				return synthesizeFallbackSummary(thoughts, toolsExecuted), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 			}
 			return content, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 		}
@@ -1802,7 +1853,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			s.callback.OnPhaseChange("Generating", "Reviewing tool results and composing final response...")
 		}
 
-		if shouldAttemptQuickFinish(toolsExecuted) {
+		if shouldAttemptQuickFinish(s.mode, toolsExecuted) {
 			if finalContent, ok := s.tryQuickFinishFromToolOutputs(ctx, userPrompt, observedToolOutputs, toolsExecuted); ok {
 				return finalContent, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 			}
@@ -1842,7 +1893,11 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 
 	resp, err := s.provider.Chat(messages)
 	if err != nil {
-		return "", "", nil, nil, fmt.Errorf("gagal mendapatkan response final: %w", err)
+		if len(observedToolOutputs) > 0 {
+			fallback := synthesizeToolOutputSummary(thoughts, toolsExecuted, observedToolOutputs, err)
+			return fallback, strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+		}
+		return synthesizeFallbackSummary(thoughts, toolsExecuted), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 	}
 
 	// Also strip DSML on the fallback path — some models still emit DSML
@@ -1909,6 +1964,18 @@ func buildStreamCallback(ctx context.Context, onPhase func(phase, description st
 	}
 }
 
+func shouldRetryPlainChatWithStream(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status 504") ||
+		strings.Contains(msg, "initial response timeout") ||
+		strings.Contains(msg, "final response timeout") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "gateway timeout")
+}
+
 func toolsForTurn(tools []llm.ToolFunction, postToolCall bool) []llm.ToolFunction {
 	if !postToolCall || len(tools) == 0 {
 		return tools
@@ -1936,7 +2003,10 @@ func toolsForTurn(tools []llm.ToolFunction, postToolCall bool) []llm.ToolFunctio
 	return filtered
 }
 
-func shouldAttemptQuickFinish(toolsExecuted []string) bool {
+func shouldAttemptQuickFinish(mode Mode, toolsExecuted []string) bool {
+	if mode == ModeRush || mode == ModePlan || mode == ModeTest || mode == ModeWorkflow {
+		return false
+	}
 	if len(toolsExecuted) == 0 {
 		return false
 	}
@@ -1990,10 +2060,98 @@ func (s *Supervisor) tryQuickFinishFromToolOutputs(ctx context.Context, userProm
 		if cleaned == "" || strings.Contains(cleaned, needMoreToolsMarker) {
 			return "", false
 		}
+		if shouldRejectFinalAnswer(userPrompt, cleaned, toolsExecuted, toolOutputs) {
+			return "", false
+		}
 		return cleaned, true
 	case <-callCtx.Done():
 		return "", false
 	}
+}
+
+func shouldRejectFinalAnswer(userPrompt, content string, toolsExecuted, toolOutputs []string) bool {
+	normalized := normalizeFinalAnswer(content)
+	if normalized == "" {
+		return true
+	}
+	if isGenericCompletionAnswer(normalized) {
+		return true
+	}
+	if !looksLikeActionPrompt(userPrompt) {
+		return false
+	}
+	if len([]rune(strings.TrimSpace(content))) > 80 {
+		return false
+	}
+	if strings.HasPrefix(normalized, "siap ") &&
+		strings.Contains(normalized, "sudah") &&
+		(strings.Contains(normalized, "cek") || strings.Contains(normalized, "periksa") || strings.Contains(normalized, "bantu")) {
+		return true
+	}
+	if len(toolsExecuted) > 0 || len(toolOutputs) > 0 {
+		return false
+	}
+	return strings.Contains(normalized, "sudah") &&
+		(strings.Contains(normalized, "cek") || strings.Contains(normalized, "periksa")) &&
+		!strings.Contains(normalized, "belum")
+}
+
+func normalizeFinalAnswer(content string) string {
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	replacer := strings.NewReplacer(
+		".", " ",
+		",", " ",
+		"!", " ",
+		"?", " ",
+		":", " ",
+		";", " ",
+		"\n", " ",
+		"\t", " ",
+	)
+	normalized = replacer.Replace(normalized)
+	return strings.Join(strings.Fields(normalized), " ")
+}
+
+func isGenericCompletionAnswer(normalized string) bool {
+	generic := map[string]bool{
+		"siap sudah saya bantu cek":         true,
+		"siap sudah saya cek":               true,
+		"siap sudah saya bantu periksa":     true,
+		"siap sudah saya periksa":           true,
+		"sudah saya bantu cek":              true,
+		"sudah saya cek":                    true,
+		"sudah saya bantu periksa":          true,
+		"sudah saya periksa":                true,
+		"sudah dicek":                       true,
+		"sudah diperiksa":                   true,
+		"baik sudah saya bantu cek":         true,
+		"oke sudah saya bantu cek":          true,
+		"ok sudah saya bantu cek":           true,
+		"siap sudah saya bantu cek kembali": true,
+	}
+	return generic[normalized]
+}
+
+func looksLikeActionPrompt(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	keywords := []string{
+		"build", "test", "cek", "check", "periksa", "audit", "review",
+		"fix", "perbaiki", "debug", "error", "gagal", "kenapa",
+		"jalankan", "run", "verifikasi", "validasi",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFinalAnswerRetryPrompt(rejected string, hasToolOutputs bool) string {
+	if hasToolOutputs {
+		return fmt.Sprintf("Jawaban final sebelumnya terlalu generik dan tidak boleh dipakai: %q.\n\nTulis jawaban final konkret berdasarkan hasil tool yang sudah tersedia. Sebutkan command/file/tool yang dijalankan, status akhirnya, error/fix bila ada, dan verifikasi akhir. Jangan jawab hanya 'sudah dicek' atau 'siap'.", rejected)
+	}
+	return fmt.Sprintf("Jawaban final sebelumnya terlalu generik dan tidak boleh dipakai: %q.\n\nUntuk prompt ini, jangan klaim sudah mengecek tanpa hasil konkret. Jika perlu data workspace, panggil tool yang relevan. Jika tidak bisa mengecek, katakan eksplisit bahwa pengecekan belum dilakukan dan jelaskan langkah berikutnya.", rejected)
 }
 
 func compactToolList(toolsExecuted []string) string {
@@ -2043,6 +2201,8 @@ func buildTaskBreakdownPolicy(mode Mode) string {
 KEBIJAKAN PEMECAHAN TUGAS:
 - Untuk task yang butuh lebih dari 2 tool call, beberapa file, atau beberapa fase, pecah dulu menjadi checklist 3-7 subtask sebelum eksekusi.
 - Kerjakan satu subtask sampai selesai sebelum lanjut ke subtask berikutnya; jangan eksplorasi acak tanpa tujuan subtask yang jelas.
+- Jika user meminta build/test/verifikasi, deteksi target proyek dari Makefile, go.mod, package.json, atau subfolder terkait sebelum menjalankan command. Prioritaskan target resmi repo seperti "make build" bila tersedia, bukan asumsi "npm run build" di root.
+- Bila build/test gagal karena error kode atau konfigurasi yang bisa diperbaiki di workspace, perbaiki penyebabnya dan rerun verifikasi sebelum memberi jawaban final. Jangan berhenti hanya dengan menyarankan command lain kecuali benar-benar butuh input user.
 - Setelah tiap subtask besar selesai, beri progress singkat: selesai, sedang dikerjakan, atau diblokir.
 - Jika konteks belum cukup setelah eksplorasi awal, berhenti dan tanyakan klarifikasi spesifik daripada menghabiskan iterasi.
 - Jika mendekati batas iterasi, buat jawaban final parsial dengan status, hasil tool terakhir, dan subtask berikutnya yang paling aman.`
@@ -2105,26 +2265,27 @@ func synthesizeFallbackSummary(thoughts, toolsExecuted []string) string {
 	return sb.String()
 }
 
-func synthesizeFallbackSummaryFromOutputs(thoughts, toolsExecuted, toolOutputs []string, cause error) string {
+func synthesizeToolOutputSummary(thoughts, toolsExecuted, toolOutputs []string, finalErr error) string {
 	var sb strings.Builder
-	sb.WriteString("⚠ Provider LLM timeout saat menyusun jawaban final, jadi Smara merangkum hasil tool yang sudah tersedia.\n")
-	if cause != nil {
-		sb.WriteString(fmt.Sprintf("Penyebab: %v\n", cause))
+	sb.WriteString("Saya sudah menjalankan tool yang dibutuhkan, tapi jawaban final otomatis belum sempat tersusun. Berikut hasil terakhir yang tersedia.\n")
+
+	if finalErr != nil {
+		sb.WriteString(fmt.Sprintf("\nError finalisasi: %s\n", finalErr.Error()))
 	}
 
 	if len(toolsExecuted) > 0 {
-		sb.WriteString(fmt.Sprintf("\n🔧 Tools dijalankan (%d): %s\n", len(toolsExecuted), compactToolList(toolsExecuted)))
+		sb.WriteString(fmt.Sprintf("\nTools dijalankan (%d): %s\n", len(toolsExecuted), compactToolList(toolsExecuted)))
 	}
 
 	if len(toolOutputs) > 0 {
-		sb.WriteString("\n📌 Hasil tool terakhir:\n")
+		sb.WriteString("\nHasil tool terakhir:\n")
 		for _, output := range lastNStrings(toolOutputs, 3) {
 			trimmed := strings.TrimSpace(output)
 			if trimmed == "" {
 				continue
 			}
 			if len(trimmed) > 1200 {
-				trimmed = trimmed[:1200] + "…"
+				trimmed = trimmed[:1200] + "..."
 			}
 			sb.WriteString("\n```\n" + trimmed + "\n```\n")
 		}
@@ -2133,11 +2294,9 @@ func synthesizeFallbackSummaryFromOutputs(thoughts, toolsExecuted, toolOutputs [
 	if len(thoughts) > 0 {
 		sb.WriteString("\n")
 		sb.WriteString(synthesizeFallbackSummary(thoughts, toolsExecuted))
-	} else {
-		sb.WriteString("\nSaran: jalankan lagi prompt yang sama untuk melanjutkan dari hasil tool terakhir, atau gunakan provider/proxy lain jika timeout berulang.")
 	}
 
-	return strings.TrimSpace(sb.String())
+	return sb.String()
 }
 
 func lastNStrings(values []string, n int) []string {

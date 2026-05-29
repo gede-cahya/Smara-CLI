@@ -58,10 +58,22 @@ func RunWorkflow(supervisor *agent.Supervisor, provider llm.Provider, prompt str
 
 // RunWorkflowWithDir executes a workflow with a specific project directory.
 func RunWorkflowWithDir(supervisor *agent.Supervisor, provider llm.Provider, prompt, projectDir string) (*WorkflowResult, error) {
+	return RunWorkflowWithDirAndSetup(supervisor, provider, prompt, projectDir, nil)
+}
+
+// RunWorkflowWithDirAndSetup executes a workflow with optional orchestrator setup hooks.
+func RunWorkflowWithDirAndSetup(supervisor *agent.Supervisor, provider llm.Provider, prompt, projectDir string, setup func(*Orchestrator)) (*WorkflowResult, error) {
+	return RunWorkflowWithDirAndSetupContext(context.Background(), supervisor, provider, prompt, projectDir, setup)
+}
+
+func RunWorkflowWithDirAndSetupContext(ctx context.Context, supervisor *agent.Supervisor, provider llm.Provider, prompt, projectDir string, setup func(*Orchestrator)) (*WorkflowResult, error) {
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		return nil, fmt.Errorf("gagal buat project dir: %w", err)
 	}
 
 	orch := NewOrchestrator(supervisor, provider, projectDir)
-	return orch.Run(context.Background(), prompt)
+	if setup != nil {
+		setup(orch)
+	}
+	return orch.Run(ctx, prompt)
 }

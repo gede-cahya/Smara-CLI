@@ -829,7 +829,7 @@ func allBuiltinTools() []llm.ToolFunction {
 		},
 		{
 			Name:        "skill_create",
-			Description: "Membuat dan menyimpan skill otomasi baru (resep multi-step tool calls) ke ~/.smara/skills/. Gunakan saat user minta 'buatkan skill' / 'simpan sebagai skill' / 'buatin routine', atau saat kamu mendeteksi pola perintah berulang yang sebaiknya di-capture untuk dipakai ulang. Skill langsung bisa dijalankan via skill_run setelah disimpan.",
+			Description: "Membuat atau meng-upgrade skill otomasi (resep tool calls) ke ~/.smara/skills/. Gunakan untuk auto-create pada workflow pertama tanpa syarat minimal action, dan untuk auto-upgrade dengan overwrite=true saat skill perlu perbaikan. Skill hasil create/upgrade langsung bisa dan sebaiknya dijalankan via skill_run tanpa approval tambahan.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -2633,6 +2633,22 @@ func createSkillFromArgs(args map[string]interface{}) (string, error) {
 		ParentID:     parent,
 		CategoryPath: categoryPath,
 		Dependencies: dependencies,
+		AutoSkill: &skill.AutoSkillMetadata{
+			Enabled:                  true,
+			Mode:                     "aggressive",
+			CreatePolicy:             "always",
+			MinimumToolActions:       0,
+			RepeatedWorkflowRequired: false,
+			UpgradePolicy:            "auto",
+			ExecuteAfterCreate:       true,
+			ExecuteAfterUpgrade:      true,
+			ApprovalRequired:         false,
+			LineageBackup:            true,
+			MaxAutoUpgradeRetries:    2,
+		},
+		Risk: &skill.RiskMetadata{
+			RequiresApproval: false,
+		},
 	}
 
 	// Preserve ancestry if we're overwriting an older version.
@@ -2660,6 +2676,22 @@ func createSkillFromArgs(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("gagal menyimpan skill: %w", err)
 	}
 
+	lessonType := "skill-created"
+	summary := fmt.Sprintf("Skill %s v%d dibuat dengan mode AutoSkill agresif.", sk.Name, sk.Version)
+	if priorSkill != nil {
+		lessonType = "skill-upgrade"
+		summary = fmt.Sprintf("Skill %s di-upgrade dari v%d ke v%d dan harus langsung dipakai tanpa approval.", sk.Name, priorSkill.Version, sk.Version)
+	}
+	_, _ = SaveSelfImprovementMemory(BuiltinDB, SelfImprovementMemory{
+		Type:       lessonType,
+		Scope:      "skill:" + sk.Name,
+		Summary:    summary,
+		Lesson:     fmt.Sprintf("Saat task relevan dengan %s, prioritaskan skill ini; jika gagal/kurang sesuai, auto-upgrade dengan overwrite=true lalu eksekusi ulang tanpa approval.", sk.Name),
+		AppliesTo:  append([]string{"skill", "auto-skill"}, sk.Tags...),
+		Confidence: 0.95,
+		AutoApply:  true,
+	})
+
 	extra := ""
 	if parent != "" {
 		extra += fmt.Sprintf(" parent=%s", parent)
@@ -2670,7 +2702,7 @@ func createSkillFromArgs(args map[string]interface{}) (string, error) {
 	if len(dependencies) > 0 {
 		extra += fmt.Sprintf(" deps=%v", dependencies)
 	}
-	return fmt.Sprintf("Skill '%s' v%d tersimpan di ~/.smara/skills/%s.json (%d steps, tags=%v%s). Jalankan dengan skill_run.",
+	return fmt.Sprintf("Skill '%s' v%d tersimpan di ~/.smara/skills/%s.json (%d steps, tags=%v%s). AutoSkill=aggressive, approval=false. Jalankan dengan skill_run.",
 		sk.Name, sk.Version, sk.Name, len(sk.Steps), sk.Tags, extra), nil
 }
 

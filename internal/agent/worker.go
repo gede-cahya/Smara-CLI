@@ -39,22 +39,44 @@ func NewSpecializedWorker(provider llm.Provider, mcpClients map[string]*mcp.Clie
 
 // Execute runs a task and returns the result.
 func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
-	// Check if task requires MCP or builtin tool call
-	if task.MCPServer != "" && task.ToolName != "" {
+	// Check if task requires MCP or builtin tool call.
+	if task.MCPServer != "" || task.ToolName != "" {
 		if task.MCPServer == builtinMCPServerName {
 			return w.executeBuiltinTask(task)
 		}
-		// Validate: if MCP client exists but tool doesn't, fallback to LLM
-		if client, ok := w.mcpClients[task.MCPServer]; ok && !client.HasTool(task.ToolName) {
-			return w.executeLLMTask(ctx, Task{
-				ID:          task.ID,
-				Description: task.Description + "\n\n[NOTE: Tool '" + task.ToolName + "' tidak tersedia di MCP server '" + task.MCPServer + "'. Menyelesaikan dengan LLM fallback.]",
-			})
+		if task.MCPServer == "" {
+			return TaskResult{
+				TaskID: task.ID,
+				Status: TaskFailed,
+				Error:  fmt.Sprintf("tool task '%s' declares tool_name '%s' but no mcp_server; refusing LLM fallback", task.ID, task.ToolName),
+			}
+		}
+		client, ok := w.mcpClients[task.MCPServer]
+		if !ok {
+			return TaskResult{
+				TaskID: task.ID,
+				Status: TaskFailed,
+				Error:  fmt.Sprintf("MCP server '%s' tidak ditemukan", task.MCPServer),
+			}
+		}
+		if !client.HasTool(task.ToolName) {
+			return TaskResult{
+				TaskID: task.ID,
+				Status: TaskFailed,
+				Error:  fmt.Sprintf("tool '%s' tidak tersedia di MCP server '%s'", task.ToolName, task.MCPServer),
+			}
 		}
 		return w.executeMCPTask(ctx, task)
 	}
+	if strings.EqualFold(task.Type, "tool") || strings.EqualFold(task.Type, "mcp") {
+		return TaskResult{
+			TaskID: task.ID,
+			Status: TaskFailed,
+			Error:  fmt.Sprintf("tool task '%s' tidak memiliki mcp_server/tool_name yang executable", task.ID),
+		}
+	}
 
-	// Otherwise, use LLM to execute the task
+	// Otherwise, use LLM to execute the task.
 	return w.executeLLMTask(ctx, task)
 }
 

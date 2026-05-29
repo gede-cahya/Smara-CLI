@@ -9,7 +9,7 @@ import {
   CheckCircle2, BrainCircuit, Copy, Check, X,
   Paperclip, FileText, FileCode, FileJson, File as FileIcon, Upload,
   Terminal, ChevronDown, ChevronRight, Loader2, AlertCircle, Wrench,
-  Archive, ArchiveRestore, StopCircle, Pencil, Server, Settings,
+  Archive, ArchiveRestore, StopCircle, Pencil, Server, Settings, Mic,
 } from 'lucide-react'
 import type { ChatMessage, WebSessionItem, WebSessionStatus } from '../api'
 import {
@@ -23,6 +23,7 @@ import {
   archiveWebSession,
   unarchiveWebSession,
   cancelWebSession,
+  fetchRoadmapFile,
 } from '../api'
 type Attachment = {
   path: string
@@ -410,10 +411,13 @@ const MODES: Array<{ id: string; label: string; emoji: string; icon: typeof Mess
   { id: 'test', label: 'Test', emoji: '\uD83E\uDDEA', icon: FlaskConical, bg: 'bg-green-600', border: 'border-green-500', text: 'text-green-400' },
   { id: 'image', label: 'Image', emoji: '\uD83C\uDFA8', icon: ImageIcon, bg: 'bg-purple-600', border: 'border-purple-500', text: 'text-purple-400' },
   { id: 'workflow', label: 'Workflow', emoji: '\uD83D\uDD04', icon: ArrowRightLeft, bg: 'bg-smara-600', border: 'border-smara-500', text: 'text-smara-400' },
+  { id: 'voice', label: 'Voice', emoji: '\uD83C\uDFA4', icon: Mic, bg: 'bg-cyan-600', border: 'border-cyan-500', text: 'text-cyan-300' },
 ]
-
 const SESSION_META_KEY = 'smara_chat_sessions'
 const CURRENT_SESSION_KEY = 'smara_current_session'
+const ROADMAP_CACHE_KEY = 'smara_roadmap_cache'
+const MAX_CACHED_ROADMAPS = 20
+const MAX_CACHED_ROADMAP_BYTES = 640 * 1024
 
 
 interface PlanQuest {
@@ -425,6 +429,30 @@ interface PlanQuest {
 interface PlanInsight {
   title: string
   steps: string[]
+  phases?: PlanPhaseDetail[]
+}
+
+interface PlanPhaseDetail {
+  phase: number
+  title: string
+  status?: string
+  objective?: string
+  output?: string
+  deliverables: string[]
+  acceptance: Array<{ text: string; checked: boolean }>
+  implemented: string[]
+  validated: string[]
+}
+
+interface CachedRoadmap {
+  path: string
+  relativePath: string
+  name: string
+  content: string
+  size: number
+  updatedAt: string
+  cachedAt: string
+  workspace?: string
 }
 
 interface ActivePhase {
@@ -446,23 +474,32 @@ interface AnalysisEvent {
   timestamp: Date
 }
 
-type AnalysisFilter = 'all' | 'model' | 'tool' | 'warning' | 'error'
+type AnalysisFilter = 'all' | 'phase' | 'thinking' | 'tool' | 'warning' | 'error'
 
 const ANALYSIS_FILTERS: Array<{ id: AnalysisFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'model', label: 'Model' },
+  { id: 'all', label: 'Semua' },
+  { id: 'phase', label: 'Phase' },
+  { id: 'thinking', label: 'Think' },
   { id: 'tool', label: 'Tool' },
-  { id: 'warning', label: 'Warning' },
+  { id: 'warning', label: 'Warn' },
   { id: 'error', label: 'Error' },
 ]
 
 function analysisEventMatchesFilter(event: AnalysisEvent, filter: AnalysisFilter): boolean {
-  if (filter === 'all') return true
-  if (filter === 'model') return event.kind === 'phase' || event.kind === 'thinking'
-  if (filter === 'tool') return event.kind === 'tool' || !!event.tool || Boolean(event.event?.startsWith('tool_'))
-  if (filter === 'warning') return event.level === 'warning' || /peringatan|warning|heartbeat|timeout|idle/i.test(`${event.title} ${event.detail} ${event.event || ''}`)
-  if (filter === 'error') return event.level === 'error' || /error|gagal|failed/i.test(`${event.title} ${event.detail} ${event.event || ''}`)
-  return true
+  switch (filter) {
+    case 'all':
+      return true
+    case 'phase':
+    case 'thinking':
+    case 'tool':
+      return event.kind === filter
+    case 'warning':
+      return event.level === 'warning'
+    case 'error':
+      return event.level === 'error'
+    default:
+      return true
+  }
 }
 
 interface RunStatus {
@@ -590,10 +627,220 @@ function parsePlanInsight(content: string): PlanInsight | null {
   }
 
   const unique = Array.from(new Set(steps.filter(step => step.length >= 8))).slice(0, 10)
-  if (unique.length < 2) return null
-  const planish = /(context|assumptions|recommended approach|verification|risks|rollback|roadmap|mermaid|lanjutkan|eksekusi)/i.test(content)
+  const phases = parseRoadmapPhases(content)
+  const phaseSteps = phases.map(phase => phase.title).filter(Boolean)
+  const hasPhaseStatus = phases.some(phase => !!phase.status)
+  const finalSteps = phases.length >= 2 && hasPhaseStatus ? phaseSteps : unique.length >= 2 ? unique : phaseSteps
+  if (finalSteps.length < 2) return null
+  const planish = /(context|assumptions|recommended approach|verification|risks|rollback|roadmap|status sekarang|progress|progres|mermaid|lanjutkan|eksekusi)/i.test(content)
   if (!planish) return null
-  return { title: 'Roadmap Plan', steps: unique }
+  return { title: 'Roadmap Plan', steps: finalSteps.slice(0, 10), phases }
+}
+
+function parseRoadmapPhases(content: string): PlanPhaseDetail[] {
+  const tableMeta = parseRoadmapTableMeta(content)
+  const headingRe = /^##\s+Phase\s+(\d+)\s*(?:[-–—]\s*)?(.+?)\s*$/gim
+  const matches = Array.from(content.matchAll(headingRe))
+  const phases: PlanPhaseDetail[] = []
+  const byPhase = new Map<number, PlanPhaseDetail>()
+
+  for (let idx = 0; idx < matches.length; idx++) {
+    const match = matches[idx]
+    const phase = Number(match[1])
+    const title = cleanPlanStep(match[2] || `Phase ${phase}`)
+    const start = (match.index || 0) + match[0].length
+    const end = idx + 1 < matches.length ? matches[idx + 1].index || content.length : content.length
+    const block = content.slice(start, end)
+    const meta = tableMeta.get(phase)
+    const detail = {
+      phase,
+      title,
+      status: firstNonEmpty(extractStatus(block), meta?.status),
+      objective: extractSectionText(block, 'Objective'),
+      output: meta?.output,
+      deliverables: extractSectionList(block, 'Deliverables'),
+      acceptance: extractAcceptance(block),
+      implemented: extractSectionList(block, 'Implemented in').concat(extractLabelList(block, 'Implemented in')),
+      validated: extractValidated(block),
+    }
+    phases.push(detail)
+    byPhase.set(phase, detail)
+  }
+
+  if (tableMeta.size > 0) {
+    return Array.from(tableMeta.entries()).map(([phase, meta]) => {
+      const detail = byPhase.get(phase)
+      if (!detail) {
+        return {
+          phase,
+          title: meta.focus || `Phase ${phase}`,
+          status: meta.status,
+          output: meta.output,
+          deliverables: [],
+          acceptance: [],
+          implemented: [],
+          validated: [],
+        }
+      }
+      return {
+        ...detail,
+        title: detail.title || meta.focus || `Phase ${phase}`,
+        status: firstNonEmpty(detail.status, meta.status),
+        output: firstNonEmpty(detail.output, meta.output),
+      }
+    })
+  }
+
+  if (phases.length > 0) return phases.sort((a, b) => a.phase - b.phase)
+  return Array.from(tableMeta.entries()).map(([phase, meta]) => ({
+    phase,
+    title: meta.focus || `Phase ${phase}`,
+    status: meta.status,
+    output: meta.output,
+    deliverables: [],
+    acceptance: [],
+    implemented: [],
+    validated: [],
+  }))
+}
+
+function parseRoadmapTableMeta(content: string): Map<number, { focus?: string; output?: string; status?: string }> {
+  const out = new Map<number, { focus?: string; output?: string; status?: string }>()
+  const lines = content.split(/\r?\n/)
+  for (const line of lines) {
+    if (!/^\|/.test(line)) continue
+    const cells = line.split('|').map(x => x.trim()).filter(Boolean)
+    if (cells.length < 2 || cells.every(isMarkdownTableSeparator)) continue
+    if (/^(?:phase|fase|no\.?|langkah|fokus|status)$/i.test(cells[0])) continue
+
+    const numericPhase = Number(cells[0])
+    if (Number.isFinite(numericPhase)) {
+      out.set(numericPhase, { focus: cells[1], output: cells[2], status: cells[3] })
+      continue
+    }
+
+    const phaseMatch = cells[0].match(/^(?:phase|fase)\s*(\d+)\s*(?:[-–—:]\s*)?(.+)?$/i)
+    if (!phaseMatch) continue
+    const phase = Number(phaseMatch[1])
+    if (!Number.isFinite(phase)) continue
+    const focus = cleanPlanStep(phaseMatch[2] || cells[0].replace(/^(?:phase|fase)\s*\d+\s*(?:[-–—:]\s*)?/i, ''))
+    const status = cells[cells.length - 1]
+    out.set(phase, {
+      focus: focus || `Phase ${phase}`,
+      output: cells.length > 2 ? cells.slice(1, -1).join(' | ') : undefined,
+      status,
+    })
+  }
+  return out
+}
+
+function isMarkdownTableSeparator(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || !trimmed.includes('-')) return false
+  for (const char of trimmed) {
+    if (char !== '-' && char !== ':' && char !== ' ') return false
+  }
+  return true
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  return values.find(value => !!value && value.trim().length > 0)
+}
+
+function extractStatus(block: string): string | undefined {
+  const match = block.match(/Status\s*:\s*\*\*?([^*\n]+)\*\*?/i)
+  return match?.[1]?.trim()
+}
+
+function extractSectionText(block: string, heading: string): string | undefined {
+  const section = extractSectionBlock(block, heading)
+  if (!section) return undefined
+  const text = section
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('```') && !line.startsWith('|'))
+    .join(' ')
+    .trim()
+  return text || undefined
+}
+
+function extractSectionList(block: string, heading: string): string[] {
+  const section = extractSectionBlock(block, heading)
+  if (!section) return []
+  return section
+    .split(/\r?\n/)
+    .filter(line => /^\s*-\s+/.test(line))
+    .map(cleanPlanStep)
+    .filter(Boolean)
+}
+
+function extractAcceptance(block: string): Array<{ text: string; checked: boolean }> {
+  const section = extractSectionBlock(block, 'Acceptance Criteria')
+  if (!section) return []
+  return section
+    .split(/\r?\n/)
+    .filter(line => /^\s*-\s+(?:\[[ xX]\]\s*)?/.test(line))
+    .map(line => {
+      const checked = /^\s*-\s+\[[xX]\]/.test(line)
+      return { text: cleanPlanStep(line), checked }
+    })
+    .filter(item => item.text.length > 0)
+}
+
+function extractValidated(block: string): string[] {
+  const section = extractSectionBlock(block, 'Validated with') || extractSectionBlock(block, 'Commands')
+  if (!section) return extractLabelCodeOrList(block, 'Validated with')
+  const codeMatches = Array.from(section.matchAll(/```(?:\w+)?\n([\s\S]*?)```/g))
+  if (codeMatches.length > 0) {
+    return codeMatches.flatMap(match => match[1].split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+  }
+  return extractSectionList(block, 'Validated with')
+}
+
+function extractLabelList(block: string, label: string): string[] {
+  const section = extractLabelBlock(block, label)
+  if (!section) return []
+  return section
+    .split(/\r?\n/)
+    .filter(line => /^\s*-\s+/.test(line))
+    .map(cleanPlanStep)
+    .filter(Boolean)
+}
+
+function extractLabelCodeOrList(block: string, label: string): string[] {
+  const section = extractLabelBlock(block, label)
+  if (!section) return []
+  const codeMatches = Array.from(section.matchAll(/```(?:\w+)?\n([\s\S]*?)```/g))
+  if (codeMatches.length > 0) {
+    return codeMatches.flatMap(match => match[1].split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+  }
+  return section
+    .split(/\r?\n/)
+    .filter(line => /^\s*-\s+/.test(line) || /^[\w./-]+\s/.test(line.trim()))
+    .map(cleanPlanStep)
+    .filter(Boolean)
+}
+
+function extractLabelBlock(block: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^\\s*${escaped}\\s*:\\s*$`, 'im')
+  const match = block.match(re)
+  if (!match || match.index === undefined) return ''
+  const start = match.index + match[0].length
+  const rest = block.slice(start)
+  const next = rest.search(/^(?:###\s+|\s*[A-Z][A-Za-z ]+:\s*$)/m)
+  return (next >= 0 ? rest.slice(0, next) : rest).trim()
+}
+
+function extractSectionBlock(block: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^###\\s+${escaped}\\s*$`, 'im')
+  const match = block.match(re)
+  if (!match || match.index === undefined) return ''
+  const start = match.index + match[0].length
+  const rest = block.slice(start)
+  const next = rest.search(/^###\s+/m)
+  return (next >= 0 ? rest.slice(0, next) : rest).trim()
 }
 
 function planFlowMermaid(steps: string[]): string {
@@ -613,6 +860,184 @@ function planStepState(step: string, idx: number, activePhases: ActivePhase[], r
   return 'planned'
 }
 
+function isRoadmapProgressPrompt(text: string): boolean {
+  return /roadmap/i.test(text) && /(progress|progres|phase|fase|step|langkah)/i.test(text)
+}
+
+function requestedRoadmapStepIndex(messages: ChatMessage[]): number | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role !== 'user') continue
+    const text = String(msg.content || '')
+    if (!isRoadmapProgressPrompt(text)) return null
+    const match = text.match(/(?:phase|fase|step|langkah)\s*#?\s*(\d+)/i)
+    if (!match) return null
+    const index = Number(match[1]) - 1
+    return Number.isFinite(index) && index >= 0 ? index : null
+  }
+  return null
+}
+
+function latestPlanInsightFromMessages(messages: ChatMessage[]): PlanInsight | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== 'assistant') continue
+    const insight = parsePlanInsight(messages[i].content || '')
+    if (insight) return insight
+  }
+  return null
+}
+
+function roadmapProgressSummary(insight: PlanInsight, activePhases: ActivePhase[], runStatus: RunStatus | null) {
+  const states = insight.steps.map((step, idx) => {
+    const declared = insight.phases?.[idx]?.status?.toLowerCase() || ''
+    if (/done|complete|selesai|success/.test(declared)) return 'done' as const
+    if (/running|in progress|progress|berjalan/.test(declared)) return 'running' as const
+    return planStepState(step, idx, activePhases, runStatus)
+  })
+  const done = states.filter(s => s === 'done').length
+  const running = states.findIndex(s => s === 'running')
+  return { states, done, running, total: states.length }
+}
+
+function RoadmapProgressPanel({
+  insight,
+  activePhases,
+  runStatus,
+  focusIndex,
+}: {
+  insight: PlanInsight
+  activePhases: ActivePhase[]
+  runStatus: RunStatus | null
+  focusIndex: number | null
+}) {
+  const initialOpen = focusIndex !== null && focusIndex < insight.steps.length ? focusIndex : null
+  const [openPhase, setOpenPhase] = useState<number | null>(initialOpen)
+  useEffect(() => {
+    if (focusIndex !== null && focusIndex < insight.steps.length) setOpenPhase(focusIndex)
+  }, [focusIndex, insight.steps.length])
+  const summary = roadmapProgressSummary(insight, activePhases, runStatus)
+  const activeIndex = focusIndex !== null && focusIndex < insight.steps.length ? focusIndex : summary.running
+
+  return (
+    <div className="rounded-xl border border-[#31421f]/50 bg-[#1a2314]/62">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/45 px-3 py-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-lime-100">
+          <CheckCircle2 className="h-3.5 w-3.5 text-smara-300" />
+          Progress roadmap
+        </div>
+        <span className="rounded-full bg-[#26331d]/80 px-2 py-0.5 text-[10px] text-neutral-300">
+          {summary.done}/{summary.total} done
+        </span>
+      </div>
+      <div className="max-h-64 overflow-y-auto p-2">
+        {insight.steps.map((step, idx) => {
+          const state = summary.states[idx]
+          const focused = idx === activeIndex
+          const phase = insight.phases?.[idx]
+          const expanded = openPhase === idx
+          return (
+            <div
+              key={`${idx}-${step}`}
+              className={`rounded-lg text-xs ${
+                focused ? 'bg-smara-300/10 ring-1 ring-smara-300/20' : 'hover:bg-[#20291a]/72'
+              }`}
+            >
+              <button
+                onClick={() => setOpenPhase(expanded ? null : idx)}
+                className="grid w-full grid-cols-[26px_1fr_auto_18px] items-start gap-2 px-2 py-2 text-left"
+              >
+                <span className="font-mono text-[10px] text-neutral-500">{phase?.phase || idx + 1}</span>
+                <div className="min-w-0">
+                  <div className={focused ? 'text-gray-100' : 'text-gray-300'}>{phase?.title || step}</div>
+                  {phase?.output && <div className="mt-0.5 truncate text-[10px] text-neutral-500">{phase.output}</div>}
+                  {focused && (
+                    <div className="mt-1 text-[10px] text-smara-200">
+                      {state === 'running' ? 'Sedang diproses sekarang.' : focusIndex === idx ? 'Phase ini sedang diminta untuk dicek.' : 'Phase aktif roadmap.'}
+                    </div>
+                  )}
+                </div>
+                <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] ${
+                  state === 'done' ? 'bg-emerald-400/10 text-emerald-300'
+                  : state === 'running' ? 'bg-smara-500/10 text-smara-200'
+                  : focused ? 'bg-yellow-500/10 text-yellow-200'
+                  : 'bg-[#26331d]/80 text-neutral-400'
+                }`}>
+                  {state === 'done' ? <CheckCircle2 className="h-3 w-3" /> : state === 'running' ? <Loader2 className="h-3 w-3 animate-spin" /> : focused ? <AlertCircle className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                  {state === 'done' ? 'done' : state === 'running' ? 'running' : focused ? 'focus' : 'planned'}
+                </span>
+                {expanded ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 text-neutral-500" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 text-neutral-500" />}
+              </button>
+              {expanded && phase && (
+                <div className="border-t border-[#31421f]/35 px-2 pb-2 pt-1">
+                  {phase.objective && (
+                    <div className="mb-2 rounded-md bg-[#20291a]/70 px-2 py-1.5 text-[11px] leading-5 text-gray-300">
+                      {phase.objective}
+                    </div>
+                  )}
+                  {phase.deliverables.length > 0 && (
+                    <div className="mb-2">
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Deliverables</div>
+                      <div className="space-y-1">
+                        {phase.deliverables.map(item => (
+                          <div key={item} className="flex gap-1.5 text-[11px] text-gray-300">
+                            <span className="mt-1 h-1 w-1 rounded-full bg-smara-300/70" />
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {phase.acceptance.length > 0 && (
+                    <div className="mb-2">
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Checklist</div>
+                      <div className="space-y-1">
+                        {phase.acceptance.map(item => (
+                          <div key={item.text} className="flex gap-1.5 text-[11px] text-gray-300">
+                            {item.checked || state === 'done' ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-300" /> : <Clock className="mt-0.5 h-3 w-3 shrink-0 text-neutral-500" />}
+                            <span>{item.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(phase.implemented.length > 0 || phase.validated.length > 0) && (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {phase.implemented.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Implemented</div>
+                          <div className="space-y-1">
+                            {phase.implemented.map(item => <div key={item} className="truncate font-mono text-[10px] text-smara-200">{item}</div>)}
+                          </div>
+                        </div>
+                      )}
+                      {phase.validated.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Validated</div>
+                          <div className="space-y-1">
+                            {phase.validated.map(item => <div key={item} className="truncate font-mono text-[10px] text-gray-400">{item}</div>)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!phase.objective && phase.deliverables.length === 0 && phase.acceptance.length === 0 && (
+                    <div className="text-[11px] text-neutral-500">Belum ada detail phase di roadmap.</div>
+                  )}
+                </div>
+              )}
+              {expanded && !phase && (
+                <div className="border-t border-[#31421f]/35 px-2 pb-2 pt-1 text-[11px] text-neutral-500">
+                  Detail phase belum tersedia dari response roadmap.
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function PlanInsightCard({
   insight,
   activePhases,
@@ -628,12 +1053,14 @@ function PlanInsightCard({
   onApprove: () => void
   onReject: () => void
 }) {
+  const summary = roadmapProgressSummary(insight, activePhases, runStatus)
   return (
     <div className="mt-3 overflow-hidden rounded-xl border border-[#31421f]/60 bg-[#20291a]/78">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/60 px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-semibold text-lime-100">
           <ClipboardList className="h-3.5 w-3.5 text-smara-300" />
           {insight.title}
+          <span className="rounded-full bg-[#26331d]/80 px-2 py-0.5 text-[10px] font-normal text-neutral-300">{summary.done}/{summary.total} done</span>
         </div>
         {showApproval && (
           <div className="flex gap-1.5">
@@ -658,11 +1085,12 @@ function PlanInsightCard({
             </thead>
             <tbody className="divide-y divide-[#31421f]/45">
               {insight.steps.map((step, idx) => {
-                const state = planStepState(step, idx, activePhases, runStatus)
+                const state = summary.states[idx]
+                const phase = insight.phases?.[idx]
                 return (
                   <tr key={`${idx}-${step}`} className="bg-[#1a2314]/54">
-                    <td className="px-2 py-2 font-mono text-neutral-500">{idx + 1}</td>
-                    <td className="px-2 py-2 text-gray-200">{step}</td>
+                    <td className="px-2 py-2 font-mono text-neutral-500">{phase?.phase || idx + 1}</td>
+                    <td className="px-2 py-2 text-gray-200">{phase?.title || step}</td>
                     <td className="px-2 py-2">
                       <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
                         state === 'done' ? 'bg-emerald-400/10 text-emerald-300'
@@ -749,6 +1177,60 @@ function getAllSessions(): ChatSession[] {
     if (!raw) return []
     return JSON.parse(raw)
   } catch { return [] }
+}
+
+function normalizeCachedRoadmap(value: unknown): CachedRoadmap | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Partial<CachedRoadmap>
+  const path = String(item.path || item.relativePath || '').trim()
+  const relativePath = String(item.relativePath || item.path || '').trim()
+  const content = String(item.content || '')
+  if (!path || !relativePath || !content) return null
+  return {
+    path,
+    relativePath,
+    name: String(item.name || relativePath.split('/').pop() || 'roadmap.md'),
+    content,
+    size: Number.isFinite(item.size) ? Number(item.size) : content.length,
+    updatedAt: String(item.updatedAt || ''),
+    cachedAt: String(item.cachedAt || ''),
+    workspace: item.workspace ? String(item.workspace) : undefined,
+  }
+}
+
+function getCachedRoadmaps(): CachedRoadmap[] {
+  try {
+    const raw = localStorage.getItem(ROADMAP_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map(normalizeCachedRoadmap).filter(Boolean).slice(0, MAX_CACHED_ROADMAPS) as CachedRoadmap[]
+  } catch {
+    return []
+  }
+}
+
+function saveCachedRoadmaps(items: CachedRoadmap[]): CachedRoadmap[] {
+  let next = items.slice(0, MAX_CACHED_ROADMAPS)
+  while (next.length > 0) {
+    if (rawSetItem(ROADMAP_CACHE_KEY, JSON.stringify(next))) return next
+    next = next.slice(0, -1)
+  }
+  try { localStorage.removeItem(ROADMAP_CACHE_KEY) } catch { /* ignore */ }
+  return []
+}
+
+function upsertCachedRoadmap(items: CachedRoadmap[], item: CachedRoadmap): CachedRoadmap[] {
+  const key = item.relativePath || item.path
+  return [item, ...items.filter(existing => (existing.relativePath || existing.path) !== key)].slice(0, MAX_CACHED_ROADMAPS)
+}
+
+function cachedRoadmapLabel(item: CachedRoadmap): string {
+  const date = item.cachedAt ? new Date(item.cachedAt) : null
+  const when = date && Number.isFinite(date.getTime())
+    ? date.toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : 'cache lama'
+  return `${item.relativePath || item.path} (${when})`
 }
 
 // Per-message size caps. Persisting raw data (image base64 previews, full
@@ -983,6 +1465,24 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const [thinking, setThinking] = useState(false)
   const [connected, setConnected] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
+  const [showRoadmapPopup, setShowRoadmapPopup] = useState(false)
+  const [roadmapGoal, setRoadmapGoal] = useState('')
+  const [roadmapContext, setRoadmapContext] = useState('')
+  const [roadmapPath, setRoadmapPath] = useState('roadmap/parallel-task-orchestration.md')
+  const [cachedRoadmaps, setCachedRoadmaps] = useState<CachedRoadmap[]>(getCachedRoadmaps)
+  const [loadedRoadmap, setLoadedRoadmap] = useState<PlanInsight | null>(() => {
+    const cached = getCachedRoadmaps()[0]
+    return cached ? parsePlanInsight(cached.content) : null
+  })
+  const [loadedRoadmapPath, setLoadedRoadmapPath] = useState(() => {
+    const cached = getCachedRoadmaps()[0]
+    return cached?.relativePath || cached?.path || ''
+  })
+  const [activeRoadmapPath, setActiveRoadmapPath] = useState(() => {
+    const cached = getCachedRoadmaps()[0]
+    return cached?.relativePath || cached?.path || ''
+  })
+  const [loadingRoadmap, setLoadingRoadmap] = useState(false)
   const [mode, setMode] = useState('ask')
   const [spinnerIdx, setSpinnerIdx] = useState(0)
   const [elapsedTick, setElapsedTick] = useState(0) // bumped every ~1s for elapsed display
@@ -1006,10 +1506,16 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const spinnerTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const sessionIdRef = useRef(sessionId)
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
   const streamingAssistantRef = useRef(false)
   const streamBufferRef = useRef('')
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null)
+  const lastVoiceSpokenRef = useRef<string>('')
+  const [voiceSpeaking, setVoiceSpeaking] = useState(false)
+  const [voiceSettings, setVoiceSettings] = useState<any>(null)
   const closingWsRef = useRef(false)
-  sessionIdRef.current = sessionId
 
   useImperativeHandle(ref, () => ({
     openSessions: () => setShowSessions(true),
@@ -1072,12 +1578,26 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const isNearBottom = useCallback(() => {
     const el = messagesScrollRef.current
     if (!el) return true
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 160
   }, [])
 
   const markAutoScrollIfNearBottom = useCallback(() => {
     shouldAutoScrollRef.current = isNearBottom()
   }, [isNearBottom])
+
+  const scrollToBottom = useCallback((force = false) => {
+    if (!force && !shouldAutoScrollRef.current) return
+    const el = messagesScrollRef.current
+    if (!el) return
+    window.requestAnimationFrame(() => {
+      const latest = messagesScrollRef.current
+      if (!latest) return
+      // Pakai direct scrollTop, bukan smooth scrollIntoView.
+      // Smooth animation yang dipanggil berulang saat streaming/tool progress
+      // bisa saling menimpa dan membuat scroll chat glitch/jitter.
+      latest.scrollTop = latest.scrollHeight
+    })
+  }, [])
 
   useEffect(() => {
     refreshBackendSessions()
@@ -1086,10 +1606,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   }, [refreshBackendSessions])
 
   useEffect(() => {
-    if (!shouldAutoScrollRef.current) return
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, thinking, activePhases, analysisEvents, activePlanQuest])
-
+    scrollToBottom()
+  }, [messages, thinking, activePhases, analysisEvents, activePlanQuest, scrollToBottom])
   const pushAnalysisEvent = useCallback((event: Omit<AnalysisEvent, 'id' | 'timestamp'>) => {
     setAnalysisEvents(prev => {
       const next = [
@@ -1212,6 +1730,13 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       showToast('Buka tab Config dari sidebar untuk mengubah provider.')
     }
   }
+
+  const setModeAndNotify = useCallback((nextMode: string) => {
+    setMode(nextMode)
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'mode_change', mode: nextMode }))
+    }
+  }, [])
 
   const connectWs = useCallback(() => {
     if (
@@ -1639,17 +2164,98 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     }
   }, [connectWs])
 
-  const send = useCallback(() => {
-    const text = input.trim()
-    if (!text && attachments.length === 0) return
+  useEffect(() => {
+    fetch('/api/voice/settings')
+      .then(r => r.ok ? r.json() : null)
+      .then(setVoiceSettings)
+      .catch(() => {})
+  }, [])
 
-    // Inject [image:/path] or [file:/path] tokens — same convention used by
-    // the TUI Ctrl+V flow and the Telegram/Discord adapters. The web backend
-    // tacks on a steer hint for the agent to call analyze_image / read_file.
-    const refs = attachments
-      .map(a => `[${a.kind}:${a.path}]`)
-      .join(' ')
-    const messageText = [refs, text].filter(Boolean).join(' ')
+  const showToast = useCallback((msg: string) => {
+    setToast(msg)
+    window.setTimeout(() => setToast(null), 2500)
+  }, [])
+
+  const speakVoice = useCallback(async (text: string) => {
+    const clean = text.trim()
+    if (!clean) return
+    const speakBrowserFallback = (reason?: string) => {
+      if (!('speechSynthesis' in window)) {
+        showToast(reason || 'Gagal membuat voice')
+        setVoiceSpeaking(false)
+        return
+      }
+      window.speechSynthesis.cancel()
+      const utter = new SpeechSynthesisUtterance(clean)
+      utter.lang = voiceSettings?.language || 'id-ID'
+      utter.rate = voiceSettings?.speed || 1
+      utter.volume = voiceSettings?.volume || 1
+      utter.onend = () => setVoiceSpeaking(false)
+      setVoiceSpeaking(true)
+      window.speechSynthesis.speak(utter)
+      if (reason) showToast(`${reason} — fallback ke browser voice`)
+    }
+    if ((voiceSettings?.provider || 'browser') !== 'elevenlabs') {
+      speakBrowserFallback()
+      return
+    }
+    try {
+      voiceAudioRef.current?.pause()
+      voiceAudioRef.current = null
+      setVoiceSpeaking(true)
+      const res = await fetch('/api/voice/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: clean,
+          settings: {
+            ...(voiceSettings || {}),
+            provider: voiceSettings?.provider || 'elevenlabs',
+            language: voiceSettings?.language || 'id-ID',
+            voice_character: voiceSettings?.voice_character,
+            model_id: voiceSettings?.model_id,
+            speed: voiceSettings?.speed || 1,
+            volume: voiceSettings?.volume || 1,
+          },
+        }),
+      })
+      if (!res.ok) {
+        setVoiceSpeaking(false)
+        speakBrowserFallback(await res.text())
+        return
+      }
+      const contentType = res.headers.get('Content-Type') || ''
+      if (!contentType.toLowerCase().startsWith('audio/')) {
+        setVoiceSpeaking(false)
+        speakBrowserFallback(await res.text().catch(() => `Response bukan audio (${contentType || 'unknown content-type'})`))
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      voiceAudioRef.current = audio
+      audio.onended = () => { setVoiceSpeaking(false); URL.revokeObjectURL(url); voiceAudioRef.current = null }
+      audio.onerror = () => { setVoiceSpeaking(false); URL.revokeObjectURL(url); voiceAudioRef.current = null; speakBrowserFallback('Gagal memutar voice ElevenLabs') }
+      await audio.play()
+    } catch (e) {
+      setVoiceSpeaking(false)
+      speakBrowserFallback(e instanceof Error ? e.message : 'Gagal membuat voice ElevenLabs')
+    }
+  }, [showToast, voiceSettings])
+
+  useEffect(() => {
+    if (mode !== 'voice' || thinking || messages.length === 0) return
+    const latest = messages[messages.length - 1]
+    if (latest.role !== 'assistant') return
+    const text = latest.content.trim()
+    if (!text || lastVoiceSpokenRef.current === text) return
+    lastVoiceSpokenRef.current = text
+    void speakVoice(text)
+  }, [messages, mode, speakVoice, thinking])
+  const send = useCallback(() => {
+    const messageText = input.trim()
+    if (!messageText && attachments.length === 0) return
+    const wantsRoadmapProgress = isRoadmapProgressPrompt(messageText)
     const userMessage: ChatMessage = {
       role: 'user',
       content: messageText,
@@ -1662,6 +2268,10 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setInput('')
     setAttachments([])
     setActivePlanQuest(null)
+    if (wantsRoadmapProgress) {
+      setShowRoadmapPopup(true)
+      setShowSessions(false)
+    }
     setAnalysisEvents([])
     setAnalysisFilter('all')
     streamingAssistantRef.current = false
@@ -1752,10 +2362,103 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     }
   }
 
-  const showToast = (msg: string) => {
-    setToast(msg)
-    window.setTimeout(() => setToast(null), 2500)
-  }
+  const activateCachedRoadmap = useCallback((item: CachedRoadmap) => {
+    const insight = parsePlanInsight(item.content)
+    if (!insight) {
+      showToast('Cache roadmap ada, tapi format phase belum dikenali')
+      return
+    }
+    const path = item.relativePath || item.path
+    setLoadedRoadmap(insight)
+    setLoadedRoadmapPath(path)
+    setRoadmapPath(path)
+    setActiveRoadmapPath(path)
+    if (!roadmapGoal.trim()) setRoadmapGoal(insight.title || item.name)
+    setCachedRoadmaps(prev => {
+      const next = saveCachedRoadmaps(upsertCachedRoadmap(prev, { ...item, cachedAt: new Date().toISOString() }))
+      return next
+    })
+    showToast(`Roadmap aktif: ${path}`)
+  }, [roadmapGoal])
+
+  const clearRoadmapCache = useCallback(() => {
+    try { localStorage.removeItem(ROADMAP_CACHE_KEY) } catch { /* ignore */ }
+    setCachedRoadmaps([])
+    setActiveRoadmapPath('')
+    showToast('Cache roadmap dibersihkan')
+  }, [])
+
+  const createRoadmapDraft = useCallback(() => {
+    const goal = roadmapGoal.trim()
+    if (!goal) return
+    const context = roadmapContext.trim()
+    const draft = [
+      `Buat Roadmap Plan untuk: ${goal}`,
+      '',
+      loadedRoadmapPath ? `Roadmap aktif yang sudah dicek: ${loadedRoadmapPath}` : '',
+      loadedRoadmapPath ? '' : '',
+      'Konteks dan batasan:',
+      context || '- Tidak ada konteks tambahan.',
+      '',
+      'Susun response dalam format Plan Mode berikut:',
+      '- Context: problem, alasan perubahan, dan outcome yang dituju.',
+      '- Assumptions / open questions: asumsi dan hal yang perlu diputuskan.',
+      '- Recommended approach: satu pendekatan yang direkomendasikan.',
+      '- Roadmap table: tabel markdown dengan kolom No, Langkah, Output, Status.',
+      '- Flow diagram: blok mermaid flowchart yang menggambarkan alur roadmap.',
+      '- Steps: langkah implementasi berurutan.',
+      '- Files/tools likely needed: file, command, atau tool yang kemungkinan dipakai.',
+      '- Verification: cara menguji end-to-end.',
+      '- Risks / rollback: risiko utama dan cara mitigasi.',
+      '',
+      'Akhiri dengan approval quest SMARA_PLAN_QUEST untuk tombol Lanjutkan/Tidak.',
+    ].join('\n')
+    setModeAndNotify('plan')
+    setInput(draft)
+    setActivePlanQuest(null)
+    setShowRoadmapPopup(false)
+    showToast('Draft Roadmap Plan siap diedit')
+  }, [loadedRoadmapPath, roadmapContext, roadmapGoal, setModeAndNotify])
+
+  const loadRoadmapFile = useCallback(async () => {
+    const path = roadmapPath.trim()
+    if (!path) return
+    setLoadingRoadmap(true)
+    try {
+      const res = await fetchRoadmapFile(path)
+      const insight = parsePlanInsight(res.content)
+      if (!insight) {
+        showToast('Roadmap terbaca, tapi format phase belum dikenali')
+        setLoadedRoadmap(null)
+        setLoadedRoadmapPath(res.relative_path || res.path)
+        return
+      }
+      setLoadedRoadmap(insight)
+      const cached: CachedRoadmap = {
+        path: res.path,
+        relativePath: res.relative_path || res.path,
+        name: res.name,
+        content: res.content,
+        size: res.size,
+        updatedAt: res.updated_at,
+        cachedAt: new Date().toISOString(),
+        workspace: res.workspace,
+      }
+      setLoadedRoadmapPath(cached.relativePath)
+      setActiveRoadmapPath(cached.relativePath)
+      if (res.content.length <= MAX_CACHED_ROADMAP_BYTES) {
+        setCachedRoadmaps(prev => saveCachedRoadmaps(upsertCachedRoadmap(prev, cached)))
+      } else {
+        showToast('Roadmap loaded, tapi terlalu besar untuk cache lokal')
+      }
+      if (!roadmapGoal.trim()) setRoadmapGoal(insight.title || res.name)
+      showToast(`Roadmap loaded: ${res.relative_path || res.name}`)
+    } catch (err) {
+      showToast(`Load roadmap gagal: ${err instanceof Error ? err.message : 'unknown'}`)
+    } finally {
+      setLoadingRoadmap(false)
+    }
+  }, [roadmapGoal, roadmapPath])
 
   const uploadImageDataUrl = useCallback(async (dataUrl: string, name = 'pasted-image.png') => {
     setUploading(true)
@@ -1929,6 +2632,11 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     }
     return -1
   })()
+  const roadmapFocusIndex = requestedRoadmapStepIndex(messages)
+  const latestMessageRoadmapInsight = latestPlanInsightFromMessages(messages)
+  const latestRoadmapInsight = roadmapFocusIndex !== null
+    ? latestMessageRoadmapInsight || loadedRoadmap
+    : loadedRoadmap || latestMessageRoadmapInsight
 
   return (
     <div
@@ -1962,6 +2670,20 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
         </div>
         <div className="flex items-center gap-3">
           <button
+            onClick={() => {
+              setShowRoadmapPopup(v => !v)
+              setShowSessions(false)
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-semibold shadow-lg shadow-smara-950/10 transition-colors md:px-3.5 ${
+              showRoadmapPopup
+                ? 'border-smara-300/45 bg-smara-300/14 text-smara-100'
+                : 'border-[#5f7446]/35 bg-[#26331d]/72 text-smara-200 hover:bg-[#2f3f23]'
+            }`}
+            title="Buat draft Roadmap Plan"
+          >
+            <ClipboardList className="w-3 h-3" /> <span className="hidden md:inline">Roadmap Plan</span>
+          </button>
+          <button
             onClick={newSession}
             className="flex items-center gap-1.5 rounded-2xl bg-smara-300 px-3.5 py-2 text-xs font-semibold text-black shadow-lg shadow-smara-950/20 transition-colors hover:bg-smara-200"
           >
@@ -1978,6 +2700,152 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           </span>
         </div>
       </div>
+
+      {/* Roadmap plan popup */}
+      {showRoadmapPopup && (
+        <div className="absolute right-3 top-[72px] z-50 max-h-[calc(100vh-96px)] w-[min(420px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-[#31421f]/70 bg-[#202b18] shadow-2xl shadow-black/35 ring-1 ring-black/45">
+          <div className="flex items-center justify-between border-b border-[#31421f]/60 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-100">
+              <ClipboardList className="h-4 w-4 text-smara-300" />
+              Roadmap Plan
+            </div>
+            <button
+              onClick={() => setShowRoadmapPopup(false)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-neutral-400 transition-colors hover:bg-[#26331d] hover:text-gray-100"
+              title="Tutup"
+              aria-label="Tutup Roadmap Plan"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="max-h-[calc(100vh-154px)] space-y-3 overflow-y-auto p-4">
+            <div className="rounded-xl border border-[#31421f]/45 bg-[#1a2314]/58 p-2">
+              <div className="mb-3 rounded-lg border border-[#31421f]/40 bg-[#20291a]/54 p-2">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">Cached roadmap</span>
+                  {cachedRoadmaps.length > 0 && (
+                    <button
+                      onClick={clearRoadmapCache}
+                      className="inline-flex items-center gap-1 rounded-md border border-[#5f7446]/30 px-2 py-1 text-[10px] text-neutral-400 transition-colors hover:bg-[#26331d] hover:text-gray-200"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {cachedRoadmaps.length > 0 ? (
+                  <select
+                    value={activeRoadmapPath || loadedRoadmapPath || ''}
+                    onChange={e => {
+                      const selected = cachedRoadmaps.find(item => (item.relativePath || item.path) === e.target.value)
+                      if (selected) activateCachedRoadmap(selected)
+                    }}
+                    className="w-full rounded-lg border border-[#31421f]/60 bg-[#1a2314]/82 px-2.5 py-2 font-mono text-[11px] text-gray-100 outline-none transition-colors focus:border-smara-300/45"
+                  >
+                    {cachedRoadmaps.map(item => {
+                      const value = item.relativePath || item.path
+                      return <option key={value} value={value}>{cachedRoadmapLabel(item)}</option>
+                    })}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-[#31421f]/45 px-2.5 py-2 text-[11px] leading-5 text-neutral-500">
+                    Belum ada cache. Load file roadmap untuk menyimpan dan memilih ulang nanti.
+                  </div>
+                )}
+              </div>
+              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-500">Roadmap file</div>
+              <div className="flex gap-2">
+                <input
+                  value={roadmapPath}
+                  onChange={e => setRoadmapPath(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && roadmapPath.trim()) {
+                      e.preventDefault()
+                      loadRoadmapFile()
+                    }
+                  }}
+                  placeholder="roadmap/parallel-task-orchestration.md"
+                  className="min-w-0 flex-1 rounded-lg border border-[#31421f]/60 bg-[#20291a]/82 px-2.5 py-2 font-mono text-[11px] text-gray-100 outline-none transition-colors placeholder:text-neutral-500 focus:border-smara-300/45"
+                />
+                <button
+                  onClick={loadRoadmapFile}
+                  disabled={!roadmapPath.trim() || loadingRoadmap}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-smara-300 px-3 py-2 text-xs font-semibold text-black transition-colors hover:bg-smara-200 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {loadingRoadmap ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  Load
+                </button>
+              </div>
+              {loadedRoadmapPath && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="truncate font-mono text-[10px] text-smara-200">{loadedRoadmapPath}</span>
+                  {loadedRoadmap && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" />
+                      checked, {loadedRoadmap.steps.length} phase
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            {latestRoadmapInsight ? (
+              <RoadmapProgressPanel
+                insight={latestRoadmapInsight}
+                activePhases={activePhases}
+                runStatus={runStatus}
+                focusIndex={roadmapFocusIndex}
+              />
+            ) : (
+              <div className="rounded-xl border border-[#31421f]/45 bg-[#1a2314]/58 px-3 py-2 text-[11px] leading-5 text-neutral-400">
+                Belum ada roadmap aktif di sesi ini. Buat draft roadmap baru dari form di bawah.
+              </div>
+            )}
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">Goal</span>
+              <input
+                value={roadmapGoal}
+                onChange={e => setRoadmapGoal(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && roadmapGoal.trim()) {
+                    e.preventDefault()
+                    createRoadmapDraft()
+                  }
+                }}
+                placeholder="Contoh: bangun planner task parallel"
+                className="w-full rounded-xl border border-[#31421f]/60 bg-[#1a2314]/82 px-3 py-2 text-sm text-gray-100 outline-none transition-colors placeholder:text-neutral-500 focus:border-smara-300/45"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">Context</span>
+              <textarea
+                value={roadmapContext}
+                onChange={e => setRoadmapContext(e.target.value)}
+                placeholder="Batasan, target file, risiko, atau hal yang perlu diprioritaskan."
+                className="min-h-[92px] w-full resize-none rounded-xl border border-[#31421f]/60 bg-[#1a2314]/82 px-3 py-2 text-sm leading-5 text-gray-100 outline-none transition-colors placeholder:text-neutral-500 focus:border-smara-300/45"
+              />
+            </label>
+            <div className="rounded-xl border border-[#31421f]/45 bg-[#1a2314]/58 px-3 py-2 text-[11px] leading-5 text-neutral-400">
+              Draft akan masuk ke composer, mode berubah ke Plan, dan belum dikirim sampai kamu tekan kirim.
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowRoadmapPopup(false)}
+                className="rounded-xl border border-[#5f7446]/35 bg-[#26331d]/72 px-3 py-2 text-xs text-gray-300 transition-colors hover:bg-[#2f3f23]"
+              >
+                Batal
+              </button>
+              <button
+                onClick={createRoadmapDraft}
+                disabled={!roadmapGoal.trim()}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-smara-300 px-3 py-2 text-xs font-semibold text-black transition-colors hover:bg-smara-200 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                Buat Draft
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Session dropdown */}
       {showSessions && (
@@ -2493,12 +3361,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             return (
               <button
                 key={m.id}
-                onClick={() => {
-                  setMode(m.id)
-                  if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(JSON.stringify({ type: 'mode_change', mode: m.id }))
-                  }
-                }}
+                onClick={() => setModeAndNotify(m.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl transition-all ${
                   active
                     ? `${m.bg} text-white shadow-lg shadow-black/20`
@@ -2508,6 +3371,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
               >
                 <Icon className="w-3 h-3" />
                 <span className="hidden sm:inline">{m.label}</span>
+                {m.id === 'voice' && voiceSpeaking && <span className="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse" />}
               </button>
             )
           })}

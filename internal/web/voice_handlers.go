@@ -38,5 +38,19 @@ func (s *Server) handleVoiceSpeak(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	if voice.NormalizeSettings(req.Settings).Provider == voice.ProviderElevenLabs {
+		audio, err := voice.SynthesizeAudio(r.Context(), req)
+		if err != nil {
+			errorResponse(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", audio.ContentType)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(audio.Data)
+		return
+	}
+
 	jsonResponse(w, http.StatusOK, voice.Synthesize(r.Context(), req))
 }

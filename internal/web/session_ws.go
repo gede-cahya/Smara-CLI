@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/browser"
+	"github.com/gede-cahya/Smara-CLI/internal/orchestration"
 	"github.com/gorilla/websocket"
 )
 
@@ -196,14 +198,27 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		},
 	}
 
-	if response, handled, err := s.tryRunCustomWorkflowPrompt(msg.Payload); handled {
-		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
+	if response, handled, err := s.tryRunCustomWorkflowPromptWithProgress(msg.Payload, func(event, message, role, taskID string, details map[string]interface{}) {
+		if details == nil {
+			details = map[string]interface{}{}
+		}
+		if role != "" {
+			details["role"] = role
+		}
+		if taskID != "" {
+			details["task_id"] = taskID
+		}
+		emitLog("info", event, message, "custom_workflow", details)
+		write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: event, Description: message})
+	}); handled {
 		if err != nil {
+			write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 			emitLog("error", "run_error", err.Error(), "", nil)
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
 			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
+		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		emitLog("info", "run_complete", "Custom workflow selesai.", "", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: response})
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
@@ -223,6 +238,50 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		emitLog("info", "browser_test_done", "Browser test selesai.", "browser_run", map[string]interface{}{"output_chars": len(output)})
 		write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: output})
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: output})
+		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
+		return
+	}
+	if orchestration.IsAgentSwarmWorkflowPrompt(msg.Payload) {
+		emitLog("info", "agent_swarm_start", "Agent Swarm Workflow mulai dijalankan.", "agent_swarm_workflow", nil)
+		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: "⏳ Agent Swarm Workflow sedang berjalan. Smara memecah tugas, spawn agent yang dibutuhkan, menjalankan wave paralel, merge hasil, lalu QA.", RequestPrompt: msg.Payload})
+		write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: "smara", Tool: "agent_swarm_workflow", Args: map[string]interface{}{"status": "running", "mode": activeMode}})
+		result, err := s.runWorkflowWithLiveStatusAndProgress(ctx, msg.Payload, func(step, status string) {
+			message := fmt.Sprintf("%s: %s", step, status)
+			emitLog("info", "orchestration_progress", message, "parallel_orchestration", map[string]interface{}{"step": step, "status": status})
+			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: step, Description: status})
+		})
+		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
+		if err != nil {
+			emitLog("error", "run_error", err.Error(), "agent_swarm_workflow", nil)
+			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: fmt.Sprintf("Agent Swarm Workflow gagal: %v", err)})
+			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
+			return
+		}
+		payload := formatAgentSwarmCompletion(result, time.Since(runStarted))
+		emitLog("info", "run_complete", "Agent Swarm Workflow selesai.", "agent_swarm_workflow", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
+		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: payload, RequestPrompt: msg.Payload})
+		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
+		return
+	}
+	if orchestration.ShouldAutoParallelOrchestrate(msg.Payload, agent.Mode(activeMode)) {
+		emitLog("info", "orchestration_start", "Auto parallel orchestration mulai dijalankan.", "parallel_orchestration", nil)
+		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: "⏳ Auto parallel orchestration sedang berjalan. Smara sedang membuat blueprint, membagi pekerjaan ke beberapa agent, lalu menjalankan wave paralel. Progress detail muncul di timeline/run status; saya akan kirim ringkasan lengkap setelah selesai.", RequestPrompt: msg.Payload})
+		write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: "smara", Tool: "parallel_orchestration", Args: map[string]interface{}{"status": "running", "mode": activeMode}})
+		result, err := s.runWorkflowWithLiveStatusAndProgress(ctx, msg.Payload, func(step, status string) {
+			message := fmt.Sprintf("%s: %s", step, status)
+			emitLog("info", "orchestration_progress", message, "parallel_orchestration", map[string]interface{}{"step": step, "status": status})
+			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: step, Description: status})
+		})
+		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
+		if err != nil {
+			emitLog("error", "run_error", err.Error(), "parallel_orchestration", nil)
+			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: fmt.Sprintf("auto parallel orchestration gagal: %v", err)})
+			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
+			return
+		}
+		payload := formatAutoParallelCompletion(result, time.Since(runStarted))
+		emitLog("info", "run_complete", "Auto parallel orchestration selesai.", "parallel_orchestration", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
+		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: payload, RequestPrompt: msg.Payload})
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
 	}
@@ -253,6 +312,78 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	})
 	write(s.chatWSMessage(msg.SessionID, s.rewriteGeneratedImageLinks(result.Response), msg.Payload, result))
 	write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
+}
+
+func formatAutoParallelCompletion(result *workflow.WorkflowResult, duration time.Duration) string {
+	return formatWorkflowCompletion("✅ Auto parallel orchestration selesai", result, duration)
+}
+
+func formatAgentSwarmCompletion(result *workflow.WorkflowResult, duration time.Duration) string {
+	return formatWorkflowCompletion("✅ Agent Swarm Workflow selesai", result, duration)
+}
+
+func formatWorkflowCompletion(title string, result *workflow.WorkflowResult, duration time.Duration) string {
+	if result == nil {
+		return title + "\n\nWorkflow selesai, tetapi ringkasan hasil tidak tersedia."
+	}
+	summary := strings.TrimSpace(result.FinalSummary)
+	if summary == "" {
+		summary = "Workflow selesai tanpa ringkasan tambahan."
+	}
+	agentCount := len(result.AgentOutputs)
+	taskCount := 0
+	completedTasks := 0
+	failedTasks := 0
+	for _, outputs := range result.AgentOutputs {
+		taskCount += len(outputs)
+		for _, output := range outputs {
+			switch output.Status {
+			case agent.TaskCompleted:
+				completedTasks++
+			case agent.TaskFailed:
+				failedTasks++
+			}
+		}
+	}
+	qaStatus := strings.TrimSpace(result.QAResult.Status)
+	if qaStatus == "" {
+		qaStatus = "UNKNOWN"
+	}
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+	b.WriteString("**Status akhir**\n")
+	b.WriteString(fmt.Sprintf("- Ringkasan: %s\n", summary))
+	if duration > 0 {
+		b.WriteString(fmt.Sprintf("- Durasi: %s\n", duration.Round(time.Second)))
+	}
+	b.WriteString(fmt.Sprintf("- Agent: %d\n", agentCount))
+	b.WriteString(fmt.Sprintf("- Task: %d selesai, %d gagal, %d total\n", completedTasks, failedTasks, taskCount))
+	b.WriteString(fmt.Sprintf("- Parallel execution: %t, max concurrency: %d\n", result.ParallelExecution, result.MaxConcurrency))
+	for i, wave := range result.ExecutionWaves {
+		mode := "serial"
+		if len(wave) > 1 {
+			mode = "parallel"
+		}
+		b.WriteString(fmt.Sprintf("  - Wave %d (%s): %s\n", i+1, mode, strings.Join(wave, ", ")))
+	}
+	b.WriteString(fmt.Sprintf("- QA: %s", qaStatus))
+	if len(result.QAResult.Issues) > 0 {
+		b.WriteString(fmt.Sprintf(" (%d issue)\n", len(result.QAResult.Issues)))
+		for i, issue := range result.QAResult.Issues {
+			if i >= 5 {
+				b.WriteString(fmt.Sprintf("  - ...dan %d issue lain\n", len(result.QAResult.Issues)-i))
+				break
+			}
+			b.WriteString(fmt.Sprintf("  - %s\n", strings.TrimSpace(issue)))
+		}
+	} else {
+		b.WriteString(" (0 issue)\n")
+	}
+	if strings.TrimSpace(result.ProjectPath) != "" {
+		b.WriteString(fmt.Sprintf("- Project: `%s`\n", result.ProjectPath))
+	}
+	b.WriteString("\nProgress detail selama run tersedia di timeline/run status.")
+	return b.String()
 }
 
 func timeoutSecFromServer(s *Server) int {

@@ -25,6 +25,40 @@ func TestExtractCustomWorkflowRunName(t *testing.T) {
 	}
 }
 
+func TestExtractCustomWorkflowRunRequestParallelSuffix(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"jalankan custom workflow github release agent secara parallel", "github release agent"},
+		{"jalankan custom workflow github release agent secara paralel", "github release agent"},
+		{"run workflow release-pipeline in parallel", "release-pipeline"},
+		{"execute custom workflow `github-release-agent` parallel", "github-release-agent"},
+	}
+	for _, tc := range cases {
+		got, parallel, ok := extractCustomWorkflowRunRequest(tc.input)
+		if !ok || !parallel || got != tc.want {
+			t.Fatalf("extractCustomWorkflowRunRequest(%q) = %q, %v, %v; want %q, true, true", tc.input, got, parallel, ok, tc.want)
+		}
+	}
+}
+
+func TestExtractCustomWorkflowRunRequestsMultipleNames(t *testing.T) {
+	got, parallel, ok := extractCustomWorkflowRunRequests("jalankan workflow smara release agent dan smara-docs-site-agent secara parallel")
+	if !ok || !parallel {
+		t.Fatalf("extractCustomWorkflowRunRequests() ok=%v parallel=%v; want true true", ok, parallel)
+	}
+	want := []string{"smara release agent", "smara-docs-site-agent"}
+	if len(got) != len(want) {
+		t.Fatalf("extractCustomWorkflowRunRequests() = %#v; want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("extractCustomWorkflowRunRequests()[%d] = %q; want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestExtractCustomWorkflowCreateName(t *testing.T) {
 	cases := map[string]string{
 		"buat custom workflow spamload discover logic nanti kau rangkum range":        "spamload-discover-logic",
@@ -83,12 +117,139 @@ func TestFindCustomWorkflowByAgentRole(t *testing.T) {
 		t.Fatalf("SaveCustomWorkflow() error = %v", err)
 	}
 
-	got, matched, err := findCustomWorkflowByNameOrAgent("github-release-agent")
+	for _, candidate := range []string{"github-release-agent", "github release agent"} {
+		got, matched, err := findCustomWorkflowByNameOrAgent(candidate)
+		if err != nil {
+			t.Fatalf("findCustomWorkflowByNameOrAgent(%q) error = %v", candidate, err)
+		}
+		if got == nil || got.Name != "git2" || matched != "git2" {
+			t.Fatalf("findCustomWorkflowByNameOrAgent(%q) = %#v, %q; want git2", candidate, got, matched)
+		}
+	}
+}
+
+func TestFindCustomWorkflowBySpokenWorkflowName(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	cw := &workflow.CustomWorkflow{
+		Name:        "smara-release-agent",
+		Description: "release workflow",
+		Agents: []workflow.CustomAgent{{
+			Role:        "release-runner",
+			Description: "release agent",
+			Tasks:       []workflow.Task{{ID: "main", Description: "run release"}},
+		}},
+	}
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		t.Fatalf("SaveCustomWorkflow() error = %v", err)
+	}
+
+	for _, candidate := range []string{"smara release agent", "smara realease agent"} {
+		got, matched, err := findCustomWorkflowByNameOrAgent(candidate)
+		if err != nil {
+			t.Fatalf("findCustomWorkflowByNameOrAgent(%q) error = %v", candidate, err)
+		}
+		if got == nil || got.Name != "smara-release-agent" || matched != "smara-release-agent" {
+			t.Fatalf("findCustomWorkflowByNameOrAgent(%q) = %#v, %q; want smara-release-agent", candidate, got, matched)
+		}
+	}
+}
+
+func TestFindCustomWorkflowByWorkflowAgentAlias(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	cw := &workflow.CustomWorkflow{
+		Name:        "smara-docs-site",
+		Description: "docs workflow",
+		Agents: []workflow.CustomAgent{{
+			Role:        "agent",
+			Description: "docs site agent",
+			Tasks:       []workflow.Task{{ID: "main", Description: "run docs site"}},
+		}},
+	}
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		t.Fatalf("SaveCustomWorkflow() error = %v", err)
+	}
+
+	for _, candidate := range []string{"smara-docs-site agent", "smara docs site agent"} {
+		got, matched, err := findCustomWorkflowByNameOrAgent(candidate)
+		if err != nil {
+			t.Fatalf("findCustomWorkflowByNameOrAgent(%q) error = %v", candidate, err)
+		}
+		if got == nil || got.Name != "smara-docs-site" || matched != "smara-docs-site" {
+			t.Fatalf("findCustomWorkflowByNameOrAgent(%q) = %#v, %q; want smara-docs-site", candidate, got, matched)
+		}
+	}
+}
+
+func TestFindCustomWorkflowBySuffixedAlias(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	cw := &workflow.CustomWorkflow{
+		Name:        "github-release-agent",
+		Description: "release workflow",
+		Agents: []workflow.CustomAgent{{
+			Role:        "release-agent",
+			Description: "release agent",
+			Tasks:       []workflow.Task{{ID: "main", Description: "run release"}},
+		}},
+	}
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		t.Fatalf("SaveCustomWorkflow() error = %v", err)
+	}
+
+	got, matched, err := findCustomWorkflowByNameOrAgent("smara release agent")
 	if err != nil {
 		t.Fatalf("findCustomWorkflowByNameOrAgent() error = %v", err)
 	}
-	if got == nil || got.Name != "git2" || matched != "git2" {
-		t.Fatalf("findCustomWorkflowByNameOrAgent() = %#v, %q; want git2", got, matched)
+	if got == nil || got.Name != "github-release-agent" || matched != "github-release-agent" {
+		t.Fatalf("findCustomWorkflowByNameOrAgent(smara release agent) = %#v, %q; want github-release-agent", got, matched)
+	}
+}
+
+func TestInferCustomWorkflowRunRequestsWithoutPrefix(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	cw := &workflow.CustomWorkflow{
+		Name:        "github-release-agent",
+		Description: "release workflow",
+		Agents: []workflow.CustomAgent{{
+			Role:        "release-agent",
+			Description: "release agent",
+			Tasks:       []workflow.Task{{ID: "main", Description: "run release"}},
+		}},
+	}
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		t.Fatalf("SaveCustomWorkflow() error = %v", err)
+	}
+
+	got, parallel, ok := inferCustomWorkflowRunRequests("halankan github-release-agent")
+	if !ok || parallel || len(got) != 1 || got[0] != "github-release-agent" {
+		t.Fatalf("inferCustomWorkflowRunRequests() = %#v, %v, %v; want github-release-agent false true", got, parallel, ok)
+	}
+}
+
+func TestCustomWorkflowRunPromptMissingAllIsHandled(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	_, handled, err := (&Server{}).tryRunCustomWorkflowPrompt("jalankan workflow smara release agent")
+	if !handled || err == nil {
+		t.Fatalf("tryRunCustomWorkflowPrompt missing workflow handled=%v err=%v; want handled error", handled, err)
 	}
 }
 

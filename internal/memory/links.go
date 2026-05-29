@@ -498,7 +498,7 @@ func (s *SQLiteStore) BuildGraphWithOptions(workspaceID int64, opts GraphBuildOp
 		meta.TruncatedEdges = true
 	}
 
-	if opts.IncludeVirtualLinks && opts.Mode == "overview" && len(nodes) > 1 {
+	if opts.IncludeVirtualLinks && opts.Mode == "overview" && len(nodes) > 1 && len(nodes) <= 500 {
 		maxVirtual := 0
 		if opts.EdgeLimit > 0 {
 			maxVirtual = opts.EdgeLimit - len(edges)
@@ -565,12 +565,15 @@ func addVirtualGraphHintEdges(nodes []GraphNode, edges []GraphEdge, maxAdd int) 
 	}
 
 	limit := maxAdd
-	if limit < 0 {
+	if limit < 0 || limit > len(islands) {
 		limit = len(islands)
+	}
+	if limit > 160 {
+		limit = 160
 	}
 
 	added := 0
-	for _, island := range islands {
+	for _, island := range islands[:limit] {
 		if added >= limit {
 			break
 		}

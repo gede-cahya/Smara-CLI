@@ -312,17 +312,16 @@ func TestSearchFullText(t *testing.T) {
 
 	workspaceID := int64(11)
 
-	// Create test memories
 	_, err := store.Save("Database optimization techniques", "db,sql", "test", workspaceID, nil)
 	require.NoError(t, err)
 
 	_, err = store.Save("Go programming language basics", "go,code", "test", workspaceID, nil)
 	require.NoError(t, err)
 
-	// Search for "database"
 	filters := MemoryFilters{
 		SearchFilters: SearchFilters{
-			Sources: []string{"test"},
+			Sources:  []string{"test"},
+			MinScore: 0.1,
 		},
 		Limit: 10,
 	}

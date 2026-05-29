@@ -13,13 +13,27 @@ import (
 )
 
 type CustomWorkflowResult struct {
-	ProjectPath  string
-	AgentOutputs map[string][]agent.TaskResult
-	QAResult     QAResult
-	FinalSummary string
+	ProjectPath       string
+	AgentOutputs      map[string][]agent.TaskResult
+	QAResult          QAResult
+	FinalSummary      string
+	Waves             [][]string
+	ParallelExecution bool
+}
+
+type CustomWorkflowProgress struct {
+	OnBlueprintReady func(Blueprint, [][]string)
+	OnWaveStart      func(wave int, roles []string)
+	OnWaveComplete   func(wave int, results map[string][]agent.TaskResult)
+	OnRoleStart      func(role string)
+	OnTaskComplete   func(role, taskID string, result agent.TaskResult)
 }
 
 func RunCustomWorkflow(supervisor *agent.Supervisor, provider llm.Provider, cw *CustomWorkflow) (*CustomWorkflowResult, error) {
+	return RunCustomWorkflowWithProgress(supervisor, provider, cw, nil)
+}
+
+func RunCustomWorkflowWithProgress(supervisor *agent.Supervisor, provider llm.Provider, cw *CustomWorkflow, progress *CustomWorkflowProgress) (*CustomWorkflowResult, error) {
 	if err := cw.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid custom workflow: %w", err)
 	}
@@ -54,16 +68,56 @@ func RunCustomWorkflow(supervisor *agent.Supervisor, provider llm.Provider, cw *
 		return nil, fmt.Errorf("memory node failed: %w", err)
 	}
 	runner := NewRunner(bp, workerMap, sharedState)
+	waves, err := runner.BuildWaves()
+	if err != nil {
+		_ = sharedState.Save()
+		return nil, fmt.Errorf("dependency wave build failed: %w", err)
+	}
+	if progress != nil {
+		if progress.OnBlueprintReady != nil {
+			progress.OnBlueprintReady(bp, waves)
+		}
+		runner.OnWaveStart = func(wave int, roles []string) {
+			if progress.OnWaveStart != nil {
+				progress.OnWaveStart(wave, roles)
+			}
+			if progress.OnRoleStart == nil {
+				return
+			}
+			for _, role := range roles {
+				progress.OnRoleStart(role)
+			}
+		}
+		runner.OnWaveComplete = func(wave int, results map[string][]agent.TaskResult) {
+			if progress.OnWaveComplete != nil {
+				progress.OnWaveComplete(wave, results)
+			}
+		}
+		runner.OnTaskComplete = func(role, taskID string, result agent.TaskResult) {
+			if progress.OnTaskComplete != nil {
+				progress.OnTaskComplete(role, taskID, result)
+			}
+		}
+	}
 	allResults, err := runner.Run(context.Background(), supervisor)
 	if err != nil {
 		_ = sharedState.Save()
 		return nil, fmt.Errorf("workflow execution failed: %w", err)
 	}
 	qaResult := runner.RunQA(context.Background(), bp, allResults, supervisor)
+	parallelExecution := false
+	for _, wave := range waves {
+		if len(wave) > 1 {
+			parallelExecution = true
+			break
+		}
+	}
 	result := &CustomWorkflowResult{
-		ProjectPath:  projectDir,
-		AgentOutputs: allResults,
-		QAResult:     qaResult,
+		ProjectPath:       projectDir,
+		AgentOutputs:      allResults,
+		QAResult:          qaResult,
+		Waves:             waves,
+		ParallelExecution: parallelExecution,
 	}
 	if qaResult.Status == "PASS" {
 		result.FinalSummary = fmt.Sprintf("Custom workflow '%s' completed successfully. %d agents executed. QA: PASS.", cw.Name, len(cw.Agents))
@@ -168,6 +222,7 @@ func BuildCustomRoleTasks(spec AgentSpec, state *SharedState, inputsFrom map[str
 			ID:          fmt.Sprintf("%s-%s", spec.Role, t.ID),
 			Description: contextPrefix + t.Description,
 			AssignedTo:  spec.Role,
+			Type:        t.Type,
 			MCPServer:   t.MCPServer,
 			ToolName:    t.ToolName,
 			ToolArgs:    t.ToolArgs,

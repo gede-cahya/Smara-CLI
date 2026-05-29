@@ -1,0 +1,19 @@
+pkgbase = smara
+	pkgdesc = Autonomous Multi-Agent Terminal — Terminal pintar yang mengorkestrasi agen AI otonom dengan memori tim tersinkronisasi
+	pkgver = 1.20.11
+	pkgrel = 1
+	url = https://github.com/gede-cahya/Smara-CLI
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = go>=1.21
+	makedepends = git
+	makedepends = gcc
+	depends = sqlite
+	optdepends = ollama: Local LLM provider (default)
+	optdepends = nodejs: Required for some MCP servers
+	optdepends = python: Required for some MCP servers (uvx)
+	source = smara-1.20.11.tar.gz::https://github.com/gede-cahya/Smara-CLI/archive/refs/tags/v1.20.11.tar.gz
+	sha256sums = SKIP
+
+pkgname = smara

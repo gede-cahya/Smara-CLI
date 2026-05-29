@@ -103,7 +103,7 @@ func DefaultConfig() *SmaraConfig {
 	smaraDir := filepath.Join(home, ".smara")
 	return &SmaraConfig{
 		Provider:           "custom",
-		Model:              "deepseek-v4-pro",
+		Model:              "cx/gpt-5.5",
 		OllamaHost:         "http://localhost:11434",
 		OpenAIAPIKey:       "",
 		OpenAIModel:        "gpt-4o",
@@ -112,10 +112,10 @@ func DefaultConfig() *SmaraConfig {
 		OpenRouterModel:    "anthropic/claude-sonnet-4",
 		AnthropicAPIKey:    "",
 		AnthropicModel:     "claude-sonnet-4-20250514",
-		CustomProviderName: "CLIProxyAPI",
-		CustomAPIKey:       "your-api-key-1",
-		CustomBaseURL:       "http://localhost:8317/v1",
-		CustomModel:          "deepseek-v4-pro",
+		CustomProviderName: "9router",
+		CustomAPIKey:       "sk-63a768fa898cb6e0-9r8iio-0a23c1a1",
+		CustomBaseURL:       "http://localhost:20128/v1",
+		CustomModel:          "cx/gpt-5.5",
 		CustomDisableStream: false,
 		SyncDir:             filepath.Join(smaraDir, "sync"),
 		SyncInterval:       15,

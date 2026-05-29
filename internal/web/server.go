@@ -27,18 +27,19 @@ var upgrader = websocket.Upgrader{
 
 // Server runs the Smara web interface.
 type Server struct {
-	Addr          string
-	Supervisor    *agent.Supervisor
-	MemStore      memory.MemoryStore
-	Metrics       *metrics.MetricsCollector
-	Cfg           *config.SmaraConfig
-	WebSessions   *WebSessionManager
-	AuthToken     string
-	RemoteDesktop *RemoteDesktopManager
-	mcpClients    map[string]*mcp.Client
-	SkillTracker  *skill.ExecutionTracker
-	mu            sync.RWMutex
-	sessions      map[string]*ChatSession
+	Addr               string
+	Supervisor         *agent.Supervisor
+	MemStore           memory.MemoryStore
+	Metrics            *metrics.MetricsCollector
+	Cfg                *config.SmaraConfig
+	WebSessions        *WebSessionManager
+	AuthToken          string
+	RemoteDesktop      *RemoteDesktopManager
+	OrchestrationStore *OrchestrationStatusStore
+	mcpClients         map[string]*mcp.Client
+	SkillTracker       *skill.ExecutionTracker
+	mu                 sync.RWMutex
+	sessions           map[string]*ChatSession
 }
 
 // ChatSession tracks a single WebSocket conversation.
@@ -60,13 +61,14 @@ func (cs *ChatSession) WriteJSON(v interface{}) error {
 // NewServer creates a new web server.
 func NewServer(addr string, supervisor *agent.Supervisor, memStore memory.MemoryStore, mc *metrics.MetricsCollector, cfg *config.SmaraConfig) *Server {
 	srv := &Server{
-		Addr:       addr,
-		Supervisor: supervisor,
-		MemStore:   memStore,
-		Metrics:    mc,
-		Cfg:        cfg,
-		mcpClients: make(map[string]*mcp.Client),
-		sessions:   make(map[string]*ChatSession),
+		Addr:               addr,
+		Supervisor:         supervisor,
+		MemStore:           memStore,
+		Metrics:            mc,
+		Cfg:                cfg,
+		OrchestrationStore: NewOrchestrationStatusStore(),
+		mcpClients:         make(map[string]*mcp.Client),
+		sessions:           make(map[string]*ChatSession),
 	}
 	if memStore != nil {
 		if m, ok := memStore.(*memory.SQLiteStore); ok {
@@ -101,6 +103,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/workspaces/create", s.handleWorkspaceCreate)
 	mux.HandleFunc("/api/categories", s.handleCategories)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/orchestration/status", s.handleOrchestrationStatus)
+	mux.HandleFunc("/api/orchestration/events", s.handleOrchestrationEvents)
+	mux.HandleFunc("/api/orchestration/config", s.handleOrchestrationConfig)
 	mux.HandleFunc("/api/mcp", s.handleMCPStatus)
 	mux.HandleFunc("/api/metrics", s.handleMetrics)
 	mux.HandleFunc("/api/skills", s.handleSkills)
@@ -156,6 +161,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/web-sessions/", s.handleWebSessionByID)
 	mux.HandleFunc("/api/voice/settings", s.handleVoiceSettings)
 	mux.HandleFunc("/api/voice/command", s.handleVoiceCommand)
+	mux.HandleFunc("/api/voice/speak", s.handleVoiceSpeak)
 	mux.HandleFunc("/api/avatar/state", s.handleAvatarState)
 	mux.HandleFunc("/api/avatar/event", s.handleAvatarEvent)
 	mux.HandleFunc("/api/avatar/model", s.handleAvatarModel)

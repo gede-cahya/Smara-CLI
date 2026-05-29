@@ -124,17 +124,28 @@ func NewSupervisorWithConfig(provider llm.Provider, providerCfg llm.ProviderConf
 func (s *Supervisor) GetStats() Stats {
 	s.stats.mu.RLock()
 	defer s.stats.mu.RUnlock()
-	return s.stats
+	return Stats{
+		PromptCount:     s.stats.PromptCount,
+		TotalTokens:     s.stats.TotalTokens,
+		TotalCost:       s.stats.TotalCost,
+		TotalDuration:   s.stats.TotalDuration,
+		AvgTokensPerReq: s.stats.AvgTokensPerReq,
+		SessionStart:    s.stats.SessionStart,
+		InputTokens:     s.stats.InputTokens,
+		OutputTokens:    s.stats.OutputTokens,
+		LastDuration:    s.stats.LastDuration,
+	}
 }
 
-// updateStats updates usage statistics after a prompt is processed.
 func (s *Supervisor) updateStats(tokens int, cost float64, duration time.Duration) {
 	s.stats.mu.Lock()
 	defer s.stats.mu.Unlock()
+
 	s.stats.PromptCount++
 	s.stats.TotalTokens += tokens
 	s.stats.TotalCost += cost
 	s.stats.TotalDuration += duration
+	s.stats.LastDuration = duration
 	if s.stats.PromptCount > 0 {
 		s.stats.AvgTokensPerReq = s.stats.TotalTokens / s.stats.PromptCount
 	}

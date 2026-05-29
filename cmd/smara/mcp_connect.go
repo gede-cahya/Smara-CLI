@@ -1,0 +1,132 @@
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/mcp"
+	"github.com/gede-cahya/Smara-CLI/internal/ui"
+)
+
+const (
+	mcpStartupPerServerTimeout = 8 * time.Second
+	mcpStartupOverallTimeout   = 12 * time.Second
+)
+
+type mcpConnResult struct {
+	Name   string
+	Client *mcp.Client
+	Tools  []mcp.Tool
+	Err    error
+}
+
+func connectMCPServersForStartup(supervisor *agent.Supervisor, enabledConfigs []mcp.MCPServerConfig) {
+	if len(enabledConfigs) == 0 {
+		return
+	}
+
+	ui.PrintInfo("Menghubungkan %d MCP server secara paralel...", len(enabledConfigs))
+
+	results := make(chan mcpConnResult, len(enabledConfigs))
+	pending := make(map[string]bool, len(enabledConfigs))
+	var pendingMu sync.Mutex
+
+	for _, mcpCfg := range enabledConfigs {
+		pending[mcpCfg.Name] = true
+		go connectMCPServerWithTimeout(mcpCfg, results)
+	}
+
+	overallTimer := time.NewTimer(mcpStartupOverallTimeout)
+	defer overallTimer.Stop()
+
+	remaining := len(enabledConfigs)
+	for remaining > 0 {
+		select {
+		case res := <-results:
+			remaining--
+			pendingMu.Lock()
+			delete(pending, res.Name)
+			pendingMu.Unlock()
+			registerMCPStartupResult(supervisor, res)
+		case <-overallTimer.C:
+			pendingMu.Lock()
+			names := make([]string, 0, len(pending))
+			for name := range pending {
+				names = append(names, name)
+			}
+			pendingMu.Unlock()
+			for _, name := range names {
+				ui.PrintWarning("MCP '%s' dilewati: timeout startup setelah %s", name, mcpStartupOverallTimeout)
+			}
+			return
+		}
+	}
+}
+
+func connectMCPServerWithTimeout(cfg mcp.MCPServerConfig, results chan<- mcpConnResult) {
+	resCh := make(chan mcpConnResult, 1)
+	abandoned := make(chan struct{})
+
+	go func() {
+		res := connectMCPServer(cfg)
+		select {
+		case resCh <- res:
+		case <-abandoned:
+			if res.Client != nil {
+				_ = res.Client.Close()
+			}
+		}
+	}()
+
+	timer := time.NewTimer(mcpStartupPerServerTimeout)
+	defer timer.Stop()
+
+	select {
+	case res := <-resCh:
+		results <- res
+	case <-timer.C:
+		close(abandoned)
+		results <- mcpConnResult{
+			Name: cfg.Name,
+			Err:  fmt.Errorf("timeout startup setelah %s", mcpStartupPerServerTimeout),
+		}
+	}
+}
+
+func connectMCPServer(cfg mcp.MCPServerConfig) mcpConnResult {
+	var client *mcp.Client
+	var err error
+
+	switch cfg.Type {
+	case "remote":
+		client, err = mcp.NewRemoteClient(cfg)
+	default:
+		client, err = mcp.NewClient(cfg)
+	}
+	if err != nil {
+		return mcpConnResult{Name: cfg.Name, Err: err}
+	}
+
+	tools, err := client.ListTools()
+	if err != nil {
+		_ = client.Close()
+		return mcpConnResult{Name: cfg.Name, Err: err}
+	}
+	return mcpConnResult{Name: cfg.Name, Client: client, Tools: tools}
+}
+
+func registerMCPStartupResult(supervisor *agent.Supervisor, res mcpConnResult) {
+	if res.Err != nil {
+		ui.PrintWarning("Gagal menghubungkan MCP '%s': %v", res.Name, res.Err)
+		return
+	}
+	supervisor.RegisterMCPClient(res.Name, res.Client)
+	if len(res.Tools) > 0 {
+		supervisor.UpdateMCPInfo(res.Name, res.Tools)
+		ui.PrintSuccess("MCP '%s' terhubung (%d tools)", res.Name, len(res.Tools))
+	} else {
+		ui.PrintSuccess("MCP '%s' terhubung", res.Name)
+	}
+}

@@ -44,11 +44,10 @@ func (a *App) initSmara() {
 
 	// 2. Initialize LLM Provider
 	providerCfg := llm.ProviderConfig{
-		Name:            cfg.Provider,
-		Model:           cfg.Model,
-		Host:            cfg.OllamaHost,
-		APIKey:          "",
-		ReasoningEffort: cfg.ReasoningEffort,
+		Name:   cfg.Provider,
+		Model:  cfg.Model,
+		Host:   cfg.OllamaHost,
+		APIKey: "",
 	}
 
 	switch cfg.Provider {

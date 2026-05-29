@@ -69,12 +69,6 @@ func (s *SQLiteStore) SearchFullText(query string, workspaceID int64, filters Me
 
 		queryStr += " ORDER BY rank ASC"
 
-		if filters.MinScore > 0 {
-			// FTS5 rank is negative, lower is better
-			queryStr += fmt.Sprintf(" AND bm25(memories_fts) < $%d", len(args)+1)
-			args = append(args, -filters.MinScore)
-		}
-
 		if filters.Limit > 0 {
 			queryStr += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 			args = append(args, filters.Limit)

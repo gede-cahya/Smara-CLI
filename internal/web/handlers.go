@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
@@ -25,6 +26,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
+	"github.com/gede-cahya/Smara-CLI/internal/orchestration"
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 )
 
@@ -84,6 +86,26 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
+		return
+	}
+	if orchestration.IsAgentSwarmWorkflowPrompt(req.Message) {
+		log.Printf("[web] Routing chat prompt to Agent Swarm Workflow")
+		result, err := s.runWorkflowWithLiveStatus(ctx, req.Message)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Agent Swarm Workflow gagal: %v", err))
+			return
+		}
+		jsonResponse(w, http.StatusOK, chatResponse{Response: formatAgentSwarmCompletion(result, 0)})
+		return
+	}
+	if orchestration.ShouldAutoParallelOrchestrate(req.Message, s.Supervisor.GetMode()) {
+		log.Printf("[web] Auto-routing complex chat prompt to parallel orchestration")
+		result, err := s.runWorkflowWithLiveStatus(ctx, req.Message)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("auto parallel orchestration gagal: %v", err))
+			return
+		}
+		jsonResponse(w, http.StatusOK, chatResponse{Response: formatAutoParallelCompletion(result, 0)})
 		return
 	}
 	result, err := s.Supervisor.ProcessPrompt(ctx, req.Message)
@@ -547,6 +569,21 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
 		return
 	}
+	if orchestration.ShouldAutoParallelOrchestrate(msg.Payload, s.Supervisor.GetMode()) {
+		log.Printf("[web] Auto-routing complex websocket prompt to parallel orchestration")
+		result, err := s.runWorkflowWithLiveStatus(ctx, msg.Payload)
+		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
+		if err != nil {
+			_ = session.WriteJSON(wsMessage{Type: "error", Payload: fmt.Sprintf("auto parallel orchestration gagal: %v", err)})
+			return
+		}
+		summary := strings.TrimSpace(result.FinalSummary)
+		if summary == "" {
+			summary = "Workflow selesai tanpa ringkasan tambahan."
+		}
+		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: fmt.Sprintf("✅ Auto parallel orchestration selesai\n\n%s\nProject: %s", summary, result.ProjectPath), RequestPrompt: msg.Payload})
+		return
+	}
 
 	activeMode := msg.Mode
 	if activeMode == "" {
@@ -611,19 +648,346 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 }
 
 func (s *Server) tryRunCustomWorkflowPrompt(prompt string) (string, bool, error) {
-	candidate, ok := extractCustomWorkflowRunName(prompt)
+	return s.tryRunCustomWorkflowPromptWithProgress(prompt, nil)
+}
+
+func (s *Server) tryRunCustomWorkflowPromptWithProgress(prompt string, onProgress func(event, message, role, taskID string, details map[string]interface{})) (string, bool, error) {
+	candidates, parallelRequested, ok := extractCustomWorkflowRunRequests(prompt)
+	if !ok {
+		if inferred, parallel, matched := inferCustomWorkflowRunRequests(prompt); matched {
+			candidates = inferred
+			parallelRequested = parallel
+			ok = true
+		}
+	}
 	if !ok {
 		return "", false, nil
 	}
-	cw, matched, err := findCustomWorkflowByNameOrAgent(candidate)
-	if err != nil || cw == nil {
-		return "", false, nil
+	resolved := make([]customWorkflowMatch, 0, len(candidates))
+	missing := []string{}
+	for _, candidate := range candidates {
+		cw, matched, err := findCustomWorkflowByNameOrAgent(candidate)
+		if err != nil {
+			return "", true, err
+		}
+		if cw == nil {
+			missing = append(missing, candidate)
+			continue
+		}
+		resolved = append(resolved, customWorkflowMatch{Candidate: candidate, Name: matched, Workflow: cw})
 	}
-	result, err := workflow.RunCustomWorkflow(s.Supervisor, s.Supervisor.GetProvider(), cw)
+	if len(resolved) == 0 {
+		return "", true, fmt.Errorf("workflow/agent tidak ditemukan: %s. Tidak membuat blueprint baru; pilih workflow existing yang tersimpan%s", strings.Join(missing, ", "), existingCustomWorkflowHint())
+	}
+	if len(missing) > 0 {
+		return "", true, fmt.Errorf("workflow/agent tidak ditemukan: %s. Tidak membuat blueprint baru; pilih workflow existing yang tersimpan%s", strings.Join(missing, ", "), existingCustomWorkflowHint())
+	}
+
+	responses, err := s.runResolvedCustomWorkflowMatchesWithProgress(resolved, parallelRequested, onProgress)
 	if err != nil {
-		return "", true, fmt.Errorf("gagal menjalankan custom workflow '%s': %w", matched, err)
+		return "", true, err
 	}
-	return formatCustomWorkflowRunResponse(matched, result), true, nil
+	if len(responses) == 1 {
+		return responses[0], true, nil
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d custom workflow existing selesai dijalankan.\n", len(responses)))
+	for i, response := range responses {
+		sb.WriteString(fmt.Sprintf("\n## Workflow %d\n%s\n", i+1, response))
+	}
+	return strings.TrimSpace(sb.String()), true, nil
+}
+
+type customWorkflowMatch struct {
+	Candidate string
+	Name      string
+	Workflow  *workflow.CustomWorkflow
+}
+
+func (s *Server) runResolvedCustomWorkflowMatches(items []customWorkflowMatch, parallelRequested bool) ([]string, error) {
+	return s.runResolvedCustomWorkflowMatchesWithProgress(items, parallelRequested, nil)
+}
+
+func (s *Server) runResolvedCustomWorkflowMatchesWithProgress(items []customWorkflowMatch, parallelRequested bool, onProgress func(event, message, role, taskID string, details map[string]interface{})) ([]string, error) {
+	if !parallelRequested || len(items) <= 1 {
+		responses := make([]string, 0, len(items))
+		for _, item := range items {
+			response, err := s.runResolvedCustomWorkflowWithProgress(item, parallelRequested, onProgress)
+			if err != nil {
+				return nil, err
+			}
+			responses = append(responses, response)
+		}
+		return responses, nil
+	}
+
+	responses := make([]string, len(items))
+	errs := make([]error, len(items))
+	var wg sync.WaitGroup
+	for i, item := range items {
+		i, item := i, item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses[i], errs[i] = s.runResolvedCustomWorkflowWithProgress(item, parallelRequested, onProgress)
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return responses, nil
+}
+
+func (s *Server) runResolvedCustomWorkflow(item customWorkflowMatch, parallelRequested bool) (string, error) {
+	return s.runResolvedCustomWorkflowWithProgress(item, parallelRequested, nil)
+}
+
+func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch, parallelRequested bool, onProgress func(event, message, role, taskID string, details map[string]interface{})) (string, error) {
+	runID := fmt.Sprintf("custom-%d", time.Now().UnixNano())
+	if s.OrchestrationStore != nil {
+		s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name))
+	}
+	started := map[string]time.Time{}
+	result, err := workflow.RunCustomWorkflowWithProgress(s.Supervisor, s.Supervisor.GetProvider(), item.Workflow, &workflow.CustomWorkflowProgress{
+		OnBlueprintReady: func(_ workflow.Blueprint, waves [][]string) {
+			if s.OrchestrationStore != nil {
+				s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name))
+			}
+			if onProgress != nil {
+				onProgress("blueprint_ready", fmt.Sprintf("Workflow %s siap: %d wave", item.Name, len(waves)), "", "", map[string]interface{}{"waves": waves})
+			}
+		},
+		OnWaveStart: func(wave int, roles []string) {
+			if onProgress != nil {
+				onProgress("wave_start", fmt.Sprintf("Wave %d mulai: %s", wave+1, strings.Join(roles, ", ")), "", "", map[string]interface{}{"wave": wave + 1, "roles": roles})
+			}
+		},
+		OnWaveComplete: func(wave int, results map[string][]agent.TaskResult) {
+			if onProgress != nil {
+				onProgress("wave_complete", fmt.Sprintf("Wave %d selesai", wave+1), "", "", map[string]interface{}{"wave": wave + 1})
+			}
+		},
+		OnRoleStart: func(role string) {
+			started[role] = time.Now()
+			if s.OrchestrationStore != nil {
+				s.OrchestrationStore.UpdateSubtaskStatus(role, workflow.StatusRunning, "", "", 0)
+			}
+			if onProgress != nil {
+				onProgress("role_start", fmt.Sprintf("Role %s mulai", role), role, "", nil)
+			}
+		},
+		OnTaskComplete: func(role, taskID string, taskResult agent.TaskResult) {
+			duration := time.Duration(0)
+			if start := started[role]; !start.IsZero() {
+				duration = time.Since(start)
+			}
+			if s.OrchestrationStore != nil {
+				s.OrchestrationStore.UpdateSubtaskStatus(role, taskResultStatus(taskResult), strings.TrimSpace(taskResult.Output), taskResult.Error, duration)
+			}
+			if onProgress != nil {
+				onProgress("task_complete", fmt.Sprintf("%s selesai: %s", role, taskID), role, taskID, map[string]interface{}{"status": taskResult.Status, "duration_ms": duration.Milliseconds(), "error": taskResult.Error})
+			}
+		},
+	})
+	if err != nil {
+		if s.OrchestrationStore != nil {
+			s.OrchestrationStore.Complete(workflow.StatusFailed, "", err.Error())
+		}
+		return "", fmt.Errorf("gagal menjalankan custom workflow '%s': %w", item.Name, err)
+	}
+	response := formatCustomWorkflowRunResponse(item.Name, result, parallelRequested)
+	if s.OrchestrationStore != nil {
+		s.OrchestrationStore.MarkAll(workflow.StatusSuccess, "Custom workflow selesai. "+result.FinalSummary)
+		s.OrchestrationStore.Complete(workflow.StatusSuccess, response, "")
+	}
+	return response, nil
+}
+
+func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string) workflow.ExecutionPlan {
+	planID := "custom-workflow-" + sanitizeRunID(matched)
+	plan := workflow.ExecutionPlan{
+		ID:       planID,
+		Task:     workflow.OrchestrationTask{ID: planID + "-task", Title: "Custom workflow: " + matched, Description: cw.Description, Kind: workflow.TaskKindReadOnly, RiskLevel: workflow.RiskLow},
+		Metadata: map[string]interface{}{"custom_workflow": cw.Name},
+	}
+	bp := cw.ToBlueprint()
+	runner := workflow.NewRunner(bp, nil, nil)
+	waves, _ := runner.BuildWaves()
+	for _, a := range cw.Agents {
+		id := a.Role
+		description := a.Description
+		if len(a.Tasks) > 0 {
+			description = fmt.Sprintf("%s\n\n%d task(s): %s", a.Description, len(a.Tasks), firstNonEmpty(a.Tasks[0].Description, a.Tasks[0].ID))
+		}
+		plan.Subtasks = append(plan.Subtasks, workflow.Subtask{ID: id, Title: a.Role, Description: description, Kind: workflow.TaskKindReadOnly, DependsOn: append([]string(nil), a.DependsOn...), CanParallel: len(a.DependsOn) == 0, RiskLevel: workflow.RiskLow, Status: workflow.StatusPending})
+	}
+	for i, wave := range waves {
+		mode := workflow.BatchModeSerial
+		if len(wave) > 1 {
+			mode = workflow.BatchModeParallel
+		}
+		plan.Batches = append(plan.Batches, workflow.ExecutionBatch{ID: fmt.Sprintf("wave-%d", i+1), Name: fmt.Sprintf("Wave %d", i+1), Mode: mode, SubtaskIDs: append([]string(nil), wave...), MaxConcurrency: len(wave)})
+	}
+	return plan
+}
+
+func sanitizeRunID(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else if b.Len() > 0 {
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "run"
+	}
+	return out
+}
+func extractCustomWorkflowRunName(prompt string) (string, bool) {
+	names, _, ok := extractCustomWorkflowRunRequests(prompt)
+	if !ok || len(names) == 0 {
+		return "", false
+	}
+	return names[0], true
+}
+
+func extractCustomWorkflowRunRequest(prompt string) (string, bool, bool) {
+	names, parallel, ok := extractCustomWorkflowRunRequests(prompt)
+	if !ok || len(names) == 0 {
+		return "", false, false
+	}
+	return names[0], parallel, true
+}
+
+func extractCustomWorkflowRunRequests(prompt string) ([]string, bool, bool) {
+	text := strings.TrimSpace(prompt)
+	if text == "" {
+		return nil, false, false
+	}
+	text = strings.Trim(text, " \t\n\r`'\"")
+	lower := strings.ToLower(text)
+	prefixes := []string{
+		"jalankan custom workflow ", "jalankan workflow ", "run custom workflow ", "run workflow ",
+		"execute custom workflow ", "execute workflow ", "mulai custom workflow ", "mulai workflow ",
+		"start custom workflow ", "start workflow ", "jalankan ", "halankan ", "jlnkan ", "run ", "execute ", "mulai ", "start ",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			raw := strings.TrimSpace(text[len(prefix):])
+			name, parallelRequested := stripCustomWorkflowParallelSuffix(raw)
+			names := splitCustomWorkflowRunCandidates(name)
+			if len(names) > 0 {
+				return names, parallelRequested, true
+			}
+		}
+	}
+	return nil, false, false
+}
+
+func inferCustomWorkflowRunRequests(prompt string) ([]string, bool, bool) {
+	text := strings.TrimSpace(prompt)
+	if text == "" {
+		return nil, false, false
+	}
+	parallelRequested := strings.Contains(strings.ToLower(text), "parallel") || strings.Contains(strings.ToLower(text), "paralel")
+	names, err := workflow.ListCustomWorkflows()
+	if err != nil || len(names) == 0 {
+		return nil, parallelRequested, false
+	}
+	seen := map[string]bool{}
+	var candidates []string
+	for _, name := range names {
+		cw, err := workflow.LoadCustomWorkflow(name)
+		if err != nil || cw == nil {
+			continue
+		}
+		if customWorkflowMentioned(text, cw, name) {
+			key := normalizeWorkflowLookupKey(cw.Name)
+			if key != "" && !seen[key] {
+				seen[key] = true
+				candidates = append(candidates, cw.Name)
+			}
+		}
+	}
+	return candidates, parallelRequested, len(candidates) > 0
+}
+
+func customWorkflowMentioned(prompt string, cw *workflow.CustomWorkflow, fileName string) bool {
+	promptKey := normalizeWorkflowLookupKey(prompt)
+	keys := []string{normalizeWorkflowLookupKey(cw.Name), normalizeWorkflowLookupKey(fileName)}
+	for _, a := range cw.Agents {
+		keys = append(keys, normalizeWorkflowLookupKey(a.Role))
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		for _, alias := range workflowLookupAliases(key) {
+			if alias != "" && strings.Contains(promptKey, alias) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func splitCustomWorkflowRunCandidates(text string) []string {
+	clean := strings.Trim(text, " \t\n\r`'\".,!")
+	if clean == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer(",", "\n", "&", "\n", " + ", "\n", " dan ", "\n", " and ", "\n")
+	parts := strings.Split(replacer.Replace(" "+clean+" "), "\n")
+	seen := map[string]bool{}
+	var out []string
+	for _, part := range parts {
+		part = strings.Trim(part, " \t\n\r`'\".,!")
+		if part == "" {
+			continue
+		}
+		key := normalizeWorkflowLookupKey(part)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, part)
+	}
+	return out
+}
+
+func stripCustomWorkflowParallelSuffix(name string) (string, bool) {
+	clean := strings.Trim(name, " \t\n\r`'\".,!")
+	lower := strings.ToLower(clean)
+	suffixes := []string{" secara parallel", " secara paralel", " in parallel", " parallel", " paralel"}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(lower, suffix) {
+			trimmed := strings.TrimSpace(clean[:len(clean)-len(suffix)])
+			trimmed = strings.Trim(trimmed, " \t\n\r`'\".,!")
+			return trimmed, trimmed != ""
+		}
+	}
+	return clean, false
+}
+
+func isCustomWorkflowQuestion(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	if !strings.Contains(p, "custom workflow") && !strings.Contains(p, "workflow") {
+		return false
+	}
+	questionTerms := []string{"?", "apakah", "apa ", "gimana", "bagaimana", "ada fitur", "bisa gak", "bisa nggak", "bisa ngga", "bisakah", "kalau", "untuk custom workflow"}
+	for _, term := range questionTerms {
+		if strings.Contains(p, term) {
+			return true
+		}
+	}
+	return strings.Contains(p, "saya mau buat") && (strings.Contains(p, "nanti") || strings.Contains(p, "yang bisa"))
 }
 
 func (s *Server) tryCreateCustomWorkflowPrompt(prompt string) (string, bool, error) {
@@ -643,56 +1007,6 @@ func (s *Server) tryCreateCustomWorkflowPrompt(prompt string) (string, bool, err
 		return "", true, fmt.Errorf("gagal menyimpan custom workflow '%s': %w", uniqueName, err)
 	}
 	return formatCustomWorkflowCreateResponse(cw), true, nil
-}
-
-func extractCustomWorkflowRunName(prompt string) (string, bool) {
-	text := strings.TrimSpace(prompt)
-	if text == "" {
-		return "", false
-	}
-	text = strings.Trim(text, " \t\n\r`'\"")
-	lower := strings.ToLower(text)
-	prefixes := []string{
-		"jalankan custom workflow ",
-		"jalankan workflow ",
-		"run custom workflow ",
-		"run workflow ",
-		"execute custom workflow ",
-		"execute workflow ",
-		"mulai custom workflow ",
-		"mulai workflow ",
-		"start custom workflow ",
-		"start workflow ",
-		"jalankan ",
-		"run ",
-		"execute ",
-		"mulai ",
-		"start ",
-	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(lower, prefix) {
-			name := strings.TrimSpace(text[len(prefix):])
-			name = strings.Trim(name, " \t\n\r`'\".,!")
-			if name != "" {
-				return name, true
-			}
-		}
-	}
-	return "", false
-}
-
-func isCustomWorkflowQuestion(prompt string) bool {
-	p := strings.ToLower(strings.TrimSpace(prompt))
-	if !strings.Contains(p, "custom workflow") && !strings.Contains(p, "workflow") {
-		return false
-	}
-	questionTerms := []string{"?", "apakah", "apa ", "gimana", "bagaimana", "ada fitur", "bisa gak", "bisa nggak", "bisa ngga", "bisakah", "kalau", "untuk custom workflow"}
-	for _, term := range questionTerms {
-		if strings.Contains(p, term) {
-			return true
-		}
-	}
-	return strings.Contains(p, "saya mau buat") && (strings.Contains(p, "nanti") || strings.Contains(p, "yang bisa"))
 }
 
 func extractCustomWorkflowCreateName(prompt string) (string, bool) {
@@ -808,48 +1122,245 @@ func formatCustomWorkflowCreateResponse(cw *workflow.CustomWorkflow) string {
 }
 
 func findCustomWorkflowByNameOrAgent(candidate string) (*workflow.CustomWorkflow, string, error) {
-	names, err := workflow.ListCustomWorkflows()
+	workflows, err := workflow.LoadAllCustomWorkflows()
 	if err != nil {
 		return nil, "", err
 	}
+	cw, matched := matchCustomWorkflowWithName(candidate, workflows)
+	return cw, matched, nil
+}
+
+func matchCustomWorkflowWithName(candidate string, workflows []*workflow.CustomWorkflow) (*workflow.CustomWorkflow, string) {
 	wanted := strings.ToLower(strings.TrimSpace(candidate))
+	wantedKey := normalizeWorkflowLookupKey(candidate)
+	wantedAliases := workflowLookupAliases(wantedKey)
 	var fallback *workflow.CustomWorkflow
 	fallbackName := ""
-	for _, name := range names {
-		cw, err := workflow.LoadCustomWorkflow(name)
-		if err != nil {
+	for _, cw := range workflows {
+		if cw == nil {
 			continue
 		}
-		if strings.EqualFold(cw.Name, candidate) || strings.EqualFold(name, candidate) {
-			return cw, cw.Name, nil
+		workflowKeys := []string{normalizeWorkflowLookupKey(cw.Name)}
+		if strings.EqualFold(cw.Name, candidate) || containsAnyLookupKey(workflowKeys, wantedAliases) {
+			return cw, cw.Name
 		}
 		for _, a := range cw.Agents {
-			if strings.EqualFold(a.Role, candidate) {
-				return cw, cw.Name, nil
+			roleKey := normalizeWorkflowLookupKey(a.Role)
+			agentKeys := append([]string{roleKey}, agentLookupAliases(cw.Name, roleKey)...)
+			if strings.EqualFold(a.Role, candidate) || containsAnyLookupKey(agentKeys, wantedAliases) {
+				return cw, cw.Name
 			}
-			if fallback == nil && strings.Contains(strings.ToLower(a.Role), wanted) {
+			if fallback == nil && anyWorkflowKeyMatches(agentKeys, wantedAliases) {
 				fallback = cw
 				fallbackName = cw.Name
 			}
 		}
-		if fallback == nil && strings.Contains(strings.ToLower(cw.Name), wanted) {
-			fallback = cw
-			fallbackName = cw.Name
+		if fallback == nil && wanted != "" {
+			for _, key := range workflowKeys {
+				if strings.Contains(strings.ToLower(cw.Name), wanted) || anyWorkflowKeyMatches([]string{key}, wantedAliases) {
+					fallback = cw
+					fallbackName = cw.Name
+					break
+				}
+			}
 		}
 	}
-	return fallback, fallbackName, nil
+	return fallback, fallbackName
 }
 
-func formatCustomWorkflowRunResponse(name string, result *workflow.CustomWorkflowResult) string {
+func existingCustomWorkflowHint() string {
+	names, err := workflow.ListCustomWorkflows()
+	if err != nil || len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	if len(names) > 8 {
+		names = names[:8]
+	}
+	return ". Workflow tersedia: " + strings.Join(names, ", ")
+}
+
+func containsLookupKey(keys []string, wanted string) bool {
+	return containsAnyLookupKey(keys, workflowLookupAliases(wanted))
+}
+
+func containsAnyLookupKey(keys, wantedAliases []string) bool {
+	for _, key := range keys {
+		for _, wanted := range wantedAliases {
+			if wanted != "" && (key == wanted || workflowKeyLooksLike(key, wanted)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func anyWorkflowKeyMatches(keys, wantedAliases []string) bool {
+	for _, key := range keys {
+		for _, wanted := range wantedAliases {
+			if workflowKeyMatches(key, wanted) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func workflowLookupAliases(key string) []string {
+	key = normalizeWorkflowLookupKey(key)
+	if key == "" {
+		return nil
+	}
+	aliases := []string{key}
+	for _, suffix := range []string{"-agent", "-workflow"} {
+		if strings.HasSuffix(key, suffix) {
+			aliases = append(aliases, strings.TrimSuffix(key, suffix))
+		}
+	}
+	parts := strings.Split(key, "-")
+	for i := 1; i < len(parts)-1; i++ {
+		aliases = append(aliases, strings.Join(parts[i:], "-"))
+	}
+	seen := map[string]bool{}
+	out := aliases[:0]
+	for _, alias := range aliases {
+		alias = strings.Trim(alias, "-")
+		if alias == "" || seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		out = append(out, alias)
+	}
+	return out
+}
+
+func agentLookupAliases(workflowName, roleKey string) []string {
+	workflowKey := normalizeWorkflowLookupKey(workflowName)
+	roleKey = normalizeWorkflowLookupKey(roleKey)
+	if workflowKey == "" || roleKey == "" {
+		return nil
+	}
+	aliases := []string{}
+	for _, suffix := range []string{"-workflow", "-agent"} {
+		if strings.HasSuffix(workflowKey, suffix) {
+			base := strings.TrimSuffix(workflowKey, suffix)
+			aliases = append(aliases, base+"-"+roleKey)
+		}
+	}
+	return aliases
+}
+
+func workflowKeyMatches(key, wanted string) bool {
+	if key == "" || wanted == "" {
+		return false
+	}
+	return strings.Contains(key, wanted) || strings.Contains(wanted, key) || workflowKeyLooksLike(key, wanted)
+}
+
+func workflowKeyLooksLike(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return levenshteinDistance(a, b) <= maxWorkflowLookupDistance(a, b)
+}
+
+func maxWorkflowLookupDistance(a, b string) int {
+	longest := len(a)
+	if len(b) > longest {
+		longest = len(b)
+	}
+	if longest >= 18 {
+		return 3
+	}
+	if longest >= 10 {
+		return 2
+	}
+	return 1
+}
+
+func levenshteinDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			cur[j] = minInt(cur[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
+func minInt(values ...int) int {
+	best := values[0]
+	for _, v := range values[1:] {
+		if v < best {
+			best = v
+		}
+	}
+	return best
+}
+
+func normalizeWorkflowLookupKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if valid {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func formatCustomWorkflowRunResponse(name string, result *workflow.CustomWorkflowResult, parallelRequested bool) string {
 	if result == nil {
 		return fmt.Sprintf("Custom workflow '%s' selesai dijalankan.", name)
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan.\n", name))
+	if parallelRequested {
+		sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan dengan mode parallel eksplisit.\n", name))
+	} else {
+		sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan.\n", name))
+	}
 	if result.FinalSummary != "" {
 		sb.WriteString("\n")
 		sb.WriteString(result.FinalSummary)
 		sb.WriteString("\n")
+	}
+	if parallelRequested {
+		sb.WriteString("\nParallel execution:\n")
+		if result.ParallelExecution {
+			sb.WriteString("- Berjalan parallel pada wave yang dependency-nya sudah aman.\n")
+		} else {
+			sb.WriteString("- Diminta parallel, tetapi workflow ini tetap serial karena dependency/DependsOn membuat setiap agent harus menunggu agent sebelumnya.\n")
+		}
+		if waves := formatWorkflowWaves(result.Waves); waves != "" {
+			sb.WriteString(waves)
+		}
 	}
 	if result.ProjectPath != "" {
 		sb.WriteString(fmt.Sprintf("\nProject: %s\n", result.ProjectPath))
@@ -875,6 +1386,26 @@ func formatCustomWorkflowRunResponse(name string, result *workflow.CustomWorkflo
 	return strings.TrimSpace(sb.String())
 }
 
+func formatWorkflowWaves(waves [][]string) string {
+	if len(waves) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, wave := range waves {
+		if len(wave) == 0 {
+			continue
+		}
+		roles := append([]string(nil), wave...)
+		sort.Strings(roles)
+		mode := "serial"
+		if len(roles) > 1 {
+			mode = "parallel"
+		}
+		sb.WriteString(fmt.Sprintf("- Wave %d (%s): %s\n", i+1, mode, strings.Join(roles, ", ")))
+	}
+	return sb.String()
+}
+
 // --- Memories ---
 
 func (s *Server) resolveWorkspaceID() int64 {
@@ -890,49 +1421,88 @@ func (s *Server) resolveWorkspaceID() int64 {
 }
 
 func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
-		return
-	}
-	limitStr := r.URL.Query().Get("limit")
-	limit := 50
-	if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
-		limit = v
-	}
-	tags := r.URL.Query()["tags"]
-	source := r.URL.Query().Get("source")
-
-	// Allow overriding workspace via query param
-	wsID := s.resolveWorkspaceID()
-	if wsName := r.URL.Query().Get("workspace"); wsName != "" {
-		w, err := s.MemStore.GetWorkspaceByName(wsName)
-		if err == nil && w != nil {
-			wsID = w.ID
+	switch r.Method {
+	case http.MethodGet:
+		limitStr := r.URL.Query().Get("limit")
+		limit := 50
+		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
+			limit = v
 		}
-	}
+		tags := r.URL.Query()["tags"]
+		source := r.URL.Query().Get("source")
+		wsID := s.resolveMemoryWorkspaceID(r.URL.Query().Get("workspace"))
 
-	filters := memory.MemoryFilters{
-		Limit:   limit,
-		SortBy:  "created_at",
-		SortDir: "DESC",
-		SearchFilters: memory.SearchFilters{
-			Tags:    tags,
-			Sources: []string{},
-		},
-	}
-	if source != "" {
-		filters.Sources = []string{source}
-	}
+		filters := memory.MemoryFilters{
+			Limit:   limit,
+			SortBy:  "created_at",
+			SortDir: "DESC",
+			SearchFilters: memory.SearchFilters{
+				Tags:    tags,
+				Sources: []string{},
+			},
+		}
+		if source != "" {
+			filters.Sources = []string{source}
+		}
 
-	mems, total, err := s.MemStore.ListMemoriesWithFilters(wsID, filters)
-	if err != nil {
-		errorResponse(w, http.StatusInternalServerError, err.Error())
-		return
+		mems, total, err := s.MemStore.ListMemoriesWithFilters(wsID, filters)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"memories": mems, "total": total})
+	case http.MethodPost:
+		var req struct {
+			Content   string   `json:"content"`
+			Tags      []string `json:"tags"`
+			Source    string   `json:"source"`
+			Workspace string   `json:"workspace"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		req.Content = strings.TrimSpace(req.Content)
+		if req.Content == "" {
+			errorResponse(w, http.StatusBadRequest, "content wajib diisi")
+			return
+		}
+		source := strings.TrimSpace(req.Source)
+		if source == "" {
+			source = "web"
+		}
+		mem, err := s.MemStore.Save(req.Content, strings.Join(req.Tags, ","), source, s.resolveMemoryWorkspaceID(req.Workspace), nil)
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, mem)
+	case http.MethodDelete:
+		id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		if err != nil || id <= 0 {
+			errorResponse(w, http.StatusBadRequest, "id wajib numeric")
+			return
+		}
+		if err := s.MemStore.Delete(id); err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		errorResponse(w, http.StatusMethodNotAllowed, "GET/POST/DELETE only")
 	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"memories": mems,
-		"total":    total,
-	})
+}
+
+func (s *Server) resolveMemoryWorkspaceID(name string) int64 {
+	wsID := s.resolveWorkspaceID()
+	if name == "" {
+		return wsID
+	}
+	w, err := s.MemStore.GetWorkspaceByName(name)
+	if err == nil && w != nil {
+		return w.ID
+	}
+	return wsID
 }
 
 func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
@@ -941,8 +1511,9 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Query string `json:"query"`
-		Limit int    `json:"limit"`
+		Query     string `json:"query"`
+		Limit     int    `json:"limit"`
+		Workspace string `json:"workspace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errorResponse(w, http.StatusBadRequest, "invalid JSON")
@@ -952,7 +1523,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	wsID := s.resolveWorkspaceID()
+	wsID := s.resolveMemoryWorkspaceID(req.Workspace)
 	mems, err := s.MemStore.SearchFullText(req.Query, wsID, memory.MemoryFilters{
 		Limit:         req.Limit,
 		SearchFilters: memory.SearchFilters{MinScore: 0.1},
@@ -1024,6 +1595,88 @@ func (s *Server) handleWorkspaceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, ws)
+}
+
+func (s *Server) handleRoadmapFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if rawPath == "" {
+		errorResponse(w, http.StatusBadRequest, "path required")
+		return
+	}
+	resolved, root, err := s.resolveWorkspaceFilePath(rawPath)
+	if err != nil {
+		errorResponse(w, http.StatusForbidden, err.Error())
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(resolved))
+	if ext != ".md" && ext != ".markdown" {
+		errorResponse(w, http.StatusBadRequest, "roadmap file must be markdown")
+		return
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || info.IsDir() {
+		errorResponse(w, http.StatusNotFound, "roadmap not found")
+		return
+	}
+	if info.Size() > 2*1024*1024 {
+		errorResponse(w, http.StatusBadRequest, "roadmap file too large")
+		return
+	}
+	content, err := os.ReadFile(resolved)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rel, _ := filepath.Rel(root, resolved)
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"path":          resolved,
+		"relative_path": rel,
+		"name":          filepath.Base(resolved),
+		"content":       string(content),
+		"size":          info.Size(),
+		"updated_at":    info.ModTime(),
+		"workspace":     s.Cfg.ActiveWorkspace,
+	})
+}
+
+func (s *Server) resolveWorkspaceFilePath(rawPath string) (string, string, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return "", "", err
+	}
+	if s.MemStore != nil && s.Cfg != nil && strings.TrimSpace(s.Cfg.ActiveWorkspace) != "" {
+		if ws, err := s.MemStore.GetWorkspaceByName(s.Cfg.ActiveWorkspace); err == nil && ws != nil && strings.TrimSpace(ws.Path) != "" {
+			root = ws.Path
+		}
+	}
+	if !filepath.IsAbs(root) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", "", err
+		}
+		root = filepath.Join(cwd, root)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", err
+	}
+	candidate := rawPath
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(absRoot, candidate)
+	}
+	absPath, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", "", err
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("path outside active workspace")
+	}
+	return absPath, absRoot, nil
 }
 
 func (s *Server) handleCategories(w http.ResponseWriter, r *http.Request) {
@@ -1166,6 +1819,10 @@ func (s *Server) handleBlueprintGenerate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	log.Printf("[web] handleBlueprintGenerate: prompt=%q provider=%q", req.Prompt, s.Supervisor.GetProvider().Name())
+	if _, handled, _ := s.tryRunCustomWorkflowPrompt(req.Prompt); handled {
+		errorResponse(w, http.StatusBadRequest, "prompt ini adalah perintah menjalankan custom workflow existing; gunakan /api/custom-workflow/run atau chat, bukan generate blueprint")
+		return
+	}
 	bp, err := workflow.GenerateBlueprintWithProvider(s.Supervisor.GetProvider(), s.Supervisor.GetMCPInfo(), req.Prompt)
 	if err != nil {
 		log.Printf("[web] handleBlueprintGenerate: failed: %v", err)
@@ -1204,6 +1861,14 @@ func (s *Server) handleBlueprintExecute(w http.ResponseWriter, r *http.Request) 
 		_ = os.MkdirAll(projectDir, 0755)
 	}
 	log.Printf("[web] handleBlueprintExecute: prompt=%q projectDir=%q provider=%q", req.Prompt, projectDir, s.Supervisor.GetProvider().Name())
+	if response, handled, err := s.tryRunCustomWorkflowPrompt(req.Prompt); handled {
+		if err != nil {
+			errorResponse(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "custom_workflow_executed", "response": response})
+		return
+	}
 	result, err := workflow.RunWorkflowWithDir(s.Supervisor, s.Supervisor.GetProvider(), req.Prompt, projectDir)
 	if err != nil {
 		log.Printf("[web] handleBlueprintExecute: failed: %v", err)
@@ -1233,14 +1898,15 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			RefinedFrom string   `json:"refined_from,omitempty"`
 		}
 		type skillItem struct {
-			Name         string         `json:"name"`
-			Description  string         `json:"description"`
-			Version      int            `json:"version"`
-			Tags         []string       `json:"tags"`
-			ParentID     string         `json:"parent_id,omitempty"`
-			CategoryPath []string       `json:"category_path,omitempty"`
-			Dependencies []string       `json:"dependencies,omitempty"`
-			Lineage      []lineageEntry `json:"lineage,omitempty"`
+			Name         string           `json:"name"`
+			Description  string           `json:"description"`
+			Version      int              `json:"version"`
+			Tags         []string         `json:"tags"`
+			Params       []skill.ParamDef `json:"params,omitempty"`
+			ParentID     string           `json:"parent_id,omitempty"`
+			CategoryPath []string         `json:"category_path,omitempty"`
+			Dependencies []string         `json:"dependencies,omitempty"`
+			Lineage      []lineageEntry   `json:"lineage,omitempty"`
 		}
 		var items []skillItem
 		for _, n := range names {
@@ -1264,6 +1930,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 				Description:  sk.Description,
 				Version:      sk.Version,
 				Tags:         sk.Tags,
+				Params:       sk.Params,
 				ParentID:     sk.ParentID,
 				CategoryPath: sk.CategoryPath,
 				Dependencies: sk.Dependencies,

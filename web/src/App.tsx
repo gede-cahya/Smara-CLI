@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon, Zap } from 'lucide-react'
 import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
@@ -12,6 +12,7 @@ import MagicPointer from './pages/MagicPointer'
 import VoiceAssistant from './pages/VoiceAssistant'
 import AvatarAssistant from './pages/AvatarAssistant'
 import RemoteDesktop from './pages/RemoteDesktop'
+import ParallelTasks from './pages/ParallelTasks'
 class PageErrorBoundary extends Component<{ children: ReactNode; label: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null }
 
@@ -74,6 +75,7 @@ const navItems = [
   { id: 'config', label: 'Config', icon: Settings, group: 'Core' },
   { id: 'workflow', label: 'Workflow', icon: GitBranch, group: 'Build' },
   { id: 'custom-workflow', label: 'Custom Workflow', icon: GitBranch, group: 'Build' },
+  { id: 'parallel-tasks', label: 'Parallel Tasks', icon: Zap, group: 'Build' },
   { id: 'skilltree', label: 'Skill Tree', icon: TreePine, group: 'Build' },
   { id: 'skilldash', label: 'Analytics', icon: LineChart, group: 'Build' },
   { id: 'graphify', label: 'Graphify', icon: Network, group: 'Build' },
@@ -119,7 +121,7 @@ export default function App() {
       <div className="smara-orb smara-orb-b" />
       <div className="smara-orb smara-orb-c" />
 
-      <aside className="relative z-10 m-4 mr-0 w-[286px] rounded-[1.65rem] border border-neutral-900/80 bg-[#151b12]/92 shadow-2xl shadow-black/45 backdrop-blur-2xl flex flex-col overflow-hidden">
+      <aside className="relative z-10 m-4 mr-0 h-[calc(100vh-2rem)] w-[286px] shrink-0 rounded-[1.65rem] border border-neutral-900/80 bg-[#151b12]/92 shadow-2xl shadow-black/45 backdrop-blur-2xl flex flex-col overflow-hidden">
         <div className="absolute inset-x-7 top-0 h-px bg-gradient-to-r from-transparent via-smara-300/22 to-transparent" />
         <div className="p-4 border-b border-neutral-900/80">
           <div className="flex items-center gap-3">
@@ -197,6 +199,7 @@ export default function App() {
           <div className={active === 'avatar' ? 'h-full' : 'hidden'}><AvatarAssistant /></div>
           <div className={active === 'remote-desktop' ? 'h-full' : 'hidden'}><RemoteDesktop /></div>
           <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
+          <div className={active === 'parallel-tasks' ? 'h-full' : 'hidden'}><ParallelTasks /></div>
           <div className={active === 'skilltree' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense></div>
           <div className={active === 'skilldash' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense></div>
           <div className={active === 'graphify' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense></div>

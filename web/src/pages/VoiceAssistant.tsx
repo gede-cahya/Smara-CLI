@@ -13,10 +13,19 @@ type SpeechRecognitionLike = {
   stop: () => void
 }
 
-type VoiceSettings = { provider: string; language: string; voice_character: string; speed: number; volume: number; streaming: boolean }
+type VoiceSettings = {
+  provider: string
+  language: string
+  voice_character: string
+  model_id: string
+  speed: number
+  volume: number
+  streaming: boolean
+  base_url?: string
+}
 type VoicePlan = { transcript: string; intent: string; magic_pointer_args?: string[]; needs_guardrail: boolean; warnings?: string[] }
 
-const defaultSettings: VoiceSettings = { provider: 'browser', language: 'id-ID', voice_character: 'Smara', speed: 1, volume: 1, streaming: true }
+const defaultSettings: VoiceSettings = { provider: 'browser', language: 'id-ID', voice_character: 'ngvNHfiCrXLPAHcTrZK1', model_id: 'eleven_multilingual_v2', speed: 1, volume: 1, streaming: true, base_url: 'https://api.elevenlabs.io' }
 
 export default function VoiceAssistant() {
   const [settings, setSettings] = useState<VoiceSettings>(defaultSettings)
@@ -28,7 +37,7 @@ export default function VoiceAssistant() {
   const [error, setError] = useState('')
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
 
-  useEffect(() => { fetchJSON<VoiceSettings>('/api/voice/settings').then(setSettings).catch(() => {}) }, [])
+  useEffect(() => { fetchJSON<VoiceSettings>('/api/voice/settings').then(cfg => setSettings({ ...defaultSettings, ...cfg })).catch(() => {}) }, [])
 
   const supported = useMemo(() => typeof window !== 'undefined' && Boolean((window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionCtor }).webkitSpeechRecognition), [])
 
@@ -63,17 +72,56 @@ export default function VoiceAssistant() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
   }
 
-  const speak = () => {
-    setError('')
+  const speakBrowser = (text: string) => {
     if (!('speechSynthesis' in window)) { setError('speechSynthesis tidak tersedia di browser ini.'); return }
     window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(response)
+    const utter = new SpeechSynthesisUtterance(text)
     utter.lang = settings.language
     utter.rate = settings.speed
     utter.volume = settings.volume
     utter.onend = () => setSpeaking(false)
     setSpeaking(true)
     window.speechSynthesis.speak(utter)
+  }
+
+  const speak = async () => {
+    setError('')
+    try {
+      window.speechSynthesis?.cancel()
+      if (settings.provider === 'elevenlabs') {
+        setSpeaking(true)
+        const res = await fetch('/api/voice/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: response, settings })
+        })
+        if (!res.ok) {
+          const msg = await res.text()
+          setError(`${msg} — fallback ke browser voice.`)
+          speakBrowser(response)
+          return
+        }
+        const contentType = res.headers.get('Content-Type') || ''
+        if (!contentType.toLowerCase().startsWith('audio/')) {
+          const msg = await res.text().catch(() => `Response bukan audio (${contentType || 'unknown content-type'})`)
+          setError(`${msg} — fallback ke browser voice.`)
+          speakBrowser(response)
+          return
+        }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const audio = new Audio(url)
+        audio.volume = settings.volume
+        audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url) }
+        audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); setError('Gagal memutar audio ElevenLabs'); speakBrowser(response) }
+        await audio.play()
+        return
+      }
+      speakBrowser(response)
+    } catch (e) {
+      setSpeaking(false)
+      setError(e instanceof Error ? e.message : String(e))
+    }
   }
   const interrupt = () => { window.speechSynthesis?.cancel(); setSpeaking(false); stopListening() }
 
@@ -82,9 +130,8 @@ export default function VoiceAssistant() {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2 text-smara-200 font-semibold"><Mic className="w-5 h-5" /> Voice Assistant</div>
-          <p className="text-sm text-gray-400 mt-1">Phase 4 MVP: push-to-talk, STT Bahasa Indonesia via browser, TTS, interrupt/barge-in, settings, dan routing ke Magic Pointer.</p>
+          <div className="text-xs text-gray-500">Hands-free command, speech synthesis, dan autopilot desktop.</div>
         </div>
-        <div className={`px-3 py-1 rounded-full text-xs border ${listening ? 'border-smara-400/40 text-smara-100 bg-smara-500/10' : speaking ? 'border-lime-400/40 text-lime-100 bg-lime-500/10' : 'border-neutral-800/70 text-gray-400 bg-white/5'}`}>{listening ? 'listening' : speaking ? 'speaking' : 'idle'}</div>
       </div>
 
       <div className="grid lg:grid-cols-[1fr_.9fr] gap-5">
@@ -103,13 +150,17 @@ export default function VoiceAssistant() {
         <div className="rounded-3xl border border-neutral-800/70 bg-slate-950/25 p-5 space-y-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-200"><Settings2 className="w-4 h-4 text-lime-300" /> Voice settings</div>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <label className="space-y-1"><span className="text-xs text-gray-500">Provider</span><select value={settings.provider} onChange={e => setSettings({ ...settings, provider: e.target.value })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2"><option>browser</option><option>auto</option><option>piper</option></select></label>
+            <label className="space-y-1"><span className="text-xs text-gray-500">Provider</span><select value={settings.provider} onChange={e => setSettings({ ...settings, provider: e.target.value })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2"><option>browser</option><option>elevenlabs</option><option>auto</option><option>piper</option><option>whisper</option><option>mock</option></select></label>
             <label className="space-y-1"><span className="text-xs text-gray-500">Language</span><input value={settings.language} onChange={e => setSettings({ ...settings, language: e.target.value })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2" /></label>
+            <label className="space-y-1 col-span-2"><span className="text-xs text-gray-500">Voice ID / Character</span><input value={settings.voice_character} onChange={e => setSettings({ ...settings, voice_character: e.target.value })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2 font-mono text-xs" /></label>
+            <label className="space-y-1"><span className="text-xs text-gray-500">Model ID</span><select value={settings.model_id} onChange={e => setSettings({ ...settings, model_id: e.target.value })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2"><option>eleven_multilingual_v2</option><option>eleven_turbo_v2_5</option><option>eleven_flash_v2_5</option><option>eleven_v3</option></select></label>
+            <label className="space-y-1"><span className="text-xs text-gray-500">Base URL</span><input value={settings.base_url || ''} onChange={e => setSettings({ ...settings, base_url: e.target.value })} placeholder="https://api.elevenlabs.io" className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2 font-mono text-xs" /></label>
             <label className="space-y-1"><span className="text-xs text-gray-500">Speed</span><input type="number" step="0.1" value={settings.speed} onChange={e => setSettings({ ...settings, speed: Number(e.target.value) })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2" /></label>
             <label className="space-y-1"><span className="text-xs text-gray-500">Volume</span><input type="number" step="0.1" min="0" max="1" value={settings.volume} onChange={e => setSettings({ ...settings, volume: Number(e.target.value) })} className="w-full rounded-xl bg-slate-950/40 border border-neutral-800/70 p-2" /></label>
+            <label className="col-span-2 flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={settings.streaming} onChange={e => setSettings({ ...settings, streaming: e.target.checked })} className="rounded border-neutral-700 bg-slate-950/40" /> Streaming mengikuti config</label>
           </div>
           <textarea value={response} onChange={e => setResponse(e.target.value)} className="w-full h-24 rounded-2xl bg-slate-950/40 border border-neutral-800/70 p-3 text-sm outline-none" />
-          <button onClick={speak} className="w-full px-4 py-3 rounded-2xl bg-lime-500/15 hover:bg-lime-500/25 border border-lime-300/20 text-lime-100 text-sm flex items-center justify-center gap-2"><Volume2 className="w-4 h-4" /> Speak response</button>
+          <button onClick={speak} className="w-full px-4 py-3 rounded-2xl bg-lime-500/15 hover:bg-lime-500/25 border border-lime-300/20 text-lime-100 text-sm flex items-center justify-center gap-2"><Volume2 className="w-4 h-4" /> {speaking ? 'Speaking…' : 'Speak response'}</button>
         </div>
       </div>
 

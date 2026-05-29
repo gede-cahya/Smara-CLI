@@ -456,15 +456,18 @@ func (s *SQLiteStore) migrate() error {
 	// Check if tags column needs conversion
 	rows, err := s.db.Query("SELECT id, tags FROM memories WHERE tags != '[]' AND tags != '' AND (tags NOT LIKE '[%]' OR tags IS NULL)")
 	if err == nil {
+		type tagUpdate struct {
+			id   int64
+			tags string
+		}
+		var updates []tagUpdate
 		for rows.Next() {
 			var id int64
 			var tagsStr string
 			if err := rows.Scan(&id, &tagsStr); err != nil {
 				continue
 			}
-			// Convert comma-separated string to JSON array
 			if tagsStr != "" && tagsStr != "[]" {
-				// Simple conversion: split by comma and create JSON array
 				jsonTags := "["
 				first := true
 				start := 0
@@ -485,10 +488,13 @@ func (s *SQLiteStore) migrate() error {
 					jsonTags += "\"" + tagsStr[start:] + "\""
 				}
 				jsonTags += "]"
-				_, _ = s.db.Exec("UPDATE memories SET tags = ? WHERE id = ?", jsonTags, id)
+				updates = append(updates, tagUpdate{id: id, tags: jsonTags})
 			}
 		}
 		rows.Close()
+		for _, update := range updates {
+			_, _ = s.db.Exec("UPDATE memories SET tags = ? WHERE id = ?", update.tags, update.id)
+		}
 	}
 
 	// 3. Ensure workspace_id exists in memories (for backward compatibility)

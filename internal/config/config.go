@@ -86,44 +86,104 @@ type PlatformConfig struct {
 	LogConversations bool              `mapstructure:"log_conversations" yaml:"log_conversations"`
 }
 
+// ParallelOrchestrationConfig controls the parallel task orchestration runtime
+// and its web dashboard/API behavior.
+type ParallelOrchestrationConfig struct {
+	Enabled               bool   `mapstructure:"enabled" yaml:"enabled" json:"enabled"`
+	MaxConcurrency        int    `mapstructure:"max_concurrency" yaml:"max_concurrency" json:"max_concurrency"`
+	RequireApprovalHigh   bool   `mapstructure:"require_approval_high" yaml:"require_approval_high" json:"require_approval_high"`
+	RequireApprovalRemote bool   `mapstructure:"require_approval_remote" yaml:"require_approval_remote" json:"require_approval_remote"`
+	DryRun                bool   `mapstructure:"dry_run" yaml:"dry_run" json:"dry_run"`
+	SerialFallback        bool   `mapstructure:"serial_fallback" yaml:"serial_fallback" json:"serial_fallback"`
+	AutoThreshold         string `mapstructure:"auto_threshold" yaml:"auto_threshold" json:"auto_threshold"`
+}
+
+// DefaultParallelOrchestrationConfig returns conservative defaults for safe
+// parallel execution.
+func DefaultParallelOrchestrationConfig() ParallelOrchestrationConfig {
+	return ParallelOrchestrationConfig{
+		Enabled:               true,
+		MaxConcurrency:        4,
+		RequireApprovalHigh:   true,
+		RequireApprovalRemote: true,
+		DryRun:                false,
+		SerialFallback:        true,
+		AutoThreshold:         "complex",
+	}
+}
+
+// SetParallelOrchestration updates the in-memory and Viper-backed parallel
+// orchestration config. It intentionally does not call Save so API callers can
+// change runtime behavior without unexpectedly rewriting the user's config file.
+func SetParallelOrchestration(next ParallelOrchestrationConfig) {
+	next = normalizeParallelOrchestrationConfig(next)
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	cfg.ParallelOrchestration = next
+	viper.Set("parallel_orchestration", next)
+}
+
+func normalizeParallelOrchestrationConfig(next ParallelOrchestrationConfig) ParallelOrchestrationConfig {
+	if next.MaxConcurrency < 1 {
+		next.MaxConcurrency = 1
+	}
+	switch strings.ToLower(strings.TrimSpace(next.AutoThreshold)) {
+	case "conservative", "balanced", "complex", "aggressive":
+		next.AutoThreshold = strings.ToLower(strings.TrimSpace(next.AutoThreshold))
+	default:
+		next.AutoThreshold = "complex"
+	}
+	return next
+}
+
 // SmaraConfig holds all application configuration.
 type SmaraConfig struct {
-	Provider            string              `mapstructure:"provider" yaml:"provider"`
-	Model               string              `mapstructure:"model" yaml:"model"`
-	ReasoningEffort     string              `mapstructure:"reasoning_effort" yaml:"reasoning_effort"`
-	OllamaHost          string              `mapstructure:"ollama_host" yaml:"ollama_host"`
-	OpenAIAPIKey        string              `mapstructure:"openai_api_key" yaml:"openai_api_key"`
-	OpenAIModel         string              `mapstructure:"openai_model" yaml:"openai_model"`
-	OpenAIBaseURL       string              `mapstructure:"openai_base_url" yaml:"openai_base_url"`
-	OpenRouterAPIKey    string              `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
-	OpenRouterModel     string              `mapstructure:"openrouter_model" yaml:"openrouter_model"`
-	AnthropicAPIKey     string              `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
-	AnthropicModel      string              `mapstructure:"anthropic_model" yaml:"anthropic_model"`
-	CustomProviderName  string              `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
-	CustomAPIKey        string              `mapstructure:"custom_api_key" yaml:"custom_api_key"`
-	CustomBaseURL       string              `mapstructure:"custom_base_url" yaml:"custom_base_url"`
-	CustomModel         string              `mapstructure:"custom_model" yaml:"custom_model"`
-	CustomDisableStream bool                `mapstructure:"custom_disable_stream" yaml:"custom_disable_stream"`
-	SyncDir             string              `mapstructure:"sync_dir" yaml:"sync_dir"`
-	SyncInterval        int                 `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
-	MCPServers          []MCPServer         `mapstructure:"mcp_servers" yaml:"mcp_servers"`
-	SmaraMCPEnabled     bool                `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
-	SmaraMCPCommand     string              `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
-	SmaraMCPArgs        []string            `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
-	SmaraMCPAPIKey      string              `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
-	ImageModel          string              `mapstructure:"image_model" yaml:"image_model"`
-	ImageBaseURL        string              `mapstructure:"image_base_url" yaml:"image_base_url"`
-	ImageAPIKey         string              `mapstructure:"image_api_key" yaml:"image_api_key"`
-	ImageOutputDir      string              `mapstructure:"image_output_dir" yaml:"image_output_dir"`
-	Verbose             bool                `mapstructure:"verbose" yaml:"verbose"`
-	DBPath              string              `mapstructure:"db_path" yaml:"db_path"`
-	ActiveWorkspace     string              `mapstructure:"active_workspace" yaml:"active_workspace"`
-	ActiveWorkspaceID   int64               `mapstructure:"-"` // runtime only
-	Platforms           PlatformConfig      `mapstructure:"platforms" yaml:"platforms"`
-	SkillRegistries     []RegistryConfig    `mapstructure:"skill_registries" yaml:"skill_registries"`
-	CloudMemory         CloudMemoryConfig   `mapstructure:"cloud_memory" yaml:"cloud_memory"`
-	ChangeJournal       ChangeJournalConfig `mapstructure:"change_journal" yaml:"change_journal"`
-
+	Provider              string                      `mapstructure:"provider" yaml:"provider"`
+	Model                 string                      `mapstructure:"model" yaml:"model"`
+	ReasoningEffort       string                      `mapstructure:"reasoning_effort" yaml:"reasoning_effort"`
+	OllamaHost            string                      `mapstructure:"ollama_host" yaml:"ollama_host"`
+	OpenAIAPIKey          string                      `mapstructure:"openai_api_key" yaml:"openai_api_key"`
+	OpenAIModel           string                      `mapstructure:"openai_model" yaml:"openai_model"`
+	OpenAIBaseURL         string                      `mapstructure:"openai_base_url" yaml:"openai_base_url"`
+	OpenRouterAPIKey      string                      `mapstructure:"openrouter_api_key" yaml:"openrouter_api_key"`
+	OpenRouterModel       string                      `mapstructure:"openrouter_model" yaml:"openrouter_model"`
+	AnthropicAPIKey       string                      `mapstructure:"anthropic_api_key" yaml:"anthropic_api_key"`
+	AnthropicModel        string                      `mapstructure:"anthropic_model" yaml:"anthropic_model"`
+	CustomProviderName    string                      `mapstructure:"custom_provider_name" yaml:"custom_provider_name"`
+	CustomAPIKey          string                      `mapstructure:"custom_api_key" yaml:"custom_api_key"`
+	CustomBaseURL         string                      `mapstructure:"custom_base_url" yaml:"custom_base_url"`
+	CustomModel           string                      `mapstructure:"custom_model" yaml:"custom_model"`
+	CustomDisableStream   bool                        `mapstructure:"custom_disable_stream" yaml:"custom_disable_stream"`
+	SyncDir               string                      `mapstructure:"sync_dir" yaml:"sync_dir"`
+	SyncInterval          int                         `mapstructure:"sync_interval" yaml:"sync_interval"` // minutes
+	MCPServers            []MCPServer                 `mapstructure:"mcp_servers" yaml:"mcp_servers"`
+	SmaraMCPEnabled       bool                        `mapstructure:"smara_mcp_enabled" yaml:"smara_mcp_enabled"`
+	SmaraMCPCommand       string                      `mapstructure:"smara_mcp_command" yaml:"smara_mcp_command"`
+	SmaraMCPArgs          []string                    `mapstructure:"smara_mcp_args" yaml:"smara_mcp_args"`
+	SmaraMCPAPIKey        string                      `mapstructure:"smara_mcp_api_key" yaml:"smara_mcp_api_key"`
+	ImageModel            string                      `mapstructure:"image_model" yaml:"image_model"`
+	ImageBaseURL          string                      `mapstructure:"image_base_url" yaml:"image_base_url"`
+	ImageAPIKey           string                      `mapstructure:"image_api_key" yaml:"image_api_key"`
+	ImageOutputDir        string                      `mapstructure:"image_output_dir" yaml:"image_output_dir"`
+	VoiceProvider         string                      `mapstructure:"voice_provider" yaml:"voice_provider"`
+	VoiceAPIKey           string                      `mapstructure:"voice_api_key" yaml:"voice_api_key"`
+	VoiceBaseURL          string                      `mapstructure:"voice_base_url" yaml:"voice_base_url"`
+	VoiceCharacter        string                      `mapstructure:"voice_character" yaml:"voice_character"`
+	VoiceModelID          string                      `mapstructure:"voice_model_id" yaml:"voice_model_id"`
+	VoiceLanguage         string                      `mapstructure:"voice_language" yaml:"voice_language"`
+	VoiceSpeed            float64                     `mapstructure:"voice_speed" yaml:"voice_speed"`
+	VoiceVolume           float64                     `mapstructure:"voice_volume" yaml:"voice_volume"`
+	VoiceStreaming        bool                        `mapstructure:"voice_streaming" yaml:"voice_streaming"`
+	Verbose               bool                        `mapstructure:"verbose" yaml:"verbose"`
+	DBPath                string                      `mapstructure:"db_path" yaml:"db_path"`
+	ActiveWorkspace       string                      `mapstructure:"active_workspace" yaml:"active_workspace"`
+	ActiveWorkspaceID     int64                       `mapstructure:"-"` // runtime only
+	Platforms             PlatformConfig              `mapstructure:"platforms" yaml:"platforms"`
+	SkillRegistries       []RegistryConfig            `mapstructure:"skill_registries" yaml:"skill_registries"`
+	CloudMemory           CloudMemoryConfig           `mapstructure:"cloud_memory" yaml:"cloud_memory"`
+	ChangeJournal         ChangeJournalConfig         `mapstructure:"change_journal" yaml:"change_journal"`
+	ParallelOrchestration ParallelOrchestrationConfig `mapstructure:"parallel_orchestration" yaml:"parallel_orchestration"`
 	// AutoSkillDetect enables automatic skill capture: when the same tool-call
 	// pattern is observed repeatedly, Smara creates a skill without being asked.
 	// Default: true. Disable with `auto_skill_detect: false` in config.
@@ -178,7 +238,7 @@ func DefaultConfig() *SmaraConfig {
 	smaraDir := filepath.Join(home, ".smara")
 	return &SmaraConfig{
 		Provider:            "custom",
-		Model:               "deepseek-v4-pro",
+		Model:               "cx/gpt-5.5",
 		ReasoningEffort:     "",
 		OllamaHost:          "http://localhost:11434",
 		OpenAIAPIKey:        "",
@@ -188,10 +248,10 @@ func DefaultConfig() *SmaraConfig {
 		OpenRouterModel:     "anthropic/claude-sonnet-4",
 		AnthropicAPIKey:     "",
 		AnthropicModel:      "claude-sonnet-4-20250514",
-		CustomProviderName:  "CLIProxyAPI",
-		CustomAPIKey:        "your-api-key-1",
-		CustomBaseURL:       "http://localhost:8317/v1",
-		CustomModel:         "deepseek-v4-pro",
+		CustomProviderName:  "9router",
+		CustomAPIKey:        "sk-63a768fa898cb6e0-9r8iio-0a23c1a1",
+		CustomBaseURL:       "http://localhost:20128/v1",
+		CustomModel:         "cx/gpt-5.5",
 		CustomDisableStream: false,
 		SyncDir:             filepath.Join(smaraDir, "sync"),
 		SyncInterval:        15,
@@ -200,6 +260,15 @@ func DefaultConfig() *SmaraConfig {
 		ImageBaseURL:        "", // empty = use custom_base_url
 		ImageAPIKey:         "", // empty = use custom_api_key
 		ImageOutputDir:      filepath.Join(smaraDir, "images"),
+		VoiceProvider:       "browser",
+		VoiceAPIKey:         "", // empty = use ELEVENLABS_API_KEY env
+		VoiceBaseURL:        "https://api.elevenlabs.io",
+		VoiceCharacter:      "ngvNHfiCrXLPAHcTrZK1",
+		VoiceModelID:        "eleven_multilingual_v2",
+		VoiceLanguage:       "id-ID",
+		VoiceSpeed:          1,
+		VoiceVolume:         1,
+		VoiceStreaming:      true,
 		Verbose:             false,
 		DBPath:              filepath.Join(smaraDir, "memory.db"),
 		ActiveWorkspace:     "default",
@@ -252,6 +321,7 @@ func DefaultConfig() *SmaraConfig {
 				"sync_log",
 			},
 		},
+		ParallelOrchestration: DefaultParallelOrchestrationConfig(),
 	}
 }
 
@@ -313,6 +383,15 @@ func Init(configPath string) error {
 	viper.SetDefault("image_base_url", defaults.ImageBaseURL)
 	viper.SetDefault("image_api_key", defaults.ImageAPIKey)
 	viper.SetDefault("image_output_dir", defaults.ImageOutputDir)
+	viper.SetDefault("voice_provider", defaults.VoiceProvider)
+	viper.SetDefault("voice_api_key", defaults.VoiceAPIKey)
+	viper.SetDefault("voice_base_url", defaults.VoiceBaseURL)
+	viper.SetDefault("voice_character", defaults.VoiceCharacter)
+	viper.SetDefault("voice_model_id", defaults.VoiceModelID)
+	viper.SetDefault("voice_language", defaults.VoiceLanguage)
+	viper.SetDefault("voice_speed", defaults.VoiceSpeed)
+	viper.SetDefault("voice_volume", defaults.VoiceVolume)
+	viper.SetDefault("voice_streaming", defaults.VoiceStreaming)
 	viper.SetDefault("skill_registries", defaults.SkillRegistries)
 	viper.SetDefault("auto_skill_detect", defaults.AutoSkillDetect)
 	viper.SetDefault("auto_skill_threshold", defaults.AutoSkillThreshold)
@@ -336,6 +415,13 @@ func Init(configPath string) error {
 	viper.SetDefault("cloud_memory.max_storage_mb", defaults.CloudMemory.MaxStorageMB)
 	viper.SetDefault("cloud_memory.embeddings_cloud", defaults.CloudMemory.EmbeddingsCloud)
 	viper.SetDefault("cloud_memory.sync_tables", defaults.CloudMemory.SyncTables)
+	viper.SetDefault("parallel_orchestration.enabled", defaults.ParallelOrchestration.Enabled)
+	viper.SetDefault("parallel_orchestration.max_concurrency", defaults.ParallelOrchestration.MaxConcurrency)
+	viper.SetDefault("parallel_orchestration.require_approval_high", defaults.ParallelOrchestration.RequireApprovalHigh)
+	viper.SetDefault("parallel_orchestration.require_approval_remote", defaults.ParallelOrchestration.RequireApprovalRemote)
+	viper.SetDefault("parallel_orchestration.dry_run", defaults.ParallelOrchestration.DryRun)
+	viper.SetDefault("parallel_orchestration.serial_fallback", defaults.ParallelOrchestration.SerialFallback)
+	viper.SetDefault("parallel_orchestration.auto_threshold", defaults.ParallelOrchestration.AutoThreshold)
 
 	// Environment variable overrides
 	viper.SetEnvPrefix("SMARA")
@@ -444,31 +530,38 @@ func allSettingsFromStruct(c *SmaraConfig) map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	return map[string]interface{}{
-		"agent_max_iterations":            c.AgentMaxIterations,
-		"agent_request_timeout_sec":       c.AgentRequestTimeoutSec,
-		"reasoning_effort":                c.ReasoningEffort,
-		"auto_skill_detect":               c.AutoSkillDetect,
-		"auto_skill_threshold":            c.AutoSkillThreshold,
-		"platform_prompt_timeout":         c.PlatformPromptTimeout,
-		"image_model":                     c.ImageModel,
-		"image_base_url":                  c.ImageBaseURL,
-		"image_api_key":                   c.ImageAPIKey,
-		"image_output_dir":                c.ImageOutputDir,
-		"sync_interval":                   c.SyncInterval,
-		"verbose":                         c.Verbose,
-		"custom_disable_stream":           c.CustomDisableStream,
-		"smara_mcp_enabled":               c.SmaraMCPEnabled,
-		"change_journal.enabled":          c.ChangeJournal.Enabled,
-		"change_journal.memory_enabled":   c.ChangeJournal.MemoryEnabled,
-		"change_journal.obsidian_enabled": c.ChangeJournal.ObsidianEnabled,
-		"change_journal.obsidian_server":  c.ChangeJournal.ObsidianServer,
-		"change_journal.obsidian_note":    c.ChangeJournal.ObsidianNote,
-		"cloud_memory.enabled":            c.CloudMemory.Enabled,
-		"cloud_memory.sync_interval_sec":  c.CloudMemory.SyncIntervalSec,
-		"cloud_memory.encrypt_at_rest":    c.CloudMemory.EncryptAtRest,
-		"cloud_memory.max_rows_per_hour":  c.CloudMemory.MaxRowsPerHour,
-		"cloud_memory.max_storage_mb":     c.CloudMemory.MaxStorageMB,
-		"cloud_memory.embeddings_cloud":   c.CloudMemory.EmbeddingsCloud,
+		"agent_max_iterations":                           c.AgentMaxIterations,
+		"agent_request_timeout_sec":                      c.AgentRequestTimeoutSec,
+		"reasoning_effort":                               c.ReasoningEffort,
+		"auto_skill_detect":                              c.AutoSkillDetect,
+		"auto_skill_threshold":                           c.AutoSkillThreshold,
+		"platform_prompt_timeout":                        c.PlatformPromptTimeout,
+		"image_model":                                    c.ImageModel,
+		"image_base_url":                                 c.ImageBaseURL,
+		"image_api_key":                                  c.ImageAPIKey,
+		"image_output_dir":                               c.ImageOutputDir,
+		"voice_provider":                                 c.VoiceProvider,
+		"voice_api_key":                                  c.VoiceAPIKey,
+		"voice_base_url":                                 c.VoiceBaseURL,
+		"voice_character":                                c.VoiceCharacter,
+		"voice_model_id":                                 c.VoiceModelID,
+		"voice_language":                                 c.VoiceLanguage,
+		"voice_speed":                                    c.VoiceSpeed,
+		"voice_volume":                                   c.VoiceVolume,
+		"voice_streaming":                                c.VoiceStreaming,
+		"sync_interval":                                  c.SyncInterval,
+		"cloud_memory.sync_interval_sec":                 c.CloudMemory.SyncIntervalSec,
+		"cloud_memory.encrypt_at_rest":                   c.CloudMemory.EncryptAtRest,
+		"cloud_memory.max_rows_per_hour":                 c.CloudMemory.MaxRowsPerHour,
+		"cloud_memory.max_storage_mb":                    c.CloudMemory.MaxStorageMB,
+		"cloud_memory.embeddings_cloud":                  c.CloudMemory.EmbeddingsCloud,
+		"parallel_orchestration.enabled":                 c.ParallelOrchestration.Enabled,
+		"parallel_orchestration.max_concurrency":         c.ParallelOrchestration.MaxConcurrency,
+		"parallel_orchestration.require_approval_high":   c.ParallelOrchestration.RequireApprovalHigh,
+		"parallel_orchestration.require_approval_remote": c.ParallelOrchestration.RequireApprovalRemote,
+		"parallel_orchestration.dry_run":                 c.ParallelOrchestration.DryRun,
+		"parallel_orchestration.serial_fallback":         c.ParallelOrchestration.SerialFallback,
+		"parallel_orchestration.auto_threshold":          c.ParallelOrchestration.AutoThreshold,
 	}
 }
 

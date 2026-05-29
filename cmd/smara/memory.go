@@ -202,30 +202,50 @@ var memorySearchCmd = &cobra.Command{
 		}
 		defer closeStore()
 
-		// Use ollama with qwen3.6 model for embeddings
 		fmt.Printf("  Membuat embedding untuk query: '%s'...\n", query)
-		ollamaProvider := llm.NewOllamaProvider("qwen3.6", cfg.OllamaHost)
-		embedding, err := ollamaProvider.GenerateEmbedding(query)
-		if err != nil {
-			return fmt.Errorf("gagal membuat embedding (pastikan Ollama berjalan dan model qwen3.6 tersedia): %w", err)
+		provider, providerErr := llm.NewProvider(llm.ProviderConfig{Name: cfg.Provider, Model: cfg.Model, Host: cfg.OllamaHost, APIKey: cfg.OpenAIAPIKey, ReasoningEffort: cfg.ReasoningEffort})
+		switch cfg.Provider {
+		case "custom":
+			provider, providerErr = llm.NewProvider(llm.ProviderConfig{Name: "custom", Model: cfg.CustomModel, Host: cfg.CustomBaseURL, APIKey: cfg.CustomAPIKey, ReasoningEffort: cfg.ReasoningEffort})
+		case "openrouter":
+			provider, providerErr = llm.NewProvider(llm.ProviderConfig{Name: "openrouter", Model: cfg.OpenRouterModel, APIKey: cfg.OpenRouterAPIKey, ReasoningEffort: cfg.ReasoningEffort})
+		case "anthropic":
+			provider, providerErr = llm.NewProvider(llm.ProviderConfig{Name: "anthropic", Model: cfg.AnthropicModel, APIKey: cfg.AnthropicAPIKey})
+		case "openai":
+			provider, providerErr = llm.NewProvider(llm.ProviderConfig{Name: "openai", Model: cfg.OpenAIModel, Host: cfg.OpenAIBaseURL, APIKey: cfg.OpenAIAPIKey, ReasoningEffort: cfg.ReasoningEffort})
 		}
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		wsID := cfg.ActiveWorkspaceID
-
-		// Check if hybrid search is requested
 		hybrid, _ := cmd.Flags().GetBool("hybrid")
 
 		var results []memory.SearchResult
-		if hybrid {
-			results, err = store.SearchHybrid(query, embedding, wsID, limit)
-			if err != nil {
-				return fmt.Errorf("gagal mencari memori (hybrid): %w", err)
+		if cfg.Provider == "custom" {
+			fmt.Printf("  Provider custom (%s) dipakai untuk chat; memory search langsung memakai full-text agar cepat.\n", cfg.CustomModel)
+		} else if providerErr == nil {
+			if embedding, embErr := provider.GenerateEmbedding(query); embErr == nil && len(embedding) > 0 {
+				if hybrid {
+					results, err = store.SearchHybrid(query, embedding, wsID, limit)
+				} else {
+					results, err = store.Search(embedding, wsID, limit)
+				}
+				if err != nil {
+					return fmt.Errorf("gagal mencari memori: %w", err)
+				}
+			} else {
+				fmt.Printf("  Embedding tidak tersedia dari provider %s, fallback ke full-text search: %v\n", cfg.Provider, embErr)
 			}
 		} else {
-			results, err = store.Search(embedding, wsID, limit)
-			if err != nil {
-				return fmt.Errorf("gagal mencari memori: %w", err)
+			fmt.Printf("  Provider embedding tidak tersedia, fallback ke full-text search: %v\n", providerErr)
+		}
+
+		if len(results) == 0 {
+			ftsResults, ftsErr := store.SearchFullText(query, wsID, memory.MemoryFilters{Limit: limit})
+			if ftsErr != nil {
+				return fmt.Errorf("gagal mencari memori full-text: %w", ftsErr)
+			}
+			for _, m := range ftsResults {
+				results = append(results, memory.SearchResult{Memory: m, Score: 1})
 			}
 		}
 
@@ -248,15 +268,9 @@ var memorySearchCmd = &cobra.Command{
 			}
 
 			if hybrid {
-				fmt.Printf("       relevansi: %.2f (vektor: %.2f) | tags=%s | source=%s | %s\n",
-					r.Score, r.Similarity, tagsStr, r.Memory.Source,
-					r.Memory.CreatedAt.Format("2006-01-02 15:04"),
-				)
+				fmt.Printf("       relevansi: %.2f (vektor: %.2f) | tags=%s | source=%s | %s\n", r.Score, r.Similarity, tagsStr, r.Memory.Source, r.Memory.CreatedAt.Format("2006-01-02 15:04"))
 			} else {
-				fmt.Printf("       relevansi: %.2f | tags=%s | source=%s | %s\n",
-					r.Similarity, tagsStr, r.Memory.Source,
-					r.Memory.CreatedAt.Format("2006-01-02 15:04"),
-				)
+				fmt.Printf("       relevansi: %.2f | tags=%s | source=%s | %s\n", r.Similarity, tagsStr, r.Memory.Source, r.Memory.CreatedAt.Format("2006-01-02 15:04"))
 			}
 		}
 		fmt.Println()

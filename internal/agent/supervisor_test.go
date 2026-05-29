@@ -323,6 +323,7 @@ type postToolWaitProvider struct {
 	finalDelay   time.Duration
 	finalContent string
 	finalErr     error
+	finalErrors  []error
 }
 
 func (p *postToolWaitProvider) Name() string { return "post-tool-wait" }
@@ -353,6 +354,9 @@ func (p *postToolWaitProvider) ChatWithTools(messages []llm.Message, tools []llm
 	delay := p.finalDelay
 	content := p.finalContent
 	finalErr := p.finalErr
+	if idx := call - 2; idx >= 0 && idx < len(p.finalErrors) {
+		finalErr = p.finalErrors[idx]
+	}
 	p.mu.Unlock()
 
 	if call == 1 {
@@ -432,7 +436,7 @@ func TestSupervisor_QuickFinishAvoidsSlowPostToolLoop(t *testing.T) {
 		finalContent: "final lambat",
 	}
 	s := NewSupervisor(provider, nil)
-	s.SetMode(ModeRush)
+	s.SetMode(ModeAsk)
 	s.callback = AgenticCallback{
 		OnToolResult:  func(output string) {},
 		OnPhaseChange: func(phase, description string) {},
@@ -446,6 +450,40 @@ func TestSupervisor_QuickFinishAvoidsSlowPostToolLoop(t *testing.T) {
 	assert.Less(t, time.Since(start), 150*time.Millisecond)
 	assert.Equal(t, "final cepat dari hasil tool", result.Response)
 	assert.Equal(t, 1, provider.calls)
+	assert.Equal(t, 1, provider.chatCalls)
+}
+
+func TestSupervisor_QuickFinishRejectsGenericCompletion(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 100 * time.Millisecond
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &postToolWaitProvider{
+		path:         path,
+		quickContent: "Siap, sudah saya bantu cek.",
+		finalContent: "Saya sudah membaca target.txt dengan view_file; hasilnya berisi hello.",
+	}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeAsk)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "cek file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "Saya sudah membaca target.txt dengan view_file; hasilnya berisi hello.", result.Response)
+	assert.Equal(t, 2, provider.calls)
 	assert.Equal(t, 1, provider.chatCalls)
 }
 
@@ -478,6 +516,76 @@ func TestSupervisor_PostToolErrorReturnsFallbackSummary(t *testing.T) {
 	assert.Contains(t, result.Response, "Hasil tool terakhir")
 	assert.Contains(t, result.Response, "view_file")
 	assert.Equal(t, 0, provider.chatCalls, "post-tool errors should not be converted through a finalizer")
+}
+
+func TestSupervisor_PostToolTransientTimeoutRetriesFinalResponse(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	oldAttempts := postToolFinalMaxAttempts
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 0
+	postToolFinalMaxAttempts = 4
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+		postToolFinalMaxAttempts = oldAttempts
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &postToolWaitProvider{
+		path:         path,
+		finalErrors:  []error{fmt.Errorf("API error (status 504): initial response timeout after 30000ms")},
+		finalContent: "final setelah retry",
+	}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeRush)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "lihat file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "final setelah retry", result.Response)
+	assert.Equal(t, 3, provider.calls)
+	assert.NotContains(t, result.Response, "Provider LLM timeout")
+}
+
+func TestSupervisor_MaxIterationsFinalizerErrorReturnsToolFallback(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 0
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &postToolWaitProvider{path: path, quickErr: fmt.Errorf("context deadline exceeded")}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeAsk)
+	s.SetMaxIterations(1)
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "lihat file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Contains(t, result.Response, "context deadline exceeded")
+	assert.Contains(t, result.Response, "Hasil tool terakhir")
+	assert.Contains(t, result.Response, "view_file")
+	assert.Equal(t, 1, provider.calls)
+	assert.Equal(t, 1, provider.chatCalls)
 }
 
 func TestPromptResult_Struct(t *testing.T) {

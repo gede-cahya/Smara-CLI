@@ -1,0 +1,16 @@
+{
+  "name": "parallel-orchestration-rules",
+  "description": "Rule skill untuk menentukan kapan Smara memakai parallel orchestration. Pakai orchestration untuk tugas kompleks multi-step/multi-file/multi-agent seperti audit, refactor, build+test, release, deploy, migrasi, atau pekerjaan yang bisa dipecah ke subtask independen. Jangan pakai untuk sapaan, chat singkat, Q&A sederhana, follow-up error/status, atau tugas satu langkah. Jika user menyebut workflow/agent existing seperti 'jalankan workflow ...', resolve dan jalankan workflow tersimpan dulu; jangan buat blueprint baru. Jika user eksplisit menyebut parallel/paralel/parallel orchestration pada task kerja, izinkan parallel orchestration setelah memastikan bukan sekadar pertanyaan atau keluhan.",
+  "version": 1,
+  "tags": ["workflow", "parallel", "orchestration", "routing", "system-prompt"],
+  "category_path": ["workflow", "orchestration", "routing"],
+  "trigger": "Gunakan sebagai aturan sistem sebelum memilih auto parallel orchestration atau workflow runner.",
+  "steps": [
+    {
+      "tool": "skill_read",
+      "args": {
+        "skill_name": "parallel-orchestration-rules"
+      }
+    }
+  ]
+}

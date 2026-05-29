@@ -133,8 +133,8 @@ func runStep(page *rod.Page, step Step, dir string, res *Result) error {
 	default:
 		return fmt.Errorf("aksi tidak dikenal: %s", step.Action)
 	}
-	return fmt.Errorf("aksi tidak dikenal: %s", step.Action)
 }
+
 func attachDiagnostics(page *rod.Page, res *Result) {
 	go page.EachEvent(func(e *proto.RuntimeConsoleAPICalled) {
 		if e.Type == proto.RuntimeConsoleAPICalledTypeError || e.Type == proto.RuntimeConsoleAPICalledTypeAssert {

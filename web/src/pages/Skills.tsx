@@ -73,12 +73,12 @@ export default function Skills() {
       if (Object.keys(nonEmptyArgs).length > 0) {
         payload.args = nonEmptyArgs
       }
-      const res = await fetchJSON('/api/skills/run', {
+      const res = await fetchJSON<{ success?: boolean; summary?: string }>('/api/skills/run', {
         method: 'POST',
         body: JSON.stringify(payload),
         headers: { 'Content-Type': 'application/json' },
       })
-      setRunResult(JSON.stringify(res, null, 2))
+      setRunResult(`${res.success === false ? 'Gagal' : 'Selesai'}${res.summary ? ` — ${res.summary}` : ''}\n\n${JSON.stringify(res, null, 2)}`)
     } catch (e: any) {
       setRunResult('Error: ' + (e.message || e))
     } finally {

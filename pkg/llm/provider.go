@@ -91,10 +91,10 @@ func AvailableProviders() map[string]ProviderInfo {
 		},
 		"custom": {
 			Name:        "custom",
-			Description: "CLIProxyAPI (OpenAI-compatible) via local proxy at localhost:8317",
-			Models:      []string{"deepseek-v4-pro", "deepseek-v4-flash", "minimax-m2.7", "minimax-auto", "gpt-image-2", "gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"},
+			Description: "9router (OpenAI-compatible) via local proxy at localhost:20128",
+			Models:      []string{"cx/gpt-5.5", "cx/gpt-5.5-mini", "gpt-image-2", "gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"},
 			NeedsAPIKey: true,
-		},
+		}
 	}
 }
 

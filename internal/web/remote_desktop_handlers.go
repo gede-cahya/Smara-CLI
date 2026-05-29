@@ -137,7 +137,9 @@ func (s *Server) handleRemoteDesktopDevices(w http.ResponseWriter, r *http.Reque
 		jsonResponse(w, 200, map[string]interface{}{"devices": m.List()})
 	case http.MethodPost:
 		var in struct {
-			Name, URL, Token string `json:"name,url,token"`
+			Name  string `json:"name"`
+			URL   string `json:"url"`
+			Token string `json:"token"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		d, err := m.Upsert(in.Name, in.URL, in.Token)
