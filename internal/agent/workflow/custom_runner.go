@@ -30,10 +30,14 @@ type CustomWorkflowProgress struct {
 }
 
 func RunCustomWorkflow(supervisor *agent.Supervisor, provider llm.Provider, cw *CustomWorkflow) (*CustomWorkflowResult, error) {
-	return RunCustomWorkflowWithProgress(supervisor, provider, cw, nil)
+	return RunCustomWorkflowWithProgressMode(supervisor, provider, cw, nil, false)
 }
 
 func RunCustomWorkflowWithProgress(supervisor *agent.Supervisor, provider llm.Provider, cw *CustomWorkflow, progress *CustomWorkflowProgress) (*CustomWorkflowResult, error) {
+	return RunCustomWorkflowWithProgressMode(supervisor, provider, cw, progress, false)
+}
+
+func RunCustomWorkflowWithProgressMode(supervisor *agent.Supervisor, provider llm.Provider, cw *CustomWorkflow, progress *CustomWorkflowProgress, parallelRequested bool) (*CustomWorkflowResult, error) {
 	if err := cw.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid custom workflow: %w", err)
 	}
@@ -68,6 +72,7 @@ func RunCustomWorkflowWithProgress(supervisor *agent.Supervisor, provider llm.Pr
 		return nil, fmt.Errorf("memory node failed: %w", err)
 	}
 	runner := NewRunner(bp, workerMap, sharedState)
+	runner.Serial = !parallelRequested
 	waves, err := runner.BuildWaves()
 	if err != nil {
 		_ = sharedState.Save()
@@ -105,11 +110,14 @@ func RunCustomWorkflowWithProgress(supervisor *agent.Supervisor, provider llm.Pr
 		return nil, fmt.Errorf("workflow execution failed: %w", err)
 	}
 	qaResult := runner.RunQA(context.Background(), bp, allResults, supervisor)
-	parallelExecution := false
-	for _, wave := range waves {
-		if len(wave) > 1 {
-			parallelExecution = true
-			break
+	parallelExecution := parallelRequested
+	if parallelExecution {
+		parallelExecution = false
+		for _, wave := range waves {
+			if len(wave) > 1 {
+				parallelExecution = true
+				break
+			}
 		}
 	}
 	result := &CustomWorkflowResult{

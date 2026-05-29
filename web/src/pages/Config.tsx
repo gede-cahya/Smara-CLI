@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AlertCircle, CheckCircle2, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Mic, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
 import { fetchJSON } from '../api'
+import { getCachedSmaraConfig, loadSmaraConfig, setCachedSmaraConfig } from '../configStore'
 
 type MCPServer = {
   name: string
@@ -160,8 +161,8 @@ function Section({ icon, title, desc, children }: { icon: any; title: string; de
   </section>
 }
 export default function Config() {
-  const [config, setConfig] = useState<ConfigData>({})
-  const [draftConfig, setDraftConfig] = useState<ConfigData>({})
+  const [config, setConfig] = useState<ConfigData>(() => getCachedSmaraConfig() as ConfigData)
+  const [draftConfig, setDraftConfig] = useState<ConfigData>(() => getCachedSmaraConfig() as ConfigData)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<{type:'ok'|'err', text:string} | null>(null)
@@ -171,7 +172,12 @@ export default function Config() {
 
   const load = async () => {
     setLoading(true)
-    try { const next = await fetchJSON<ConfigData>('/api/config') || {}; setConfig(next); setDraftConfig(next); setNotice(null) }
+    try {
+      const next = await loadSmaraConfig(true) as ConfigData
+      setConfig(next)
+      setDraftConfig(next)
+      setNotice(null)
+    }
     catch (e) { setNotice({ type: 'err', text: 'Gagal load config: ' + e }) }
     finally { setLoading(false) }
   }
@@ -189,7 +195,10 @@ export default function Config() {
       for (const f of changedFields) await saveKey(f.key, getValue(draftConfig, f.key))
       if (rawKey && rawValue !== '') { await saveKey(rawKey, rawValue); setRawKey(''); setRawValue('') }
       setNotice({ type: 'ok', text: `${changedFields.length + (rawKey && rawValue !== '' ? 1 : 0)} perubahan tersimpan` })
-      await load()
+      const next = await loadSmaraConfig(true) as ConfigData
+      setCachedSmaraConfig(next)
+      setConfig(next)
+      setDraftConfig(next)
     } catch (e) { setNotice({ type: 'err', text: 'Gagal simpan: ' + e }) }
     finally { setSaving(false) }
   }

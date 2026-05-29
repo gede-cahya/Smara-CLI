@@ -748,13 +748,13 @@ func (s *Server) runResolvedCustomWorkflow(item customWorkflowMatch, parallelReq
 func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch, parallelRequested bool, onProgress func(event, message, role, taskID string, details map[string]interface{})) (string, error) {
 	runID := fmt.Sprintf("custom-%d", time.Now().UnixNano())
 	if s.OrchestrationStore != nil {
-		s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name))
+		s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name, parallelRequested))
 	}
 	started := map[string]time.Time{}
-	result, err := workflow.RunCustomWorkflowWithProgress(s.Supervisor, s.Supervisor.GetProvider(), item.Workflow, &workflow.CustomWorkflowProgress{
+	result, err := workflow.RunCustomWorkflowWithProgressMode(s.Supervisor, s.Supervisor.GetProvider(), item.Workflow, &workflow.CustomWorkflowProgress{
 		OnBlueprintReady: func(_ workflow.Blueprint, waves [][]string) {
 			if s.OrchestrationStore != nil {
-				s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name))
+				s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name, parallelRequested))
 			}
 			if onProgress != nil {
 				onProgress("blueprint_ready", fmt.Sprintf("Workflow %s siap: %d wave", item.Name, len(waves)), "", "", map[string]interface{}{"waves": waves})
@@ -791,7 +791,7 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 				onProgress("task_complete", fmt.Sprintf("%s selesai: %s", role, taskID), role, taskID, map[string]interface{}{"status": taskResult.Status, "duration_ms": duration.Milliseconds(), "error": taskResult.Error})
 			}
 		},
-	})
+	}, parallelRequested)
 	if err != nil {
 		if s.OrchestrationStore != nil {
 			s.OrchestrationStore.Complete(workflow.StatusFailed, "", err.Error())
@@ -806,7 +806,7 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 	return response, nil
 }
 
-func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string) workflow.ExecutionPlan {
+func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string, parallelRequested bool) workflow.ExecutionPlan {
 	planID := "custom-workflow-" + sanitizeRunID(matched)
 	plan := workflow.ExecutionPlan{
 		ID:       planID,
@@ -815,6 +815,7 @@ func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string) wo
 	}
 	bp := cw.ToBlueprint()
 	runner := workflow.NewRunner(bp, nil, nil)
+	runner.Serial = !parallelRequested
 	waves, _ := runner.BuildWaves()
 	for _, a := range cw.Agents {
 		id := a.Role
@@ -822,7 +823,7 @@ func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string) wo
 		if len(a.Tasks) > 0 {
 			description = fmt.Sprintf("%s\n\n%d task(s): %s", a.Description, len(a.Tasks), firstNonEmpty(a.Tasks[0].Description, a.Tasks[0].ID))
 		}
-		plan.Subtasks = append(plan.Subtasks, workflow.Subtask{ID: id, Title: a.Role, Description: description, Kind: workflow.TaskKindReadOnly, DependsOn: append([]string(nil), a.DependsOn...), CanParallel: len(a.DependsOn) == 0, RiskLevel: workflow.RiskLow, Status: workflow.StatusPending})
+		plan.Subtasks = append(plan.Subtasks, workflow.Subtask{ID: id, Title: a.Role, Description: description, Kind: workflow.TaskKindReadOnly, DependsOn: append([]string(nil), a.DependsOn...), CanParallel: parallelRequested && len(a.DependsOn) == 0, RiskLevel: workflow.RiskLow, Status: workflow.StatusPending})
 	}
 	for i, wave := range waves {
 		mode := workflow.BatchModeSerial

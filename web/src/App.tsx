@@ -1,6 +1,7 @@
 import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon, Zap } from 'lucide-react'
+import { loadSmaraConfig } from './configStore'
 import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
@@ -108,6 +109,8 @@ export default function App() {
   }
 
   useEffect(() => {
+    loadSmaraConfig().catch(err => console.warn('[smara] failed to auto-load config:', err))
+
     const handler = (e: StorageEvent) => {
       if (e.key === TAB_KEY && e.newValue && navItems.find(n => n.id === e.newValue)) setActiveRaw(e.newValue)
     }

@@ -18,6 +18,9 @@ type Runner struct {
 	Workers        map[string]*agent.Worker // role → worker
 	SharedState    *SharedState
 	MaxConcurrency int
+	// Serial forces one role per wave. Used for custom workflows unless the user
+	// explicitly requested parallel/paralel execution.
+	Serial bool
 
 	// Callbacks for TUI progress
 	OnWaveStart    func(wave int, roles []string)
@@ -155,6 +158,16 @@ func (r *Runner) BuildWaves() ([][]string, error) {
 			completed[role] = true
 		}
 		waves = append(waves, wave)
+	}
+
+	if r.Serial {
+		var serialWaves [][]string
+		for _, wave := range waves {
+			for _, role := range wave {
+				serialWaves = append(serialWaves, []string{role})
+			}
+		}
+		return serialWaves, nil
 	}
 
 	return waves, nil
