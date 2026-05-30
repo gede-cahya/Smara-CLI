@@ -88,7 +88,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
 		return
 	}
-	if orchestration.IsAgentSwarmWorkflowPrompt(req.Message) {
+	if s.Supervisor.GetMode() == agent.ModeParallel && orchestration.IsAgentSwarmWorkflowPrompt(req.Message) {
 		log.Printf("[web] Routing chat prompt to Agent Swarm Workflow")
 		result, err := s.runWorkflowWithLiveStatus(ctx, req.Message)
 		if err != nil {

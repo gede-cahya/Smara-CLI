@@ -33,7 +33,7 @@ func (m *AppModel) submitPrompt(prompt string) tea.Cmd {
 	ctx := m.ctx
 	cmds := []tea.Cmd{m.spinner.Tick, dotTickCmd()}
 
-	if orchestration.IsAgentSwarmWorkflowPrompt(processedPrompt) || orchestration.ShouldAutoParallelOrchestrate(processedPrompt, sup.GetMode()) {
+	if sup.GetMode() == agent.ModeParallel && (orchestration.IsAgentSwarmWorkflowPrompt(processedPrompt) || orchestration.ShouldAutoParallelOrchestrate(processedPrompt, sup.GetMode())) {
 		if agentSup, ok := sup.(*agent.Supervisor); ok {
 			cmds = append(cmds, func() tea.Msg {
 				result, err := workflow.RunWorkflow(agentSup, agentSup.GetProvider(), processedPrompt)

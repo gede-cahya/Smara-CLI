@@ -971,7 +971,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.spinner.Tick)
 				cmds = append(cmds, dotTickCmd())
 
-				if orchestration.IsAgentSwarmWorkflowPrompt(processedPrompt) || orchestration.ShouldAutoParallelOrchestrate(processedPrompt, sup.GetMode()) {
+				if sup.GetMode() == agent.ModeParallel && (orchestration.IsAgentSwarmWorkflowPrompt(processedPrompt) || orchestration.ShouldAutoParallelOrchestrate(processedPrompt, sup.GetMode())) {
 					if agentSup, ok := sup.(*agent.Supervisor); ok {
 						cmds = append(cmds, func() tea.Msg {
 							result, err := workflow.RunWorkflow(agentSup, agentSup.GetProvider(), processedPrompt)

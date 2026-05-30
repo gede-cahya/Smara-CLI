@@ -10,10 +10,10 @@ import (
 
 func TestModePrompts_ContainSSHInstructions(t *testing.T) {
 	modes := AllModes()
-	require.Len(t, modes, 6)
+	require.Len(t, modes, 7)
 
 	for _, m := range modes {
-		if m.Name == ModeTest || m.Name == ModeWorkflow {
+		if m.Name == ModeTest || m.Name == ModeWorkflow || m.Name == ModeParallel {
 			continue
 		}
 		assert.Contains(t, m.SystemPrompt, "SSH", "mode %s should mention SSH", m.Name)

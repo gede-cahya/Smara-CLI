@@ -24,8 +24,11 @@ const (
 	// image prompts, image analysis, and safe image-to-image routing.
 	ModeImage Mode = "image"
 
-	// ModeWorkflow is the multi-agent workflow mode.
+	// ModeWorkflow is the custom workflow/blueprint authoring mode.
 	ModeWorkflow Mode = "workflow"
+
+	// ModeParallel is the only mode allowed to run generic parallel task orchestration.
+	ModeParallel Mode = "parallel"
 )
 
 // ModeInfo holds metadata about an agent mode.
@@ -157,21 +160,27 @@ Dalam mode IMAGE, fokus utamamu adalah membantu tugas visual:
 - Kamu memiliki akses ke VPS/Server via SSH (ssh_exec, ssh_view_file, ssh_list_dir, ssh_manage) jika aset visual/output perlu dicek di server. Jika user menyebut vps/server/remote, pilih host yang cocok.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
-
 		{
 			Name:        ModeWorkflow,
 			Label:       "Workflow",
 			Emoji:       "🔄",
-			Description: "Multi-agent workflow: auto-generate blueprint dan spawn worker agents",
-			SystemPrompt: `Kamu adalah Smara, Lead Architect / Project Manager AI dalam mode WORKFLOW.
-Tugasmu adalah menganalisis permintaan user, membuat PRD, mendesain arsitektur, dan men-spawn agen-agen spesialis (Frontend, Backend, Database, DevOps, Designer, QA) untuk mengeksekusi project secara parallel.
-- Analisis permintaan dengan teliti.
-- Generate blueprint JSON dengan PRD dan arsitektur.
-- Spawn worker agents sesuai blueprint.
-- Koordinasi eksekusi parallel berdasarkan dependency DAG.
-- Validasi hasil melalui QA agent sebelum finalize.
-- SETELAH membuat file HTML/CSS/JS atau project web/aplikasi backend (Node.js, Go, PHP, Bun), SELALU panggil tool "serve_project" agar user bisa langsung melihat hasilnya di browser.
-  Tool "serve_project" otomatis mendeteksi runtime (Node.js, Go, Bun, PHP, TypeScript) dan auto-assign port.
+			Description: "Mode workflow biasa untuk membuat/menjalankan custom workflow eksplisit, tanpa auto parallel task",
+			SystemPrompt: `Kamu adalah Smara dalam mode WORKFLOW biasa.
+- Bantu user membuat, mengedit, memahami, atau menjalankan custom workflow yang diminta eksplisit.
+- Jangan memulai generic parallel task orchestration otomatis dari prompt normal.
+- Jika user ingin parallel task orchestration, arahkan user mengganti mode ke Parallel.
+- Jawab dalam bahasa yang sama dengan pertanyaan user.`,
+		},
+		{
+			Name:        ModeParallel,
+			Label:       "Parallel",
+			Emoji:       "🧩",
+			Description: "Mode khusus untuk menjalankan parallel task orchestration / Agent Swarm",
+			SystemPrompt: `Kamu adalah Smara dalam mode PARALLEL TASK.
+- Mode ini khusus untuk menjalankan generic parallel task orchestration dan Agent Swarm Workflow.
+- Pecah tugas kompleks menjadi agent/subtask yang bisa berjalan paralel secara aman.
+- Jangan menjalankan aksi destructive/outward-facing tanpa konfirmasi yang jelas.
+- Laporkan wave, dependency, hasil, dan failure secara eksplisit.
 - Jawab dalam bahasa yang sama dengan pertanyaan user.`,
 		},
 	}
@@ -191,7 +200,7 @@ func GetModeInfo(mode Mode) ModeInfo {
 // ValidMode checks if a mode string is valid.
 func ValidMode(s string) bool {
 	switch Mode(s) {
-	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow:
+	case ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow, ModeParallel:
 		return true
 	}
 	return false

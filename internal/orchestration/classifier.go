@@ -6,62 +6,30 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 )
 
-// ShouldAutoParallelOrchestrate classifies whether a user prompt is substantial
-// multi-step work that should be routed through the parallel workflow planner.
+// ShouldAutoParallelOrchestrate only routes prompts when the user explicitly
+// asks for Smara's generic parallel orchestration. Normal chat, workflow mode,
+// or complex multi-step prompts must not auto-start background workflow waves.
 func ShouldAutoParallelOrchestrate(prompt string, mode agent.Mode) bool {
+	if mode != agent.ModeParallel {
+		return false
+	}
 	text := strings.TrimSpace(prompt)
 	if text == "" {
 		return false
 	}
 	lower := strings.ToLower(text)
-	if hasParallelOptOut(lower) {
+	if hasParallelOptOut(lower) || isQuestionOrFollowUp(lower) {
 		return false
 	}
 	if IsAgentSwarmWorkflowPrompt(lower) {
 		return true
 	}
-	if isQuestionOrFollowUp(lower) {
-		return false
-	}
 	if strings.Contains(lower, "custom workflow") || strings.Contains(lower, "workflow custom") || strings.Contains(lower, "workflow") || strings.Contains(lower, "-agent") {
 		// Custom workflows have their own explicit runner/router. Do not send
-		// custom-workflow requests or feature wishes into the generic auto planner,
-		// otherwise a saved custom workflow may be ignored when the user asks for
-		// parallel orchestration.
+		// custom-workflow requests or feature wishes into the generic planner.
 		return false
 	}
-	words := strings.Fields(lower)
-	if isSimpleChat(lower, len(words)) {
-		return false
-	}
-	if hasParallelSignal(lower) {
-		return hasExplicitWorkIntent(lower)
-	}
-	if mode == agent.ModeWorkflow && hasExplicitWorkIntent(lower) && looksComplexEnoughForWorkflowMode(lower, len(words)) {
-		return true
-	}
-	strongPhrases := []string{
-		"buatkan aplikasi", "buat aplikasi", "implementasikan", "tambahkan fitur", "perbaiki bug", "debug", "deploy", "release", "audit", "refactor", "migrasi", "setup", "install", "build dan test", "test dan build", "cek dan perbaiki", "analisis repo", "update docs", "sinkronkan docs",
-	}
-	score := 0
-	for _, p := range strongPhrases {
-		if strings.Contains(lower, p) {
-			score += 2
-		}
-	}
-	verbs := []string{"buat", "bikin", "tambah", "ubah", "perbaiki", "fix", "debug", "test", "build", "deploy", "release", "audit", "refactor", "update", "install", "setup", "cek", "verifikasi"}
-	for _, v := range verbs {
-		if strings.Contains(lower, v) {
-			score++
-		}
-	}
-	connectors := []string{" dan ", " lalu ", " kemudian ", ",", ";", " serta ", " sekaligus "}
-	for _, c := range connectors {
-		if strings.Contains(lower, c) {
-			score++
-		}
-	}
-	return score >= 4 && (len(words) >= 14 || strings.Contains(lower, "repo") || strings.Contains(lower, "project") || strings.Contains(lower, "vps") || strings.Contains(lower, "server"))
+	return hasParallelSignal(lower) && hasExplicitWorkIntent(lower)
 }
 
 func hasParallelOptOut(lower string) bool {

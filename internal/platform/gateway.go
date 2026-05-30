@@ -503,7 +503,7 @@ func formatWorkflowWavesForGateway(waves [][]string) string {
 }
 
 func (g *Gateway) tryRunAgentSwarmWorkflowPrompt(msg IncomingMessage) (string, bool, error) {
-	if !orchestration.IsAgentSwarmWorkflowPrompt(msg.Content) {
+	if g.supervisor.GetMode() != agent.ModeParallel || !orchestration.IsAgentSwarmWorkflowPrompt(msg.Content) {
 		return "", false, nil
 	}
 	log.Printf("[gateway] Routing %s/%s prompt to Agent Swarm Workflow", msg.Platform, msg.ChannelID)

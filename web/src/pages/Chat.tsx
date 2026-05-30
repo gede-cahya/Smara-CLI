@@ -411,6 +411,7 @@ const MODES: Array<{ id: string; label: string; emoji: string; icon: typeof Mess
   { id: 'test', label: 'Test', emoji: '\uD83E\uDDEA', icon: FlaskConical, bg: 'bg-green-600', border: 'border-green-500', text: 'text-green-400' },
   { id: 'image', label: 'Image', emoji: '\uD83C\uDFA8', icon: ImageIcon, bg: 'bg-purple-600', border: 'border-purple-500', text: 'text-purple-400' },
   { id: 'workflow', label: 'Workflow', emoji: '\uD83D\uDD04', icon: ArrowRightLeft, bg: 'bg-smara-600', border: 'border-smara-500', text: 'text-smara-400' },
+  { id: 'parallel', label: 'Parallel', emoji: '\uD83E\uDDE9', icon: ArrowRightLeft, bg: 'bg-indigo-600', border: 'border-indigo-500', text: 'text-indigo-300' },
   { id: 'voice', label: 'Voice', emoji: '\uD83C\uDFA4', icon: Mic, bg: 'bg-cyan-600', border: 'border-cyan-500', text: 'text-cyan-300' },
 ]
 const SESSION_META_KEY = 'smara_chat_sessions'

@@ -14,16 +14,16 @@ func TestShouldAutoParallelOrchestrate(t *testing.T) {
 		want   bool
 	}{
 		{
-			name:   "workflow mode always routes substantial prompt",
+			name:   "workflow mode substantial prompt stays normal without explicit parallel",
 			prompt: "tolong audit repo ini lalu build dan test semua komponen penting",
 			mode:   agent.ModeWorkflow,
-			want:   true,
+			want:   false,
 		},
 		{
-			name:   "complex multi step adapter prompt",
+			name:   "complex multi step adapter prompt stays normal without explicit parallel",
 			prompt: "tolong cek repo project ini, perbaiki bug build, jalankan test, lalu update docs dan verifikasi hasilnya",
 			mode:   agent.ModeRush,
-			want:   true,
+			want:   false,
 		},
 		{
 			name:   "ordinary chat stays supervisor",
@@ -44,9 +44,15 @@ func TestShouldAutoParallelOrchestrate(t *testing.T) {
 			want:   false,
 		},
 		{
-			name:   "explicit parallel work routes",
+			name:   "explicit parallel work outside parallel mode stays normal",
 			prompt: "jalankan parallel orchestration untuk audit repo dan build test",
 			mode:   agent.ModeAsk,
+			want:   false,
+		},
+		{
+			name:   "explicit parallel work routes only in parallel mode",
+			prompt: "jalankan parallel orchestration untuk audit repo dan build test",
+			mode:   agent.ModeParallel,
 			want:   true,
 		},
 		{
@@ -74,9 +80,15 @@ func TestShouldAutoParallelOrchestrate(t *testing.T) {
 			want:   false,
 		},
 		{
-			name:   "agent swarm explicit run routes to orchestration",
+			name:   "agent swarm explicit run outside parallel mode stays normal",
 			prompt: "jalankan Agent Swarm Workflow untuk audit repo ini, pecah tugas, spawn agent coder tester reviewer lalu build",
 			mode:   agent.ModeRush,
+			want:   false,
+		},
+		{
+			name:   "agent swarm explicit run routes only in parallel mode",
+			prompt: "jalankan Agent Swarm Workflow untuk audit repo ini, pecah tugas, spawn agent coder tester reviewer lalu build",
+			mode:   agent.ModeParallel,
 			want:   true,
 		},
 		{

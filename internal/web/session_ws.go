@@ -241,7 +241,7 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
 	}
-	if orchestration.IsAgentSwarmWorkflowPrompt(msg.Payload) {
+	if agent.Mode(activeMode) == agent.ModeParallel && orchestration.IsAgentSwarmWorkflowPrompt(msg.Payload) {
 		emitLog("info", "agent_swarm_start", "Agent Swarm Workflow mulai dijalankan.", "agent_swarm_workflow", nil)
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: "⏳ Agent Swarm Workflow sedang berjalan. Smara memecah tugas, spawn agent yang dibutuhkan, menjalankan wave paralel, merge hasil, lalu QA.", RequestPrompt: msg.Payload})
 		write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: "smara", Tool: "agent_swarm_workflow", Args: map[string]interface{}{"status": "running", "mode": activeMode}})

@@ -12,13 +12,14 @@ func TestMode_Constants(t *testing.T) {
 	assert.Equal(t, Mode("plan"), ModePlan)
 	assert.Equal(t, Mode("test"), ModeTest)
 	assert.Equal(t, Mode("image"), ModeImage)
+	assert.Equal(t, Mode("parallel"), ModeParallel)
 }
 
 func TestAllModes_ReturnsAll(t *testing.T) {
 	modes := AllModes()
-	assert.Len(t, modes, 6)
+	assert.Len(t, modes, 7)
 
-	names := make([]Mode, 0, 6)
+	names := make([]Mode, 0, 7)
 	for _, m := range modes {
 		names = append(names, m.Name)
 	}
@@ -28,6 +29,7 @@ func TestAllModes_ReturnsAll(t *testing.T) {
 	assert.Contains(t, names, ModeTest)
 	assert.Contains(t, names, ModeImage)
 	assert.Contains(t, names, ModeWorkflow)
+	assert.Contains(t, names, ModeParallel)
 }
 
 func TestAllModes_ModeInfoFields(t *testing.T) {
@@ -42,7 +44,7 @@ func TestAllModes_ModeInfoFields(t *testing.T) {
 }
 
 func TestGetModeInfo_ExistingModes(t *testing.T) {
-	for _, mode := range []Mode{ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow} {
+	for _, mode := range []Mode{ModeAsk, ModeRush, ModePlan, ModeTest, ModeImage, ModeWorkflow, ModeParallel} {
 		info := GetModeInfo(mode)
 		assert.Equal(t, mode, info.Name, "GetModeInfo should return correct mode for %s", mode)
 	}
@@ -80,6 +82,7 @@ func TestValidMode(t *testing.T) {
 	assert.True(t, ValidMode("test"))
 	assert.True(t, ValidMode("image"))
 	assert.True(t, ValidMode("workflow"))
+	assert.True(t, ValidMode("parallel"))
 	assert.False(t, ValidMode("unknown"))
 	assert.False(t, ValidMode(""))
 	assert.False(t, ValidMode("ASK")) // case sensitive
