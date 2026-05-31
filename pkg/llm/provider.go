@@ -94,7 +94,7 @@ func AvailableProviders() map[string]ProviderInfo {
 			Description: "9router (OpenAI-compatible) via local proxy at localhost:20128",
 			Models:      []string{"cx/gpt-5.5", "cx/gpt-5.5-mini", "gpt-image-2", "gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"},
 			NeedsAPIKey: true,
-		}
+		},
 	}
 }
 

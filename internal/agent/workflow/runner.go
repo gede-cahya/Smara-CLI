@@ -12,14 +12,14 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 )
 
-// Runner executes blueprint tasks in parallel waves based on dependencies.
+// Runner executes blueprint tasks based on dependencies.
 type Runner struct {
 	Blueprint      Blueprint
 	Workers        map[string]*agent.Worker // role → worker
 	SharedState    *SharedState
 	MaxConcurrency int
-	// Serial forces one role per wave. Used for custom workflows unless the user
-	// explicitly requested parallel/paralel execution.
+	// Serial forces one role per wave. Workflow mode uses this to avoid
+	// spawning multiple worker roles at once.
 	Serial bool
 
 	// Callbacks for TUI progress
@@ -38,7 +38,7 @@ func NewRunner(bp Blueprint, workers map[string]*agent.Worker, state *SharedStat
 	}
 }
 
-// Run executes the blueprint in dependency-resolved waves.
+// Run executes the blueprint in dependency-resolved steps/waves.
 func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[string][]agent.TaskResult, error) {
 	// Build dependency graph
 	waves, err := r.BuildWaves()
@@ -49,7 +49,11 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 
 	totalWaves := len(waves)
 	for waveIdx, wave := range waves {
-		log.Printf("[workflow] === WAVE %d/%d START (%d roles: %s) ===", waveIdx+1, totalWaves, len(wave), strings.Join(wave, ", "))
+		unit := "WAVE"
+		if r.Serial {
+			unit = "STEP"
+		}
+		log.Printf("[workflow] === %s %d/%d START (%d roles: %s) ===", unit, waveIdx+1, totalWaves, len(wave), strings.Join(wave, ", "))
 		if r.OnWaveStart != nil {
 			r.OnWaveStart(waveIdx, wave)
 		}
@@ -59,7 +63,7 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 			completed[role] = append(completed[role], results...)
 		}
 
-		log.Printf("[workflow] === WAVE %d/%d COMPLETE ===", waveIdx+1, totalWaves)
+		log.Printf("[workflow] === %s %d/%d COMPLETE ===", unit, waveIdx+1, totalWaves)
 		if r.OnWaveComplete != nil {
 			r.OnWaveComplete(waveIdx, waveResults)
 		}
@@ -68,7 +72,7 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 		for _, results := range waveResults {
 			for _, res := range results {
 				if res.Status == agent.TaskFailed {
-					return completed, fmt.Errorf("wave %d failed: task %s error: %s", waveIdx, res.TaskID, res.Error)
+					return completed, fmt.Errorf("%s %d failed: task %s error: %s", strings.ToLower(unit), waveIdx, res.TaskID, res.Error)
 				}
 			}
 		}
@@ -88,7 +92,7 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 	return completed, nil
 }
 
-// BuildWaves groups agents into deterministic parallel waves based on DependsOn.
+// BuildWaves groups agents into deterministic dependency waves based on DependsOn.
 func (r *Runner) BuildWaves() ([][]string, error) {
 	deps := make(map[string]map[string]bool)
 	roleSet := make(map[string]bool)
@@ -191,10 +195,16 @@ func sortedKeys(m map[string]bool) []string {
 	return keys
 }
 
-// runWave executes all roles in a wave concurrently.
+// runWave executes roles in the current dependency group.
 func (r *Runner) runWave(ctx context.Context, roles []string, completed map[string][]agent.TaskResult, supervisor *agent.Supervisor) map[string][]agent.TaskResult {
-	var mu sync.Mutex
 	results := make(map[string][]agent.TaskResult)
+	if len(roles) == 1 {
+		role := roles[0]
+		results[role] = r.runRole(ctx, role, completed, supervisor)
+		return results
+	}
+
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	// Semaphore for max concurrency
@@ -207,83 +217,80 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			log.Printf("[workflow] Role '%s' starting execution", role)
-			startTime := time.Now()
-
-			worker, ok := r.Workers[role]
-			if !ok {
-				mu.Lock()
-				results[role] = append(results[role], agent.TaskResult{
-					TaskID: role + "-missing",
-					Status: agent.TaskFailed,
-					Error:  fmt.Sprintf("worker for role '%s' not found", role),
-				})
-				mu.Unlock()
-				log.Printf("[workflow] Role '%s' FAILED: worker not found", role)
-				return
-			}
-
-			// Find agent spec for this role
-			var spec *AgentSpec
-			for i := range r.Blueprint.Agents {
-				if r.Blueprint.Agents[i].Role == role {
-					spec = &r.Blueprint.Agents[i]
-					break
-				}
-			}
-			if spec == nil {
-				mu.Lock()
-				results[role] = append(results[role], agent.TaskResult{
-					TaskID: role + "-spec",
-					Status: agent.TaskFailed,
-					Error:  fmt.Sprintf("agent spec for role '%s' not found", role),
-				})
-				mu.Unlock()
-				log.Printf("[workflow] Role '%s' FAILED: spec not found", role)
-				return
-			}
-
-			tasks := BuildRoleTasks(*spec, r.SharedState)
-			tasks = injectDependencies(tasks, completed)
-
-			log.Printf("[workflow] Role '%s' executing %d task(s)", role, len(tasks))
-			var roleResults []agent.TaskResult
-			for taskIdx, task := range tasks {
-				// Add small delay between tasks for rate limiting
-				time.Sleep(100 * time.Millisecond)
-
-				log.Printf("[workflow] Role '%s' task %d/%d (%s) starting...", role, taskIdx+1, len(tasks), task.ID)
-				taskStart := time.Now()
-				result := worker.Execute(ctx, task)
-				duration := time.Since(taskStart)
-
-				if result.Status == agent.TaskCompleted {
-					log.Printf("[workflow] Role '%s' task %d/%d (%s) COMPLETE (%v)", role, taskIdx+1, len(tasks), task.ID, duration)
-				} else {
-					log.Printf("[workflow] Role '%s' task %d/%d (%s) FAILED: %s (%v)", role, taskIdx+1, len(tasks), task.ID, result.Error, duration)
-				}
-
-				roleResults = append(roleResults, result)
-
-				if r.OnTaskComplete != nil {
-					r.OnTaskComplete(role, task.ID, result)
-				}
-
-				if result.Status == agent.TaskFailed {
-					// Fail-fast: stop this role's tasks
-					break
-				}
-			}
-
+			roleResults := r.runRole(ctx, role, completed, supervisor)
 			mu.Lock()
 			results[role] = roleResults
 			mu.Unlock()
-			log.Printf("[workflow] Role '%s' FINISHED (%d/%d tasks, %v)", role, len(roleResults), len(tasks), time.Since(startTime))
 		}(role)
 	}
 
 	wg.Wait()
 	return results
+}
+
+func (r *Runner) runRole(ctx context.Context, role string, completed map[string][]agent.TaskResult, supervisor *agent.Supervisor) []agent.TaskResult {
+	log.Printf("[workflow] Role '%s' starting execution", role)
+	startTime := time.Now()
+
+	worker, ok := r.Workers[role]
+	if !ok {
+		log.Printf("[workflow] Role '%s' FAILED: worker not found", role)
+		return []agent.TaskResult{{
+			TaskID: role + "-missing",
+			Status: agent.TaskFailed,
+			Error:  fmt.Sprintf("worker for role '%s' not found", role),
+		}}
+	}
+
+	var spec *AgentSpec
+	for i := range r.Blueprint.Agents {
+		if r.Blueprint.Agents[i].Role == role {
+			spec = &r.Blueprint.Agents[i]
+			break
+		}
+	}
+	if spec == nil {
+		log.Printf("[workflow] Role '%s' FAILED: spec not found", role)
+		return []agent.TaskResult{{
+			TaskID: role + "-spec",
+			Status: agent.TaskFailed,
+			Error:  fmt.Sprintf("agent spec for role '%s' not found", role),
+		}}
+	}
+
+	tasks := BuildRoleTasks(*spec, r.SharedState)
+	tasks = injectDependencies(tasks, completed)
+
+	log.Printf("[workflow] Role '%s' executing %d task(s)", role, len(tasks))
+	var roleResults []agent.TaskResult
+	for taskIdx, task := range tasks {
+		// Add small delay between tasks for rate limiting.
+		time.Sleep(100 * time.Millisecond)
+
+		log.Printf("[workflow] Role '%s' task %d/%d (%s) starting...", role, taskIdx+1, len(tasks), task.ID)
+		taskStart := time.Now()
+		result := worker.Execute(ctx, task)
+		duration := time.Since(taskStart)
+
+		if result.Status == agent.TaskCompleted {
+			log.Printf("[workflow] Role '%s' task %d/%d (%s) COMPLETE (%v)", role, taskIdx+1, len(tasks), task.ID, duration)
+		} else {
+			log.Printf("[workflow] Role '%s' task %d/%d (%s) FAILED: %s (%v)", role, taskIdx+1, len(tasks), task.ID, result.Error, duration)
+		}
+
+		roleResults = append(roleResults, result)
+
+		if r.OnTaskComplete != nil {
+			r.OnTaskComplete(role, task.ID, result)
+		}
+
+		if result.Status == agent.TaskFailed {
+			break
+		}
+	}
+
+	log.Printf("[workflow] Role '%s' FINISHED (%d/%d tasks, %v)", role, len(roleResults), len(tasks), time.Since(startTime))
+	return roleResults
 }
 
 // RunQA spawns the QA agent after all waves complete.

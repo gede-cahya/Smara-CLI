@@ -33,7 +33,11 @@ func ShouldAutoParallelOrchestrate(prompt string, mode agent.Mode) bool {
 }
 
 func hasParallelOptOut(lower string) bool {
-	optOuts := []string{"jangan parallel", "jangan paralel", "tanpa orchestration", "tanpa orkestrasi", "jawab singkat"}
+	optOuts := []string{
+		"jangan parallel", "jangan paralel", "tanpa parallel", "tanpa paralel", "non-parallel", "serial", "sequential",
+		"berurutan", "satu per satu", "jangan masuk parallel task", "hilangkan parallel task",
+		"tanpa orchestration", "tanpa orkestrasi", "jawab singkat",
+	}
 	for _, optOut := range optOuts {
 		if strings.Contains(lower, optOut) {
 			return true

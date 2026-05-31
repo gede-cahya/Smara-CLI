@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
@@ -709,34 +708,16 @@ func (s *Server) runResolvedCustomWorkflowMatches(items []customWorkflowMatch, p
 }
 
 func (s *Server) runResolvedCustomWorkflowMatchesWithProgress(items []customWorkflowMatch, parallelRequested bool, onProgress func(event, message, role, taskID string, details map[string]interface{})) ([]string, error) {
-	if !parallelRequested || len(items) <= 1 {
-		responses := make([]string, 0, len(items))
-		for _, item := range items {
-			response, err := s.runResolvedCustomWorkflowWithProgress(item, parallelRequested, onProgress)
-			if err != nil {
-				return nil, err
-			}
-			responses = append(responses, response)
-		}
-		return responses, nil
-	}
-
-	responses := make([]string, len(items))
-	errs := make([]error, len(items))
-	var wg sync.WaitGroup
-	for i, item := range items {
-		i, item := i, item
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			responses[i], errs[i] = s.runResolvedCustomWorkflowWithProgress(item, parallelRequested, onProgress)
-		}()
-	}
-	wg.Wait()
-	for _, err := range errs {
+	responses := make([]string, 0, len(items))
+	for _, item := range items {
+		response, err := s.runResolvedCustomWorkflowWithProgress(item, false, onProgress)
 		if err != nil {
+			if parallelRequested {
+				return nil, fmt.Errorf("workflow dijalankan serial; gagal menjalankan '%s': %w", item.Name, err)
+			}
 			return nil, err
 		}
+		responses = append(responses, response)
 	}
 	return responses, nil
 }
@@ -746,6 +727,7 @@ func (s *Server) runResolvedCustomWorkflow(item customWorkflowMatch, parallelReq
 }
 
 func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch, parallelRequested bool, onProgress func(event, message, role, taskID string, details map[string]interface{})) (string, error) {
+	parallelRequested = false
 	runID := fmt.Sprintf("custom-%d", time.Now().UnixNano())
 	if s.OrchestrationStore != nil {
 		s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name, parallelRequested))
@@ -757,17 +739,17 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 				s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name, parallelRequested))
 			}
 			if onProgress != nil {
-				onProgress("blueprint_ready", fmt.Sprintf("Workflow %s siap: %d wave", item.Name, len(waves)), "", "", map[string]interface{}{"waves": waves})
+				onProgress("blueprint_ready", fmt.Sprintf("Workflow %s siap: %d step serial", item.Name, len(waves)), "", "", map[string]interface{}{"steps": waves})
 			}
 		},
 		OnWaveStart: func(wave int, roles []string) {
 			if onProgress != nil {
-				onProgress("wave_start", fmt.Sprintf("Wave %d mulai: %s", wave+1, strings.Join(roles, ", ")), "", "", map[string]interface{}{"wave": wave + 1, "roles": roles})
+				onProgress("step_start", fmt.Sprintf("Step %d mulai: %s", wave+1, strings.Join(roles, ", ")), "", "", map[string]interface{}{"step": wave + 1, "roles": roles})
 			}
 		},
 		OnWaveComplete: func(wave int, results map[string][]agent.TaskResult) {
 			if onProgress != nil {
-				onProgress("wave_complete", fmt.Sprintf("Wave %d selesai", wave+1), "", "", map[string]interface{}{"wave": wave + 1})
+				onProgress("step_complete", fmt.Sprintf("Step %d selesai", wave+1), "", "", map[string]interface{}{"step": wave + 1})
 			}
 		},
 		OnRoleStart: func(role string) {
@@ -815,7 +797,7 @@ func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string, pa
 	}
 	bp := cw.ToBlueprint()
 	runner := workflow.NewRunner(bp, nil, nil)
-	runner.Serial = !parallelRequested
+	runner.Serial = true
 	waves, _ := runner.BuildWaves()
 	for _, a := range cw.Agents {
 		id := a.Role
@@ -823,14 +805,10 @@ func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string, pa
 		if len(a.Tasks) > 0 {
 			description = fmt.Sprintf("%s\n\n%d task(s): %s", a.Description, len(a.Tasks), firstNonEmpty(a.Tasks[0].Description, a.Tasks[0].ID))
 		}
-		plan.Subtasks = append(plan.Subtasks, workflow.Subtask{ID: id, Title: a.Role, Description: description, Kind: workflow.TaskKindReadOnly, DependsOn: append([]string(nil), a.DependsOn...), CanParallel: parallelRequested && len(a.DependsOn) == 0, RiskLevel: workflow.RiskLow, Status: workflow.StatusPending})
+		plan.Subtasks = append(plan.Subtasks, workflow.Subtask{ID: id, Title: a.Role, Description: description, Kind: workflow.TaskKindReadOnly, DependsOn: append([]string(nil), a.DependsOn...), CanParallel: false, RiskLevel: workflow.RiskLow, Status: workflow.StatusPending})
 	}
 	for i, wave := range waves {
-		mode := workflow.BatchModeSerial
-		if len(wave) > 1 {
-			mode = workflow.BatchModeParallel
-		}
-		plan.Batches = append(plan.Batches, workflow.ExecutionBatch{ID: fmt.Sprintf("wave-%d", i+1), Name: fmt.Sprintf("Wave %d", i+1), Mode: mode, SubtaskIDs: append([]string(nil), wave...), MaxConcurrency: len(wave)})
+		plan.Batches = append(plan.Batches, workflow.ExecutionBatch{ID: fmt.Sprintf("step-%d", i+1), Name: fmt.Sprintf("Step %d", i+1), Mode: workflow.BatchModeSerial, SubtaskIDs: append([]string(nil), wave...), MaxConcurrency: 1})
 	}
 	return plan
 }
@@ -1343,7 +1321,7 @@ func formatCustomWorkflowRunResponse(name string, result *workflow.CustomWorkflo
 	}
 	var sb strings.Builder
 	if parallelRequested {
-		sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan dengan mode parallel eksplisit.\n", name))
+		sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan secara serial. Permintaan parallel di workflow diabaikan.\n", name))
 	} else {
 		sb.WriteString(fmt.Sprintf("Custom workflow '%s' selesai dijalankan.\n", name))
 	}
@@ -1353,12 +1331,8 @@ func formatCustomWorkflowRunResponse(name string, result *workflow.CustomWorkflo
 		sb.WriteString("\n")
 	}
 	if parallelRequested {
-		sb.WriteString("\nParallel execution:\n")
-		if result.ParallelExecution {
-			sb.WriteString("- Berjalan parallel pada wave yang dependency-nya sudah aman.\n")
-		} else {
-			sb.WriteString("- Diminta parallel, tetapi workflow ini tetap serial karena dependency/DependsOn membuat setiap agent harus menunggu agent sebelumnya.\n")
-		}
+		sb.WriteString("\nWorkflow execution:\n")
+		sb.WriteString("- Parallel task dinonaktifkan untuk mode workflow; agent dijalankan satu per satu.\n")
 		if waves := formatWorkflowWaves(result.Waves); waves != "" {
 			sb.WriteString(waves)
 		}
@@ -2742,9 +2716,31 @@ func (s *Server) handleImageFlowAssets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
+		asset, ok := s.imageFlowAssetForWeb(asset)
+		if !ok {
+			continue
+		}
 		filtered = append(filtered, asset)
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"assets": filtered})
+}
+
+func (s *Server) imageFlowAssetForWeb(asset imageflow.Asset) (imageflow.Asset, bool) {
+	path := strings.TrimSpace(asset.Path)
+	if path == "" {
+		return asset, false
+	}
+	allowed, err := s.generatedImagePathAllowed(path)
+	if err != nil {
+		return asset, false
+	}
+	info, err := os.Stat(allowed)
+	if err != nil || info.IsDir() {
+		return asset, false
+	}
+	asset.Path = allowed
+	asset.ImageURL = "/api/generated-image?path=" + url.QueryEscape(allowed)
+	return asset, true
 }
 
 func (s *Server) handleImageFlowAssetImport(w http.ResponseWriter, r *http.Request) {

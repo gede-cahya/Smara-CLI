@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AlertCircle, CheckCircle2, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Mic, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
 import { fetchJSON } from '../api'
-import { getCachedSmaraConfig, loadSmaraConfig, setCachedSmaraConfig } from '../configStore'
+import { getCachedSmaraConfig, loadSmaraConfig, SMARA_CONFIG_LOADED_EVENT } from '../configStore'
 
 type MCPServer = {
   name: string
@@ -187,6 +187,16 @@ export default function Config() {
   const changedFields = allFields.filter(f => !valuesEqual(normalizeValue(f, getValue(draftConfig, f.key)), normalizeValue(f, getValue(config, f.key))))
   const dirty = changedFields.length > 0 || (!!rawKey && rawValue !== '')
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const next = (event as CustomEvent<ConfigData>).detail || (getCachedSmaraConfig() as ConfigData)
+      setConfig(next)
+      if (!dirty) setDraftConfig(next)
+    }
+    window.addEventListener(SMARA_CONFIG_LOADED_EVENT, handler)
+    return () => window.removeEventListener(SMARA_CONFIG_LOADED_EVENT, handler)
+  }, [dirty])
+
   const saveKey = async (key: string, value: any) => fetchJSON('/api/config', { method: 'POST', body: JSON.stringify({ key, value }) })
   const saveAll = async () => {
     if (!dirty || saving) return
@@ -196,7 +206,6 @@ export default function Config() {
       if (rawKey && rawValue !== '') { await saveKey(rawKey, rawValue); setRawKey(''); setRawValue('') }
       setNotice({ type: 'ok', text: `${changedFields.length + (rawKey && rawValue !== '' ? 1 : 0)} perubahan tersimpan` })
       const next = await loadSmaraConfig(true) as ConfigData
-      setCachedSmaraConfig(next)
       setConfig(next)
       setDraftConfig(next)
     } catch (e) { setNotice({ type: 'err', text: 'Gagal simpan: ' + e }) }

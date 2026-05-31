@@ -72,7 +72,10 @@ func RunCustomWorkflowWithProgressMode(supervisor *agent.Supervisor, provider ll
 		return nil, fmt.Errorf("memory node failed: %w", err)
 	}
 	runner := NewRunner(bp, workerMap, sharedState)
-	runner.Serial = !parallelRequested
+	// Custom/model workflows must never execute roles in parallel. Parallel task
+	// orchestration is reserved exclusively for ModeParallel's generic runner,
+	// not workflow/skill workflow execution.
+	runner.Serial = true
 	waves, err := runner.BuildWaves()
 	if err != nil {
 		_ = sharedState.Save()
@@ -110,16 +113,7 @@ func RunCustomWorkflowWithProgressMode(supervisor *agent.Supervisor, provider ll
 		return nil, fmt.Errorf("workflow execution failed: %w", err)
 	}
 	qaResult := runner.RunQA(context.Background(), bp, allResults, supervisor)
-	parallelExecution := parallelRequested
-	if parallelExecution {
-		parallelExecution = false
-		for _, wave := range waves {
-			if len(wave) > 1 {
-				parallelExecution = true
-				break
-			}
-		}
-	}
+	parallelExecution := false
 	result := &CustomWorkflowResult{
 		ProjectPath:       projectDir,
 		AgentOutputs:      allResults,

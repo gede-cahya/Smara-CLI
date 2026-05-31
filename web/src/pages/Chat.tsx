@@ -1512,6 +1512,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   }, [sessionId])
   const streamingAssistantRef = useRef(false)
   const streamBufferRef = useRef('')
+  const generatingPhaseActiveRef = useRef(false)
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null)
   const lastVoiceSpokenRef = useRef<string>('')
   const [voiceSpeaking, setVoiceSpeaking] = useState(false)
@@ -1778,6 +1779,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           setThinking(msg.payload === 'true')
           if (msg.payload === 'true') {
             streamBufferRef.current = ''
+            generatingPhaseActiveRef.current = false
             setAnalysisFilter('all')
             setRunStatus(prev => ({
               state: 'starting',
@@ -1875,6 +1877,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           }
           streamingAssistantRef.current = false
           streamBufferRef.current = ''
+          generatingPhaseActiveRef.current = false
           break
         }
         case 'error':
@@ -1890,6 +1893,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             currentTool: undefined,
           } : prev)
           streamingAssistantRef.current = false
+          generatingPhaseActiveRef.current = false
           markAutoScrollIfNearBottom()
           setMessages(prev => capRuntimeMessages([...prev, { role: 'error', content: msg.payload, timestamp: new Date() }]))
           break
@@ -1903,26 +1907,30 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             break
           }
           streamBufferRef.current += chunk
-          // Saat token jawaban mulai mengalir, pastikan panel proses menampilkan
-          // tahap Generating, bukan langsung lompat ke bubble jawaban.
-          pushAnalysisEvent({
-            kind: 'phase',
-            title: 'Generating',
-            detail: 'Composing final response...',
-            status: 'running',
-            level: 'info',
-            event: 'stream',
-          })
-          setActivePhases(prev => { const _now = Date.now()
-            const next: ActivePhase[] = prev.map(p => ({ ...p, status: 'done' }))
-            const idx = next.findIndex(p => p.phase === 'Generating')
-            if (idx >= 0) {
-              next[idx] = { phase: 'Generating', description: 'Composing final response...', status: 'running', startedAt: _now }
-            } else {
-              next.push({ phase: 'Generating', description: 'Composing final response...', status: 'running', startedAt: _now })
-            }
-            return next.slice(-12)
-          })
+          if (!generatingPhaseActiveRef.current) {
+            generatingPhaseActiveRef.current = true
+            // Saat token jawaban mulai mengalir, pastikan panel proses menampilkan
+            // tahap Generating. Jangan update state untuk setiap token karena itu
+            // membuat React render berlebihan pada respons panjang.
+            pushAnalysisEvent({
+              kind: 'phase',
+              title: 'Generating',
+              detail: 'Composing final response...',
+              status: 'running',
+              level: 'info',
+              event: 'stream',
+            })
+            setActivePhases(prev => { const _now = Date.now()
+              const next: ActivePhase[] = prev.map(p => ({ ...p, status: 'done' }))
+              const idx = next.findIndex(p => p.phase === 'Generating')
+              if (idx >= 0) {
+                next[idx] = { phase: 'Generating', description: 'Composing final response...', status: 'running', startedAt: _now }
+              } else {
+                next.push({ phase: 'Generating', description: 'Composing final response...', status: 'running', startedAt: _now })
+              }
+              return next.slice(-12)
+            })
+          }
           break
         }
         case 'tool_call':
@@ -2130,6 +2138,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                 currentTool: undefined,
               } : prev)
               streamingAssistantRef.current = false
+              generatingPhaseActiveRef.current = false
               if (spinnerTimer.current) { clearInterval(spinnerTimer.current); spinnerTimer.current = null }
             }
           }

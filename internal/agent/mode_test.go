@@ -12,6 +12,7 @@ func TestMode_Constants(t *testing.T) {
 	assert.Equal(t, Mode("plan"), ModePlan)
 	assert.Equal(t, Mode("test"), ModeTest)
 	assert.Equal(t, Mode("image"), ModeImage)
+	assert.Equal(t, Mode("workflow"), ModeWorkflow)
 	assert.Equal(t, Mode("parallel"), ModeParallel)
 }
 
@@ -54,6 +55,42 @@ func TestGetModeInfo_UnknownModeDefaultsToAsk(t *testing.T) {
 	info := GetModeInfo(Mode("unknown"))
 	assert.Equal(t, ModeAsk, info.Name, "unknown mode should default to ask")
 	assert.Equal(t, "Ask", info.Label)
+}
+
+func TestEveryModeHasExpectedRoutingPrompt(t *testing.T) {
+	tests := []struct {
+		mode     Mode
+		label    string
+		contains []string
+	}{
+		{ModeAsk, "Ask", []string{"MENJAWAB PERTANYAAN", "tools"}},
+		{ModeRush, "Rush", []string{"LANGSUNG EKSEKUSI", "maksimal aksi"}},
+		{ModePlan, "Plan", []string{"Recommended approach", "SMARA_PLAN_QUEST"}},
+		{ModeTest, "Test", []string{"TESTING", "Jangan menyatakan tugas selesai"}},
+		{ModeImage, "Image", []string{"generate_image", "edit_image"}},
+		{ModeWorkflow, "Workflow", []string{"WORKFLOW biasa", "Jangan memulai generic parallel task orchestration otomatis"}},
+		{ModeParallel, "Parallel", []string{"PARALLEL TASK", "Agent Swarm Workflow"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			info := GetModeInfo(tt.mode)
+			assert.Equal(t, tt.label, info.Label)
+			assert.True(t, ValidMode(string(tt.mode)))
+			for _, want := range tt.contains {
+				assert.Contains(t, info.SystemPrompt, want)
+			}
+		})
+	}
+}
+
+func TestParallelPolicyPromptsOnlyAllowGenericParallelInParallelMode(t *testing.T) {
+	workflowPrompt := GetModeInfo(ModeWorkflow).SystemPrompt
+	parallelPrompt := GetModeInfo(ModeParallel).SystemPrompt
+
+	assert.Contains(t, workflowPrompt, "Jangan memulai generic parallel task orchestration otomatis")
+	assert.Contains(t, workflowPrompt, "mengganti mode ke Parallel")
+	assert.Contains(t, parallelPrompt, "Mode ini khusus untuk menjalankan generic parallel task orchestration")
 }
 
 func TestModePlan_SystemPromptStructure(t *testing.T) {

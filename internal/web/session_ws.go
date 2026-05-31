@@ -23,6 +23,11 @@ type wsToolProgressEvent struct {
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
+type pendingStreamChunk struct {
+	chunk      string
+	isThinking bool
+}
+
 func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	if s.WebSessions == nil {
 		_ = conn.WriteJSON(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: "web session manager belum aktif"})
@@ -136,13 +141,100 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 	prompt := injectAttachmentSteer(msg.Payload)
+
+	streamCh := make(chan pendingStreamChunk, 256)
+	streamFlushCh := make(chan chan struct{})
+	streamDone := make(chan struct{})
+	defer close(streamDone)
+	go func() {
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		var b strings.Builder
+		var isThinking bool
+		hasBuffered := false
+		flush := func() {
+			if !hasBuffered || b.Len() == 0 {
+				return
+			}
+			payload := b.String()
+			thinking := isThinking
+			b.Reset()
+			hasBuffered = false
+			write(wsMessage{Type: "stream", SessionID: msg.SessionID, Payload: s.rewriteGeneratedImageLinks(payload), Args: map[string]interface{}{"is_thinking": thinking}})
+		}
+		appendChunk := func(ev pendingStreamChunk) {
+			if ev.chunk == "" {
+				return
+			}
+			if hasBuffered && ev.isThinking != isThinking {
+				flush()
+			}
+			isThinking = ev.isThinking
+			hasBuffered = true
+			b.WriteString(ev.chunk)
+			if b.Len() >= 2048 {
+				flush()
+			}
+		}
+		drain := func() {
+			for {
+				select {
+				case ev := <-streamCh:
+					appendChunk(ev)
+				default:
+					flush()
+					return
+				}
+			}
+		}
+		for {
+			select {
+			case ev := <-streamCh:
+				appendChunk(ev)
+			case <-ticker.C:
+				flush()
+			case ack := <-streamFlushCh:
+				drain()
+				close(ack)
+			case <-streamDone:
+				drain()
+				return
+			}
+		}
+	}()
+	flushStreams := func() {
+		ack := make(chan struct{})
+		select {
+		case streamFlushCh <- ack:
+			<-ack
+		case <-streamDone:
+		}
+	}
+
 	var toolMu sync.Mutex
 	toolStarted := map[string]time.Time{}
 	var toolStack []string
+	var phaseMu sync.Mutex
+	lastPhase := ""
+	lastPhaseDescription := ""
+	lastPhaseAt := time.Time{}
+	emitPhase := func(phase, description string) {
+		phaseMu.Lock()
+		now := time.Now()
+		if phase == lastPhase && description == lastPhaseDescription && now.Sub(lastPhaseAt) < 500*time.Millisecond {
+			phaseMu.Unlock()
+			return
+		}
+		lastPhase = phase
+		lastPhaseDescription = description
+		lastPhaseAt = now
+		phaseMu.Unlock()
+		emitLog("info", "phase", description, "", map[string]interface{}{"phase": phase})
+		write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: phase, Description: description})
+	}
 	cb := agent.AgenticCallback{
 		OnPhaseChange: func(phase, description string) {
-			emitLog("info", "phase", description, "", map[string]interface{}{"phase": phase})
-			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: phase, Description: description})
+			emitPhase(phase, description)
 		},
 		OnToolCall: func(server, tool string, args map[string]interface{}) {
 			toolMu.Lock()
@@ -176,7 +268,11 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		},
 		OnStream: func(chunk string, isThinking bool) {
 			touch("stream")
-			write(wsMessage{Type: "stream", SessionID: msg.SessionID, Payload: s.rewriteGeneratedImageLinks(chunk), Args: map[string]interface{}{"is_thinking": isThinking}})
+			select {
+			case streamCh <- pendingStreamChunk{chunk: chunk, isThinking: isThinking}:
+			default:
+				write(wsMessage{Type: "stream", SessionID: msg.SessionID, Payload: s.rewriteGeneratedImageLinks(chunk), Args: map[string]interface{}{"is_thinking": isThinking}})
+			}
 		},
 		OnIteration: func(current, max int) {
 			emitLog("info", "iteration", fmt.Sprintf("Iterasi agent %d/%d.", current, max), "", nil)
@@ -286,6 +382,7 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		return
 	}
 	result, err := s.WebSessions.Run(ctx, msg.SessionID, prompt, activeMode, cb)
+	flushStreams()
 	write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

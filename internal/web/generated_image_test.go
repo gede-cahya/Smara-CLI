@@ -2,9 +2,15 @@ package web
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gede-cahya/Smara-CLI/internal/config"
+	"github.com/gede-cahya/Smara-CLI/internal/imageflow"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,4 +48,28 @@ func TestRewriteGeneratedImageMarkdownLeavesDisallowedPathUntouched(t *testing.T
 	})
 
 	require.Equal(t, input, got)
+}
+
+func TestImageFlowAssetsSkipsStaleDisallowedAssets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	imgDir := filepath.Join(home, ".smara", "images")
+	require.NoError(t, os.MkdirAll(imgDir, 0o755))
+	validPath := filepath.Join(imgDir, "valid.png")
+	require.NoError(t, os.WriteFile(validPath, []byte("png"), 0o644))
+
+	cfg := &config.SmaraConfig{ImageOutputDir: imgDir}
+	srv := &Server{Cfg: cfg}
+	staleTempPath := filepath.Join(os.TempDir(), "TestCleanupAssetsRemovesOldArchivedOnly", "001", ".smara", "images", "new.png")
+	require.NoError(t, imageflow.SaveAsset(imageflow.Asset{ID: "stale", Path: staleTempPath, Workflow: "stale test"}))
+	require.NoError(t, imageflow.SaveAsset(imageflow.Asset{ID: "valid", Path: validPath, Workflow: "valid image"}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/image-flow/assets", nil)
+	res := httptest.NewRecorder()
+	srv.handleImageFlowAssets(res, req)
+
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Contains(t, res.Body.String(), "valid")
+	require.NotContains(t, res.Body.String(), "stale")
+	require.NotContains(t, res.Body.String(), "TestCleanupAssetsRemovesOldArchivedOnly")
 }

@@ -71,7 +71,7 @@ func buildOrchestrationRuleSkillContext() string {
 		sb.WriteString(strings.TrimSpace(sk.Trigger))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("- Routing wajib: sapaan/chat singkat/Q&A sederhana tetap chat normal; request workflow existing harus ke runner workflow tersimpan; task kompleks multi-step/multi-file/multi-agent boleh parallel orchestration; explicit parallel/paralel hanya berlaku untuk task kerja nyata, bukan keluhan/pertanyaan.\n")
+	sb.WriteString("- Routing wajib: sapaan/chat singkat/Q&A sederhana tetap chat normal; request workflow existing harus ke runner workflow tersimpan secara serial; task kompleks di mode biasa tetap serial/bertahap. Parallel orchestration hanya boleh saat mode Parallel aktif eksplisit, dan tidak boleh dijalankan melalui mode workflow/model workflow/skill workflow.\n")
 	return sb.String()
 }
 

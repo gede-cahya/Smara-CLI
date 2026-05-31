@@ -59,6 +59,32 @@ func TestExtractCustomWorkflowRunRequestsMultipleNames(t *testing.T) {
 	}
 }
 
+func TestCustomWorkflowExecutionPlanIgnoresParallelRequest(t *testing.T) {
+	cw := &workflow.CustomWorkflow{
+		Name:        "serial-check",
+		Description: "check serial workflow execution",
+		Agents: []workflow.CustomAgent{
+			{Role: "alpha", Description: "first"},
+			{Role: "beta", Description: "second"},
+		},
+	}
+
+	plan := customWorkflowExecutionPlan(cw, "serial-check", true)
+	if len(plan.Batches) != 2 {
+		t.Fatalf("customWorkflowExecutionPlan() batches = %d; want 2 serial batches", len(plan.Batches))
+	}
+	for _, subtask := range plan.Subtasks {
+		if subtask.CanParallel {
+			t.Fatalf("subtask %q CanParallel = true; want false", subtask.ID)
+		}
+	}
+	for _, batch := range plan.Batches {
+		if batch.Mode != workflow.BatchModeSerial || batch.MaxConcurrency != 1 || len(batch.SubtaskIDs) != 1 {
+			t.Fatalf("batch %#v; want one serial subtask with max concurrency 1", batch)
+		}
+	}
+}
+
 func TestExtractCustomWorkflowCreateName(t *testing.T) {
 	cases := map[string]string{
 		"buat custom workflow spamload discover logic nanti kau rangkum range":        "spamload-discover-logic",

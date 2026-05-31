@@ -78,9 +78,9 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 
 	// 3. Run DAG execution
 	if o.OnProgress != nil {
-		o.OnProgress("runner", "executing waves")
+		o.OnProgress("runner", "executing steps")
 	}
-	log.Printf("[workflow] Phase 3/4: Executing DAG waves...")
+	log.Printf("[workflow] Phase 3/4: Executing DAG steps...")
 	phaseStart = time.Now()
 
 	workerMap := make(map[string]*agent.Worker)
@@ -91,6 +91,11 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	}
 
 	runner := NewRunner(bp, workerMap, o.SharedState)
+	if o.Supervisor == nil || o.Supervisor.GetMode() != agent.ModeParallel {
+		// Only ModeParallel may execute dependency-safe roles in parallel.
+		// Workflow, Ask, Plan, Rush, Test, and Image stay serial.
+		runner.Serial = true
+	}
 	executionWaves := [][]string(nil)
 	if waves, err := runner.BuildWaves(); err == nil {
 		executionWaves = waves
@@ -102,7 +107,11 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	}
 	runner.OnWaveStart = func(wave int, roles []string) {
 		if o.OnProgress != nil {
-			o.OnProgress("runner", fmt.Sprintf("wave %d: %s", wave, roles))
+			unit := "wave"
+			if runner.Serial {
+				unit = "step"
+			}
+			o.OnProgress("runner", fmt.Sprintf("%s %d: %s", unit, wave, roles))
 		}
 		if o.OnRoleStart != nil {
 			for _, role := range roles {
@@ -112,7 +121,11 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	}
 	runner.OnWaveComplete = func(wave int, results map[string][]agent.TaskResult) {
 		if o.OnProgress != nil {
-			o.OnProgress(fmt.Sprintf("wave-%d", wave), "complete")
+			unit := "wave"
+			if runner.Serial {
+				unit = "step"
+			}
+			o.OnProgress(fmt.Sprintf("%s-%d", unit, wave), "complete")
 		}
 	}
 	runner.OnTaskComplete = func(role, taskID string, result agent.TaskResult) {

@@ -5,6 +5,7 @@ export type SmaraConfigData = Record<string, unknown>
 export const SMARA_CONFIG_STORAGE_KEY = 'smara_config'
 export const SMARA_CONFIG_LOADED_EVENT = 'smara:config-loaded'
 export const SMARA_CONFIG_ERROR_EVENT = 'smara:config-error'
+export const SMARA_CONFIG_SAVED_EVENT = 'smara:config-saved'
 
 let cachedConfig: SmaraConfigData | null = null
 let pendingLoad: Promise<SmaraConfigData> | null = null
@@ -43,7 +44,9 @@ export async function loadSmaraConfig(force = false): Promise<SmaraConfigData> {
   return pendingLoad
 }
 
-export function setCachedSmaraConfig(config: SmaraConfigData) {
+export function setCachedSmaraConfig(config: SmaraConfigData, options: { publish?: boolean } = {}) {
   cachedConfig = config || {}
-  publishLoaded(cachedConfig)
+  try { localStorage.setItem(SMARA_CONFIG_STORAGE_KEY, JSON.stringify(cachedConfig)) } catch { /* ignore */ }
+  if (options.publish) publishLoaded(cachedConfig)
+  window.dispatchEvent(new CustomEvent(SMARA_CONFIG_SAVED_EVENT, { detail: cachedConfig }))
 }

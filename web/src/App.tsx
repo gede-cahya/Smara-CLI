@@ -102,7 +102,6 @@ function loadTab(): string {
 export default function App() {
   const [active, setActiveRaw] = useState(loadTab)
   const chatRef = useRef<ChatHandle>(null)
-
   const setActive = (id: string) => {
     setActiveRaw(id)
     try { localStorage.setItem(TAB_KEY, id) } catch {}
@@ -111,11 +110,12 @@ export default function App() {
   useEffect(() => {
     loadSmaraConfig().catch(err => console.warn('[smara] failed to auto-load config:', err))
 
-    const handler = (e: StorageEvent) => {
+    const storageHandler = (e: StorageEvent) => {
       if (e.key === TAB_KEY && e.newValue && navItems.find(n => n.id === e.newValue)) setActiveRaw(e.newValue)
     }
-    window.addEventListener('storage', handler)
-    return () => window.removeEventListener('storage', handler)
+
+    window.addEventListener('storage', storageHandler)
+    return () => window.removeEventListener('storage', storageHandler)
   }, [])
 
   return (
