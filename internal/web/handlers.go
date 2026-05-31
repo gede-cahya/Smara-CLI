@@ -728,14 +728,15 @@ func (s *Server) runResolvedCustomWorkflow(item customWorkflowMatch, parallelReq
 
 func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch, parallelRequested bool, onProgress func(event, message, role, taskID string, details map[string]interface{})) (string, error) {
 	parallelRequested = false
+	useTaskStore := false
 	runID := fmt.Sprintf("custom-%d", time.Now().UnixNano())
-	if s.OrchestrationStore != nil {
+	if useTaskStore && s.OrchestrationStore != nil {
 		s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name, parallelRequested))
 	}
 	started := map[string]time.Time{}
 	result, err := workflow.RunCustomWorkflowWithProgressMode(s.Supervisor, s.Supervisor.GetProvider(), item.Workflow, &workflow.CustomWorkflowProgress{
 		OnBlueprintReady: func(_ workflow.Blueprint, waves [][]string) {
-			if s.OrchestrationStore != nil {
+			if useTaskStore && s.OrchestrationStore != nil {
 				s.OrchestrationStore.Start(runID, customWorkflowExecutionPlan(item.Workflow, item.Name, parallelRequested))
 			}
 			if onProgress != nil {
@@ -754,7 +755,7 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 		},
 		OnRoleStart: func(role string) {
 			started[role] = time.Now()
-			if s.OrchestrationStore != nil {
+			if useTaskStore && s.OrchestrationStore != nil {
 				s.OrchestrationStore.UpdateSubtaskStatus(role, workflow.StatusRunning, "", "", 0)
 			}
 			if onProgress != nil {
@@ -766,7 +767,7 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 			if start := started[role]; !start.IsZero() {
 				duration = time.Since(start)
 			}
-			if s.OrchestrationStore != nil {
+			if useTaskStore && s.OrchestrationStore != nil {
 				s.OrchestrationStore.UpdateSubtaskStatus(role, taskResultStatus(taskResult), strings.TrimSpace(taskResult.Output), taskResult.Error, duration)
 			}
 			if onProgress != nil {
@@ -775,13 +776,13 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 		},
 	}, parallelRequested)
 	if err != nil {
-		if s.OrchestrationStore != nil {
+		if useTaskStore && s.OrchestrationStore != nil {
 			s.OrchestrationStore.Complete(workflow.StatusFailed, "", err.Error())
 		}
 		return "", fmt.Errorf("gagal menjalankan custom workflow '%s': %w", item.Name, err)
 	}
 	response := formatCustomWorkflowRunResponse(item.Name, result, parallelRequested)
-	if s.OrchestrationStore != nil {
+	if useTaskStore && s.OrchestrationStore != nil {
 		s.OrchestrationStore.MarkAll(workflow.StatusSuccess, "Custom workflow selesai. "+result.FinalSummary)
 		s.OrchestrationStore.Complete(workflow.StatusSuccess, response, "")
 	}

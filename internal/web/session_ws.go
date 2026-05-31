@@ -295,17 +295,7 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	}
 
 	if response, handled, err := s.tryRunCustomWorkflowPromptWithProgress(msg.Payload, func(event, message, role, taskID string, details map[string]interface{}) {
-		if details == nil {
-			details = map[string]interface{}{}
-		}
-		if role != "" {
-			details["role"] = role
-		}
-		if taskID != "" {
-			details["task_id"] = taskID
-		}
-		emitLog("info", event, message, "custom_workflow", details)
-		write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: event, Description: message})
+		touch("custom_workflow")
 	}); handled {
 		if err != nil {
 			write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
