@@ -2,6 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"net/url"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,8 +15,9 @@ import (
 )
 
 const (
-	mcpStartupPerServerTimeout = 8 * time.Second
-	mcpStartupOverallTimeout   = 12 * time.Second
+	mcpStartupPerServerTimeout = 15 * time.Second
+	mcpStartupOverallTimeout   = 30 * time.Second
+	mcpPreflightDialTimeout    = 2 * time.Second
 )
 
 type mcpConnResult struct {
@@ -79,7 +84,69 @@ func connectMCPServersSerialForStartup(supervisor *agent.Supervisor, enabledConf
 	}
 }
 
+// preflightCheckMCP performs fast sanity checks before attempting a full
+// MCP handshake. Returns a human-readable reason to skip, or "" if OK.
+func preflightCheckMCP(cfg mcp.MCPServerConfig) string {
+	switch cfg.Type {
+	case "remote":
+		return preflightRemote(cfg)
+	default:
+		return preflightLocal(cfg)
+	}
+}
+
+// preflightRemote does a fast TCP dial to the remote URL's host:port.
+// If the port is unreachable, we know the handshake will fail anyway.
+func preflightRemote(cfg mcp.MCPServerConfig) string {
+	if cfg.URL == "" {
+		return "URL remote kosong"
+	}
+	parsed, err := url.Parse(cfg.URL)
+	if err != nil {
+		return fmt.Sprintf("URL tidak valid: %v", err)
+	}
+	host := parsed.Host
+	if host == "" {
+		return "host remote kosong"
+	}
+	// Ensure we have a port for the dial.
+	if !strings.Contains(host, ":") {
+		switch parsed.Scheme {
+		case "https":
+			host += ":443"
+		default:
+			host += ":80"
+		}
+	}
+	conn, err := net.DialTimeout("tcp", host, mcpPreflightDialTimeout)
+	if err != nil {
+		return fmt.Sprintf("server tidak aktif di %s (dial: %v)", cfg.URL, err)
+	}
+	_ = conn.Close()
+	return ""
+}
+
+// preflightLocal checks that the command binary exists before spawning it.
+func preflightLocal(cfg mcp.MCPServerConfig) string {
+	if cfg.Command == "" {
+		return "command kosong"
+	}
+	if _, err := exec.LookPath(cfg.Command); err != nil {
+		return fmt.Sprintf("command '%s' tidak ditemukan di PATH", cfg.Command)
+	}
+	return ""
+}
+
 func connectMCPServerWithTimeout(cfg mcp.MCPServerConfig, results chan<- mcpConnResult) {
+	// Pre-flight check: skip early if clearly unreachable
+	if reason := preflightCheckMCP(cfg); reason != "" {
+		results <- mcpConnResult{
+			Name: cfg.Name,
+			Err:  fmt.Errorf("%s", reason),
+		}
+		return
+	}
+
 	resCh := make(chan mcpConnResult, 1)
 	abandoned := make(chan struct{})
 
@@ -104,7 +171,7 @@ func connectMCPServerWithTimeout(cfg mcp.MCPServerConfig, results chan<- mcpConn
 		close(abandoned)
 		results <- mcpConnResult{
 			Name: cfg.Name,
-			Err:  fmt.Errorf("timeout startup setelah %s", mcpStartupPerServerTimeout),
+			Err:  fmt.Errorf("timeout startup setelah %s (server lambat startup?)", mcpStartupPerServerTimeout),
 		}
 	}
 }

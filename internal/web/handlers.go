@@ -767,11 +767,22 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 			if start := started[role]; !start.IsZero() {
 				duration = time.Since(start)
 			}
+			details := map[string]interface{}{"status": taskResult.Status, "duration_ms": duration.Milliseconds(), "error": taskResult.Error}
+			if output := strings.TrimSpace(taskResult.Output); output != "" {
+				details["output"] = truncateWorkflowDetail(output, 12000)
+			}
+			if task, ok := findCustomWorkflowTask(item.Workflow, role, taskID); ok && (task.MCPServer != "" || task.ToolName != "") {
+				details["mcp_server"] = task.MCPServer
+				details["tool_name"] = task.ToolName
+				if task.ToolArgs != nil {
+					details["tool_args"] = task.ToolArgs
+				}
+			}
 			if useTaskStore && s.OrchestrationStore != nil {
 				s.OrchestrationStore.UpdateSubtaskStatus(role, taskResultStatus(taskResult), strings.TrimSpace(taskResult.Output), taskResult.Error, duration)
 			}
 			if onProgress != nil {
-				onProgress("task_complete", fmt.Sprintf("%s selesai: %s", role, taskID), role, taskID, map[string]interface{}{"status": taskResult.Status, "duration_ms": duration.Milliseconds(), "error": taskResult.Error})
+				onProgress("task_complete", fmt.Sprintf("%s selesai: %s", role, taskID), role, taskID, details)
 			}
 		},
 	}, parallelRequested)
@@ -787,6 +798,30 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 		s.OrchestrationStore.Complete(workflow.StatusSuccess, response, "")
 	}
 	return response, nil
+}
+
+func findCustomWorkflowTask(cw *workflow.CustomWorkflow, role, taskID string) (workflow.Task, bool) {
+	if cw == nil {
+		return workflow.Task{}, false
+	}
+	for _, agent := range cw.Agents {
+		if agent.Role != role {
+			continue
+		}
+		for _, task := range agent.Tasks {
+			if task.ID == taskID {
+				return task, true
+			}
+		}
+	}
+	return workflow.Task{}, false
+}
+
+func truncateWorkflowDetail(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	return value[:max] + "\n... [truncated]"
 }
 
 func customWorkflowExecutionPlan(cw *workflow.CustomWorkflow, matched string, parallelRequested bool) workflow.ExecutionPlan {

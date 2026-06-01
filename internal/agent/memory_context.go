@@ -54,6 +54,13 @@ func buildMemoryContext(store memory.MemoryStore, provider llm.Provider, userPro
 		}
 	}
 
+	// Always pull self-improvement rules first. These are operational lessons
+	// (corrections, repeated failures, upgraded workflows) that should be
+	// auto-applied before the model decides a fact/path/config is missing.
+	if si := buildSelfImprovementContext(store, userPrompt, workspaceID); si != "" {
+		return si
+	}
+
 	// Try semantic search first.
 	if provider != nil {
 		if embedding, err := provider.GenerateEmbedding(userPrompt); err == nil && len(embedding) > 0 {
@@ -150,6 +157,46 @@ func truncateForContext(s string) string {
 	return s[:max] + "…"
 }
 
+// buildSelfImprovementContext retrieves auto-apply lessons that match the
+// current prompt. It deliberately uses FTS/source filtering (not embeddings) so
+// corrections such as "I already told you the VPS key path" are found even when
+// embeddings are unavailable.
+func buildSelfImprovementContext(store memory.MemoryStore, userPrompt string, workspaceID int64) string {
+	ftsQuery := sanitizeFTSQuery(userPrompt)
+	queries := []string{"self improvement auto apply correction lesson workflow rule memory"}
+	if ftsQuery != "" {
+		queries = append([]string{ftsQuery}, queries...)
+	}
+	seen := map[int64]bool{}
+	var parts []string
+	for _, q := range queries {
+		results, err := store.SearchFullText(q, workspaceID, memory.MemoryFilters{
+			SearchFilters: memory.SearchFilters{Sources: []string{selfImprovementSource}},
+			Limit:         5,
+		})
+		if err != nil || len(results) == 0 {
+			continue
+		}
+		for _, m := range results {
+			if seen[m.ID] {
+				continue
+			}
+			seen[m.ID] = true
+			parts = append(parts, fmt.Sprintf("- %s", truncateForContext(m.Content)))
+			if len(parts) >= 5 {
+				break
+			}
+		}
+		if len(parts) >= 5 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Self-improvement memory (AUTO-APPLY sebelum menjawab/menjalankan tool):\n" + strings.Join(parts, "\n")
+}
+
 // detectIntroduction returns the inferred user statement when the prompt
 // looks like a self-introduction. Returns ("", false) if no clear intro
 // pattern matches.
@@ -209,6 +256,30 @@ func detectIntroduction(prompt string) (string, bool) {
 			continue
 		}
 		return pat.label + name, true
+	}
+	return "", false
+}
+
+// detectSelfImprovementCorrection identifies explicit operational corrections
+// from the user and returns a compact lesson for durable auto-apply memory.
+func detectSelfImprovementCorrection(prompt string) (string, bool) {
+	p := strings.TrimSpace(prompt)
+	if p == "" {
+		return "", false
+	}
+	lower := strings.ToLower(p)
+	markers := []string{
+		"mulai sekarang", "ingat", "simpan", "rule", "aturan", "koreksi",
+		"saya sudah", "sudah saya kasih tau", "jangan", "harus", "selalu",
+		"update caranya", "perbaiki kesalahan", "self improvement",
+	}
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			if len(p) > 500 {
+				p = p[:500] + "…"
+			}
+			return p, true
+		}
 	}
 	return "", false
 }

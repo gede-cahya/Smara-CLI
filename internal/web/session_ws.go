@@ -123,7 +123,11 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 				name := lastEventName
 				eventMu.Unlock()
 				if silence >= 15*time.Second {
-					emitLog("warn", "heartbeat", fmt.Sprintf("Proses masih berjalan; belum ada event baru selama %s. Event terakhir: %s. Jika belum ada tool, Smara sedang menunggu respons provider/model.", silence.Round(time.Second), name), "", map[string]interface{}{
+					message := fmt.Sprintf("Proses masih berjalan; belum ada event baru selama %s. Event terakhir: %s. Jika belum ada tool, Smara sedang menunggu respons provider/model.", silence.Round(time.Second), name)
+					if name == "custom_workflow" {
+						message = fmt.Sprintf("Workflow masih berjalan; belum ada tool/final response baru selama %s. Detail step internal disembunyikan dari chat.", silence.Round(time.Second))
+					}
+					emitLog("warn", "heartbeat", message, "", map[string]interface{}{
 						"silence_ms": silence.Milliseconds(),
 						"last_event": name,
 					})
@@ -296,6 +300,22 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 
 	if response, handled, err := s.tryRunCustomWorkflowPromptWithProgress(msg.Payload, func(event, message, role, taskID string, details map[string]interface{}) {
 		touch("custom_workflow")
+		if event == "task_complete" && details != nil {
+			toolName, _ := details["tool_name"].(string)
+			server, _ := details["mcp_server"].(string)
+			if toolName != "" || server != "" {
+				args, _ := details["tool_args"].(map[string]interface{})
+				if toolName == "" {
+					toolName = taskID
+				}
+				write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: server, Tool: toolName, Args: args})
+				output, _ := details["output"].(string)
+				if output == "" {
+					output, _ = details["error"].(string)
+				}
+				write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: s.rewriteGeneratedImageLinks(output)})
+			}
+		}
 	}); handled {
 		if err != nil {
 			write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 )
@@ -27,12 +28,22 @@ type Context7RegistryManifest struct {
 	Skills  []Context7RegistryEntry `json:"skills"`
 }
 
+var (
+	registryCache   *Context7RegistryManifest
+	registryOnce    sync.Once
+	registryOnceErr error
+)
+
 // loadContext7Registry loads the embedded registry index from the skills directory.
-// It searches in the following order:
-// 1. Working directory: skills/registry/index.json
-// 2. Executable directory: skills/registry/index.json (for standalone binary)
-// 3. Repository root: skills/registry/index.json (for dev mode)
+// It uses sync.Once to cache the registry in memory after the first load.
 func loadContext7Registry() (*Context7RegistryManifest, error) {
+	registryOnce.Do(func() {
+		registryCache, registryOnceErr = loadContext7RegistryImpl()
+	})
+	return registryCache, registryOnceErr
+}
+
+func loadContext7RegistryImpl() (*Context7RegistryManifest, error) {
 	// 1. Try embedded registry first (works for standalone binaries)
 	if manifest, err := loadEmbeddedContext7Registry(); err == nil {
 		return manifest, nil

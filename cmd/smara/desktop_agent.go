@@ -46,5 +46,4 @@ func init() {
 	desktopAgentCmd.Flags().StringVar(&desktopAgentOpts.mode, "mode", "supervised", "Safety mode: read_only/supervised/autopilot")
 	desktopAgentCmd.Flags().StringSliceVar(&desktopAgentOpts.allowCommand, "allow-command", nil, "Allowlist command desktop yang boleh dijalankan; bisa diulang/dipisah koma")
 	desktopAgentCmd.Flags().StringVar(&desktopAgentOpts.token, "token", "", "Access token untuk pairing remote Smara Web")
-	rootCmd.AddCommand(desktopAgentCmd)
 }
