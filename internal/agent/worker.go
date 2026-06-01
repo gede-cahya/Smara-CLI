@@ -51,7 +51,7 @@ func (w *Worker) ExecuteWithCallback(ctx context.Context, task Task, cb *WorkerC
 	// Check if task requires MCP or builtin tool call.
 	if task.MCPServer != "" || task.ToolName != "" {
 		if task.MCPServer == builtinMCPServerName {
-			return w.executeBuiltinTask(task)
+			return w.executeBuiltinTask(ctx, task)
 		}
 		if task.MCPServer == "" {
 			return TaskResult{
@@ -89,8 +89,8 @@ func (w *Worker) ExecuteWithCallback(ctx context.Context, task Task, cb *WorkerC
 	return w.executeLLMTask(ctx, task, cb)
 }
 
-func (w *Worker) executeBuiltinTask(task Task) TaskResult {
-	output, err := ExecuteBuiltinTool(task.ToolName, task.ToolArgs, nil)
+func (w *Worker) executeBuiltinTask(ctx context.Context, task Task) TaskResult {
+	output, err := ExecuteBuiltinToolWithContext(ctx, task.ToolName, task.ToolArgs, nil)
 	if err != nil {
 		return TaskResult{TaskID: task.ID, Status: TaskFailed, Error: fmt.Sprintf("gagal memanggil builtin tool '%s': %v", task.ToolName, err)}
 	}

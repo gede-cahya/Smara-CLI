@@ -186,6 +186,9 @@ func TestBuildPromptCustomWorkflowUsesTypedNodes(t *testing.T) {
 	if tool.Tasks[0].ToolArgs["command"] == "" {
 		t.Fatalf("generated tool node command empty: %#v", tool.Tasks[0])
 	}
+	if tool.Tasks[0].ToolArgs["timeout_sec"] != 1800 {
+		t.Fatalf("generated tool node timeout_sec = %#v; want 1800", tool.Tasks[0].ToolArgs["timeout_sec"])
+	}
 }
 
 func TestFindCustomWorkflowByAgentRole(t *testing.T) {

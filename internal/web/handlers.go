@@ -1234,7 +1234,8 @@ func buildTypedPromptCustomWorkflow(name, prompt string) *workflow.CustomWorkflo
 				MCPServer:   "builtin",
 				ToolName:    "run_command",
 				ToolArgs: map[string]interface{}{
-					"command": generatedWorkflowToolCommand(name, prompt),
+					"command":     generatedWorkflowToolCommand(name, prompt),
+					"timeout_sec": 1800,
 				},
 			}},
 			DependsOn:  []string{lastRole},

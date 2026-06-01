@@ -179,6 +179,10 @@ func allBuiltinTools() []llm.ToolFunction {
 						"type":        "string",
 						"description": "Perintah shell lengkap yang akan dieksekusi",
 					},
+					"timeout_sec": map[string]interface{}{
+						"type":        "integer",
+						"description": "Timeout maksimal dalam detik. Default 30. Gunakan nilai lebih besar untuk build, deploy, release, upload, atau install dependency.",
+					},
 				},
 				"required": []string{"command"},
 			},
@@ -1327,6 +1331,63 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	return ExecuteBuiltinToolWithContext(context.Background(), toolName, args, logCallback)
 }
 
+func builtinRunCommandTimeout(args map[string]interface{}) time.Duration {
+	const defaultTimeout = 30 * time.Second
+	if len(args) == 0 {
+		return defaultTimeout
+	}
+	if timeoutSec, ok := numericArg(args["timeout_sec"]); ok && timeoutSec > 0 {
+		return time.Duration(timeoutSec) * time.Second
+	}
+	if timeoutMs, ok := numericArg(args["timeout_ms"]); ok && timeoutMs > 0 {
+		return time.Duration(timeoutMs) * time.Millisecond
+	}
+	return defaultTimeout
+}
+
+func numericArg(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	case uint:
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case float32:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i, true
+		}
+		if f, err := v.Float64(); err == nil {
+			return int64(f), true
+		}
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return i, err == nil
+	}
+	return 0, false
+}
+
 // ExecuteBuiltinToolWithContext eksekusi tool built-in dengan context cancellation untuk tool yang mendukungnya.
 func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args map[string]interface{}, logCallback func(role, content string)) (result string, err error) {
 	progress := func(event, message string, details map[string]interface{}) {
@@ -1402,6 +1463,7 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 		if !ok {
 			return "", fmt.Errorf("argumen 'command' tidak valid")
 		}
+		timeout := builtinRunCommandTimeout(args)
 		progress("tool_progress", "Menyiapkan proses shell.", map[string]interface{}{"command": cmdStr})
 
 		cmd := exec.Command("sh", "-c", cmdStr)
@@ -1455,12 +1517,18 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 			// Proses selesai, tunggu reader goroutine
 			wg.Wait()
 			progress("tool_progress", "Proses shell selesai.", nil)
-		case <-time.After(30 * time.Second):
+		case <-ctx.Done():
+			// Context cancellation: bunuh seluruh process group (termasuk background processes)
+			_ = killProcessGroup(cmd.Process.Pid)
+			wg.Wait()
+			waitErr = ctx.Err()
+			progress("tool_timeout", "Proses shell dibatalkan oleh context dan dihentikan.", map[string]interface{}{"pid": cmd.Process.Pid})
+		case <-time.After(timeout):
 			// Timeout: bunuh seluruh process group (termasuk background processes)
 			_ = killProcessGroup(cmd.Process.Pid)
 			wg.Wait()
-			waitErr = fmt.Errorf("timeout setelah 30 detik")
-			progress("tool_timeout", "Proses shell timeout setelah 30 detik dan dihentikan.", map[string]interface{}{"pid": cmd.Process.Pid})
+			waitErr = fmt.Errorf("timeout setelah %d detik", int(timeout.Seconds()))
+			progress("tool_timeout", fmt.Sprintf("Proses shell timeout setelah %d detik dan dihentikan.", int(timeout.Seconds())), map[string]interface{}{"pid": cmd.Process.Pid})
 		}
 
 		if waitErr != nil {
