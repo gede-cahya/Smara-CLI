@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -47,13 +46,11 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 	}
 	completed := make(map[string][]agent.TaskResult)
 
-	totalWaves := len(waves)
 	for waveIdx, wave := range waves {
 		unit := "WAVE"
 		if r.Serial {
 			unit = "STEP"
 		}
-		log.Printf("[workflow] === %s %d/%d START (%d roles: %s) ===", unit, waveIdx+1, totalWaves, len(wave), strings.Join(wave, ", "))
 		if r.OnWaveStart != nil {
 			r.OnWaveStart(waveIdx, wave)
 		}
@@ -63,7 +60,6 @@ func (r *Runner) Run(ctx context.Context, supervisor *agent.Supervisor) (map[str
 			completed[role] = append(completed[role], results...)
 		}
 
-		log.Printf("[workflow] === %s %d/%d COMPLETE ===", unit, waveIdx+1, totalWaves)
 		if r.OnWaveComplete != nil {
 			r.OnWaveComplete(waveIdx, waveResults)
 		}
@@ -229,12 +225,8 @@ func (r *Runner) runWave(ctx context.Context, roles []string, completed map[stri
 }
 
 func (r *Runner) runRole(ctx context.Context, role string, completed map[string][]agent.TaskResult, supervisor *agent.Supervisor) []agent.TaskResult {
-	log.Printf("[workflow] Role '%s' starting execution", role)
-	startTime := time.Now()
-
 	worker, ok := r.Workers[role]
 	if !ok {
-		log.Printf("[workflow] Role '%s' FAILED: worker not found", role)
 		return []agent.TaskResult{{
 			TaskID: role + "-missing",
 			Status: agent.TaskFailed,
@@ -250,7 +242,6 @@ func (r *Runner) runRole(ctx context.Context, role string, completed map[string]
 		}
 	}
 	if spec == nil {
-		log.Printf("[workflow] Role '%s' FAILED: spec not found", role)
 		return []agent.TaskResult{{
 			TaskID: role + "-spec",
 			Status: agent.TaskFailed,
@@ -261,22 +252,12 @@ func (r *Runner) runRole(ctx context.Context, role string, completed map[string]
 	tasks := BuildRoleTasks(*spec, r.SharedState)
 	tasks = injectDependencies(tasks, completed)
 
-	log.Printf("[workflow] Role '%s' executing %d task(s)", role, len(tasks))
 	var roleResults []agent.TaskResult
-	for taskIdx, task := range tasks {
+	for _, task := range tasks {
 		// Add small delay between tasks for rate limiting.
 		time.Sleep(100 * time.Millisecond)
 
-		log.Printf("[workflow] Role '%s' task %d/%d (%s) starting...", role, taskIdx+1, len(tasks), task.ID)
-		taskStart := time.Now()
 		result := worker.Execute(ctx, task)
-		duration := time.Since(taskStart)
-
-		if result.Status == agent.TaskCompleted {
-			log.Printf("[workflow] Role '%s' task %d/%d (%s) COMPLETE (%v)", role, taskIdx+1, len(tasks), task.ID, duration)
-		} else {
-			log.Printf("[workflow] Role '%s' task %d/%d (%s) FAILED: %s (%v)", role, taskIdx+1, len(tasks), task.ID, result.Error, duration)
-		}
 
 		roleResults = append(roleResults, result)
 
@@ -289,7 +270,6 @@ func (r *Runner) runRole(ctx context.Context, role string, completed map[string]
 		}
 	}
 
-	log.Printf("[workflow] Role '%s' FINISHED (%d/%d tasks, %v)", role, len(roleResults), len(tasks), time.Since(startTime))
 	return roleResults
 }
 

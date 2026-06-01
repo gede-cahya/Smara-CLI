@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -40,22 +39,16 @@ func NewOrchestrator(supervisor *agent.Supervisor, provider llm.Provider, projec
 
 // Run executes the full workflow pipeline.
 func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult, error) {
-	startTime := time.Now()
-	log.Printf("[workflow] === WORKFLOW START === prompt=%.50q project=%s", prompt, o.ProjectDir)
-
 	// 1. Generate Blueprint
 	if o.OnProgress != nil {
 		o.OnProgress("orchestrator", "generating blueprint")
 	}
-	log.Printf("[workflow] Phase 1/4: Generating blueprint...")
-	phaseStart := time.Now()
 
 	bp, err := o.generateBlueprint(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint generation failed: %w", err)
 	}
 	o.Blueprint = bp
-	log.Printf("[workflow] Blueprint generated: %d agent(s), %v", len(bp.Agents), time.Since(phaseStart))
 
 	// Save blueprint to project dir
 	if err := o.saveBlueprint(); err != nil {
@@ -67,21 +60,16 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	if o.OnProgress != nil {
 		o.OnProgress("factory", "spawning workers")
 	}
-	log.Printf("[workflow] Phase 2/4: Spawning %d worker(s)...", len(bp.Agents))
-	phaseStart = time.Now()
 
 	workers, err := o.createWorkers(bp)
 	if err != nil {
 		return nil, fmt.Errorf("worker creation failed: %w", err)
 	}
-	log.Printf("[workflow] Workers spawned: %d worker(s), %v", len(workers), time.Since(phaseStart))
 
 	// 3. Run DAG execution
 	if o.OnProgress != nil {
 		o.OnProgress("runner", "executing steps")
 	}
-	log.Printf("[workflow] Phase 3/4: Executing DAG steps...")
-	phaseStart = time.Now()
 
 	workerMap := make(map[string]*agent.Worker)
 	for i, spec := range bp.Agents {
@@ -145,11 +133,8 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	if o.OnProgress != nil {
 		o.OnProgress("qa", "reviewing")
 	}
-	log.Printf("[workflow] Phase 4/4: QA review...")
-	phaseStart = time.Now()
 
 	qaResult := runner.RunQA(ctx, bp, allResults, o.Supervisor)
-	log.Printf("[workflow] QA review complete: %s, %v", qaResult.Status, time.Since(phaseStart))
 
 	// 5. Build result
 	parallelExecution := false
@@ -183,9 +168,6 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 
 	// Save final state
 	_ = o.SharedState.Save()
-
-	totalTime := time.Since(startTime)
-	log.Printf("[workflow] === WORKFLOW COMPLETE === total=%v status=%s agents=%d", totalTime, qaResult.Status, len(bp.Agents))
 
 	if o.OnProgress != nil {
 		o.OnProgress("done", result.FinalSummary)
