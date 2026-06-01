@@ -109,6 +109,14 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		"reasoning_effort":      s.WebSessions.providerCfg.ReasoningEffort,
 		"custom_disable_stream": s.Cfg != nil && s.Cfg.CustomDisableStream,
 	})
+	recordDirectResult := func(response string, status WebSessionStatus, errText string) {
+		if s.WebSessions == nil {
+			return
+		}
+		if err := s.WebSessions.RecordDirectResult(msg.SessionID, msg.Payload, activeMode, response, status, errText); err != nil {
+			emitLog("warn", "session_save_failed", "Gagal menyimpan response ke riwayat sesi web.", "", map[string]interface{}{"error": err.Error()})
+		}
+	}
 
 	heartbeatDone := make(chan struct{})
 	defer close(heartbeatDone)
@@ -320,13 +328,31 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		if err != nil {
 			write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 			emitLog("error", "run_error", err.Error(), "", nil)
+			recordDirectResult("", WebSessionError, err.Error())
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
 			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
 		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		emitLog("info", "run_complete", "Custom workflow selesai.", "", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
+		recordDirectResult(response, WebSessionCompleted, "")
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: response})
+		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
+		return
+	}
+	if response, handled, err := s.tryCreateCustomWorkflowPrompt(msg.Payload); handled {
+		if err != nil {
+			write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
+			emitLog("error", "run_error", err.Error(), "", nil)
+			recordDirectResult("", WebSessionError, err.Error())
+			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
+			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
+			return
+		}
+		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
+		emitLog("info", "run_complete", "Custom workflow berhasil dibuat.", "", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
+		recordDirectResult(response, WebSessionCompleted, "")
+		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: response, RequestPrompt: msg.Payload})
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
 	}
@@ -337,12 +363,14 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		if err != nil {
 			emitLog("error", "run_error", err.Error(), "browser_run", nil)
+			recordDirectResult("", WebSessionError, err.Error())
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: err.Error()})
 			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
 		emitLog("info", "browser_test_done", "Browser test selesai.", "browser_run", map[string]interface{}{"output_chars": len(output)})
 		write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: output})
+		recordDirectResult(output, WebSessionCompleted, "")
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: output})
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
@@ -359,12 +387,14 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		if err != nil {
 			emitLog("error", "run_error", err.Error(), "agent_swarm_workflow", nil)
+			recordDirectResult("", WebSessionError, err.Error())
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: fmt.Sprintf("Agent Swarm Workflow gagal: %v", err)})
 			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
 		payload := formatAgentSwarmCompletion(result, time.Since(runStarted))
 		emitLog("info", "run_complete", "Agent Swarm Workflow selesai.", "agent_swarm_workflow", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
+		recordDirectResult(payload, WebSessionCompleted, "")
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: payload, RequestPrompt: msg.Payload})
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return
@@ -381,12 +411,14 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "false"})
 		if err != nil {
 			emitLog("error", "run_error", err.Error(), "parallel_orchestration", nil)
+			recordDirectResult("", WebSessionError, err.Error())
 			write(wsMessage{Type: "error", SessionID: msg.SessionID, Payload: fmt.Sprintf("auto parallel orchestration gagal: %v", err)})
 			write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 			return
 		}
 		payload := formatAutoParallelCompletion(result, time.Since(runStarted))
 		emitLog("info", "run_complete", "Auto parallel orchestration selesai.", "parallel_orchestration", map[string]interface{}{"duration_ms": time.Since(runStarted).Milliseconds()})
+		recordDirectResult(payload, WebSessionCompleted, "")
 		write(wsMessage{Type: "chat", SessionID: msg.SessionID, Payload: payload, RequestPrompt: msg.Payload})
 		write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 		return

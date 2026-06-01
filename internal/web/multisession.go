@@ -421,6 +421,29 @@ func (m *WebSessionManager) Cancel(id string) error {
 	return m.Save()
 }
 
+func (m *WebSessionManager) RecordDirectResult(id, prompt, mode, response string, status WebSessionStatus, errText string) error {
+	s, ok := m.Get(id)
+	if !ok {
+		s = m.Create("Session "+time.Now().Format("15:04"), mode)
+	}
+	now := time.Now()
+	s.mu.Lock()
+	if mode != "" {
+		s.Mode = mode
+	}
+	s.Status = status
+	s.Error = errText
+	if strings.TrimSpace(prompt) != "" {
+		s.History = append(s.History, WebChatMessage{Role: "user", Content: prompt, Timestamp: now})
+	}
+	if strings.TrimSpace(response) != "" {
+		s.History = append(s.History, WebChatMessage{Role: "assistant", Content: response, Timestamp: now})
+	}
+	s.UpdatedAt = now
+	s.mu.Unlock()
+	return m.Save()
+}
+
 func (m *WebSessionManager) Run(ctx context.Context, id, prompt, mode string, cb agent.AgenticCallback) (*agent.PromptResult, error) {
 	s, ok := m.Get(id)
 	if !ok {

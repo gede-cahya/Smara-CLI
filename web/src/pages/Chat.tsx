@@ -1829,9 +1829,13 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             lastMessage: 'Response final diterima.',
             currentTool: undefined,
           } : prev)
-          const parsed = parsePlanQuest(String(msg.payload || ''))
+          const payloadText = String(msg.payload || '')
+          const parsed = parsePlanQuest(payloadText)
           setActivePlanQuest(parsed.quest)
-          const content = (parsed.cleanContent || (parsed.quest ? '' : msg.payload) || streamBufferRef.current).trim()
+          const contentSource = parsed.cleanContent.trim()
+            ? parsed.cleanContent
+            : (!parsed.quest && payloadText.trim() ? payloadText : streamBufferRef.current)
+          const content = contentSource.trim()
           if (content.trim()) {
             markAutoScrollIfNearBottom()
             const finalMessage: ChatMessage = {
@@ -1906,7 +1910,23 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             appendThinkingAnalysis(chunk)
             break
           }
+          const wasStreaming = streamingAssistantRef.current
           streamBufferRef.current += chunk
+          streamingAssistantRef.current = true
+          markAutoScrollIfNearBottom()
+          setMessages(prev => {
+            const next = [...prev]
+            if (wasStreaming) {
+              for (let i = next.length - 1; i >= 0; i--) {
+                if (next[i].role === 'assistant') {
+                  next[i] = { ...next[i], content: streamBufferRef.current, timestamp: new Date() }
+                  return capRuntimeMessages(next)
+                }
+              }
+            }
+            next.push({ role: 'assistant', content: streamBufferRef.current, timestamp: new Date() })
+            return capRuntimeMessages(next)
+          })
           if (!generatingPhaseActiveRef.current) {
             generatingPhaseActiveRef.current = true
             // Saat token jawaban mulai mengalir, pastikan panel proses menampilkan
@@ -2128,6 +2148,19 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           if (msg.session_id === sessionIdRef.current) {
             setCurrentRaw(c => ({ ...c, status: msg.payload as WebSessionStatus }))
             if (msg.payload === 'completed' || msg.payload === 'cancelled' || msg.payload === 'error') {
+              if (streamingAssistantRef.current && streamBufferRef.current.trim()) {
+                const content = streamBufferRef.current.trim()
+                setMessages(prev => {
+                  const next = [...prev]
+                  for (let i = next.length - 1; i >= 0; i--) {
+                    if (next[i].role === 'assistant') {
+                      next[i] = { ...next[i], content, timestamp: new Date() }
+                      return capRuntimeMessages(next)
+                    }
+                  }
+                  return capRuntimeMessages([...next, { role: 'assistant', content, timestamp: new Date() }])
+                })
+              }
               setThinking(false)
               setActivePhases([])
               setRunStatus(prev => prev ? {

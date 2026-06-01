@@ -32,3 +32,20 @@ func TestWebSessionManagerCopiesMCPConnectionsToSessionSupervisor(t *testing.T) 
 	require.Len(t, info["obsidian"].Tools, 1)
 	require.Equal(t, "obsidian_update_note", info["obsidian"].Tools[0].Name)
 }
+
+func TestWebSessionManagerRecordDirectResultPersistsWorkflowResponse(t *testing.T) {
+	manager := NewWebSessionManager(nil, llm.ProviderConfig{}, nil, "default", 1, 0, filepath.Join(t.TempDir(), "sessions.json"))
+	session := manager.Create("Workflow", string(agent.ModeWorkflow))
+
+	err := manager.RecordDirectResult(session.ID, "jalankan workflow release", string(agent.ModeWorkflow), "workflow selesai", WebSessionCompleted, "")
+	require.NoError(t, err)
+
+	dto, ok := manager.GetCompact(session.ID, 10)
+	require.True(t, ok)
+	require.Equal(t, WebSessionCompleted, dto.Status)
+	require.Len(t, dto.History, 3)
+	require.Equal(t, "user", dto.History[1].Role)
+	require.Equal(t, "jalankan workflow release", dto.History[1].Content)
+	require.Equal(t, "assistant", dto.History[2].Role)
+	require.Equal(t, "workflow selesai", dto.History[2].Content)
+}
