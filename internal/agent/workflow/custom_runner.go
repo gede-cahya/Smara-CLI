@@ -26,6 +26,8 @@ type CustomWorkflowProgress struct {
 	OnWaveStart      func(wave int, roles []string)
 	OnWaveComplete   func(wave int, results map[string][]agent.TaskResult)
 	OnRoleStart      func(role string)
+	OnTaskStart      func(role string, task agent.Task)
+	OnTaskStream     func(role, taskID, chunk string, isThinking bool)
 	OnTaskComplete   func(role, taskID string, result agent.TaskResult)
 }
 
@@ -99,6 +101,16 @@ func RunCustomWorkflowWithProgressMode(supervisor *agent.Supervisor, provider ll
 		runner.OnWaveComplete = func(wave int, results map[string][]agent.TaskResult) {
 			if progress.OnWaveComplete != nil {
 				progress.OnWaveComplete(wave, results)
+			}
+		}
+		runner.OnTaskStart = func(role string, task agent.Task) {
+			if progress.OnTaskStart != nil {
+				progress.OnTaskStart(role, task)
+			}
+		}
+		runner.OnTaskStream = func(role, taskID, chunk string, isThinking bool) {
+			if progress.OnTaskStream != nil {
+				progress.OnTaskStream(role, taskID, chunk, isThinking)
 			}
 		}
 		runner.OnTaskComplete = func(role, taskID string, result agent.TaskResult) {

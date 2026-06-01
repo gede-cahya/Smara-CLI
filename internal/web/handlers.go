@@ -762,6 +762,33 @@ func (s *Server) runResolvedCustomWorkflowWithProgress(item customWorkflowMatch,
 				onProgress("role_start", fmt.Sprintf("Role %s mulai", role), role, "", nil)
 			}
 		},
+		OnTaskStart: func(role string, task agent.Task) {
+			if onProgress == nil {
+				return
+			}
+			details := map[string]interface{}{
+				"task_id":     task.ID,
+				"task_type":   task.Type,
+				"description": truncateWorkflowDetail(strings.TrimSpace(task.Description), 2000),
+			}
+			if task.MCPServer != "" || task.ToolName != "" {
+				details["mcp_server"] = task.MCPServer
+				details["tool_name"] = task.ToolName
+				if task.ToolArgs != nil {
+					details["tool_args"] = task.ToolArgs
+				}
+			}
+			onProgress("task_start", fmt.Sprintf("%s mulai: %s", role, task.ID), role, task.ID, details)
+		},
+		OnTaskStream: func(role, taskID, chunk string, isThinking bool) {
+			if onProgress == nil || chunk == "" {
+				return
+			}
+			onProgress("task_stream", chunk, role, taskID, map[string]interface{}{
+				"is_thinking": isThinking,
+				"chunk_chars": len(chunk),
+			})
+		},
 		OnTaskComplete: func(role, taskID string, taskResult agent.TaskResult) {
 			duration := time.Duration(0)
 			if start := started[role]; !start.IsZero() {
@@ -809,7 +836,7 @@ func findCustomWorkflowTask(cw *workflow.CustomWorkflow, role, taskID string) (w
 			continue
 		}
 		for _, task := range agent.Tasks {
-			if task.ID == taskID {
+			if task.ID == taskID || strings.TrimPrefix(taskID, role+"-") == task.ID {
 				return task, true
 			}
 		}

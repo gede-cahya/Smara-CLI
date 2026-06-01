@@ -309,11 +309,11 @@ function ToolCallCard({
   return (
     <div className={`ml-11 max-w-4xl rounded-2xl border ${accent} overflow-hidden shadow-lg shadow-black/20 backdrop-blur-sm`}>
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2">
+      <div className="flex items-center gap-2.5 px-4 py-3">
         <button
           onClick={onToggle}
           disabled={!hasBody}
-          className="text-gray-400 hover:text-white transition-colors disabled:opacity-40"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-[#26331d]/80 hover:text-white disabled:opacity-40"
           aria-label={collapsed ? 'Expand' : 'Collapse'}
         >
           {!hasBody ? (
@@ -327,10 +327,10 @@ function ToolCallCard({
         <Icon className={`w-3.5 h-3.5 ${titleColor} shrink-0`} />
         <span className={`text-xs font-medium ${titleColor}`}>{title}</span>
         {msg.server && (
-          <span className="text-[10px] text-neutral-400 font-mono">[{msg.server}]</span>
+          <span className="rounded-md bg-[#1a2314]/70 px-1.5 py-0.5 text-[10px] text-neutral-400 font-mono">[{msg.server}]</span>
         )}
         {subtitle && (
-          <span className="text-xs text-gray-300 font-mono truncate flex-1 min-w-0" title={subtitle}>
+          <span className="text-xs text-gray-300 font-mono truncate flex-1 min-w-0 leading-5" title={subtitle}>
             {subtitle}
           </span>
         )}
@@ -367,14 +367,14 @@ function ToolCallCard({
 
       {/* Body — terminal-style stream + final result */}
       {!collapsed && hasBody && (
-        <div className="border-t border-[#223018]/75 bg-[#1a2314]/65 px-3 py-2 max-h-72 overflow-y-auto font-mono text-[11px] leading-snug">
+        <div className="border-t border-[#223018]/75 bg-[#172211]/72 px-4 py-4 max-h-80 overflow-y-auto font-mono text-[12px] leading-6 sm:px-5">
           {logs.length > 0 && (
-            <pre className="whitespace-pre-wrap text-gray-200">
+            <pre className="m-0 whitespace-pre-wrap break-words text-gray-200 [tab-size:2]">
               {logs.join('\n')}
             </pre>
           )}
           {hasOutput && logs.length === 0 && (
-            <pre className="whitespace-pre-wrap text-gray-300">
+            <pre className="m-0 whitespace-pre-wrap break-words text-gray-300 [tab-size:2]">
               {(msg.output || '').slice(0, 4000)}
               {(msg.output || '').length > 4000 && (
                 <span className="text-neutral-400">{`\n[... ${(msg.output || '').length - 4000} chars truncated ...]`}</span>
@@ -386,7 +386,7 @@ function ToolCallCard({
               <summary className="cursor-pointer text-[10px] text-neutral-400 hover:text-gray-300">
                 full result ({msg.output.length} chars)
               </summary>
-              <pre className="mt-1 whitespace-pre-wrap">{msg.output}</pre>
+              <pre className="m-0 mt-2 whitespace-pre-wrap break-words leading-6 [tab-size:2]">{msg.output}</pre>
             </details>
           )}
           {imageUrls.length > 0 && (
@@ -1249,6 +1249,7 @@ const SESSION_LIST_HISTORY_LIMIT = 1
 const SESSION_VIEW_HISTORY_LIMIT = 60
 // const MAX_RUNTIME_OUTPUT_CHARS = 20_000 // reserved for future use
 const MAX_RUNTIME_LOG_LINES = 120
+const MAX_RUNTIME_LOG_CHARS = 40_000
 const MAX_ANALYSIS_EVENTS = 18
 const MAX_ANALYSIS_DETAIL_CHARS = 1800
 
@@ -1277,6 +1278,9 @@ export function slimMessage(m: ChatMessage): ChatMessage {
     const dropped = out.logs.length - MAX_LOG_LINES
     out.logs = [`[... ${dropped} earlier lines truncated for storage ...]`, ...out.logs.slice(-MAX_LOG_LINES)]
   }
+  if (out.logs) {
+    out.logs = out.logs.map(capRuntimeLogText)
+  }
   return out
 }
 
@@ -1289,6 +1293,18 @@ function capRuntimeLogs(logs: string[]): string[] {
   if (logs.length <= MAX_RUNTIME_LOG_LINES) return logs
   const dropped = logs.length - MAX_RUNTIME_LOG_LINES
   return [`[... ${dropped} earlier live lines truncated ...]`, ...logs.slice(-MAX_RUNTIME_LOG_LINES)]
+}
+
+function capRuntimeLogText(text: string): string {
+  if (text.length <= MAX_RUNTIME_LOG_CHARS) return text
+  return `[... ${text.length - MAX_RUNTIME_LOG_CHARS} earlier chars truncated ...]\n${text.slice(-MAX_RUNTIME_LOG_CHARS)}`
+}
+
+function appendRuntimeLog(logs: string[], chunk: string, appendToLast: boolean): string[] {
+  if (!appendToLast || logs.length === 0) return capRuntimeLogs([...logs, chunk])
+  const next = [...logs]
+  next[next.length - 1] = capRuntimeLogText(`${next[next.length - 1]}${chunk}`)
+  return capRuntimeLogs(next)
 }
 
 function capAnalysisDetail(detail: string): string {
@@ -2134,7 +2150,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             if ((msg.role === 'Terminal' || msg.role === 'terminal') && msg.payload !== undefined) {
               for (let i = next.length - 1; i >= 0; i--) {
                 if (next[i].role === 'tool_call' && next[i].status === 'running') {
-                  const logs = capRuntimeLogs([...(next[i].logs || []), String(msg.payload)])
+                  const appendToLast = Boolean(msg.args?.stream_append) || msg.args?.event === 'task_stream' || next[i].tool === 'workflow_task'
+                  const logs = appendRuntimeLog(next[i].logs || [], String(msg.payload), appendToLast)
                   next[i] = { ...next[i], logs }
                   return capRuntimeMessages(next)
                 }

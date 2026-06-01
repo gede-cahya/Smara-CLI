@@ -24,6 +24,8 @@ type Runner struct {
 	// Callbacks for TUI progress
 	OnWaveStart    func(wave int, roles []string)
 	OnWaveComplete func(wave int, results map[string][]agent.TaskResult)
+	OnTaskStart    func(role string, task agent.Task)
+	OnTaskStream   func(role, taskID, chunk string, isThinking bool)
 	OnTaskComplete func(role, taskID string, result agent.TaskResult)
 }
 
@@ -257,7 +259,17 @@ func (r *Runner) runRole(ctx context.Context, role string, completed map[string]
 		// Add small delay between tasks for rate limiting.
 		time.Sleep(100 * time.Millisecond)
 
-		result := worker.Execute(ctx, task)
+		if r.OnTaskStart != nil {
+			r.OnTaskStart(role, task)
+		}
+
+		result := worker.ExecuteWithCallback(ctx, task, &agent.WorkerCallback{
+			OnStream: func(chunk string, isThinking bool) {
+				if r.OnTaskStream != nil {
+					r.OnTaskStream(role, task.ID, chunk, isThinking)
+				}
+			},
+		})
 
 		roleResults = append(roleResults, result)
 

@@ -85,6 +85,29 @@ func TestCustomWorkflowExecutionPlanIgnoresParallelRequest(t *testing.T) {
 	}
 }
 
+func TestFindCustomWorkflowTaskMatchesRunnerPrefixedTaskID(t *testing.T) {
+	cw := &workflow.CustomWorkflow{
+		Name: "prefixed-task",
+		Agents: []workflow.CustomAgent{{
+			Role: "release",
+			Tasks: []workflow.Task{{
+				ID:        "upload",
+				Type:      "mcp",
+				MCPServer: "github",
+				ToolName:  "create_release",
+			}},
+		}},
+	}
+
+	task, ok := findCustomWorkflowTask(cw, "release", "release-upload")
+	if !ok {
+		t.Fatal("findCustomWorkflowTask() ok=false; want true")
+	}
+	if task.ToolName != "create_release" {
+		t.Fatalf("findCustomWorkflowTask() ToolName = %q; want create_release", task.ToolName)
+	}
+}
+
 func TestExtractCustomWorkflowCreateName(t *testing.T) {
 	cases := map[string]string{
 		"buat custom workflow spamload discover logic nanti kau rangkum range":        "spamload-discover-logic",

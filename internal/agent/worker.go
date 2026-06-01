@@ -18,6 +18,10 @@ type Worker struct {
 	SystemPrompt string
 }
 
+type WorkerCallback struct {
+	OnStream func(chunk string, isThinking bool)
+}
+
 // NewWorker creates a new worker agent.
 func NewWorker(provider llm.Provider, mcpClients map[string]*mcp.Client) *Worker {
 	return &Worker{
@@ -39,6 +43,11 @@ func NewSpecializedWorker(provider llm.Provider, mcpClients map[string]*mcp.Clie
 
 // Execute runs a task and returns the result.
 func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
+	return w.ExecuteWithCallback(ctx, task, nil)
+}
+
+// ExecuteWithCallback runs a task and emits optional live progress for LLM-backed work.
+func (w *Worker) ExecuteWithCallback(ctx context.Context, task Task, cb *WorkerCallback) TaskResult {
 	// Check if task requires MCP or builtin tool call.
 	if task.MCPServer != "" || task.ToolName != "" {
 		if task.MCPServer == builtinMCPServerName {
@@ -77,7 +86,7 @@ func (w *Worker) Execute(ctx context.Context, task Task) TaskResult {
 	}
 
 	// Otherwise, use LLM to execute the task.
-	return w.executeLLMTask(ctx, task)
+	return w.executeLLMTask(ctx, task, cb)
 }
 
 func (w *Worker) executeBuiltinTask(task Task) TaskResult {
@@ -136,7 +145,7 @@ func (w *Worker) executeMCPTask(ctx context.Context, task Task) TaskResult {
 }
 
 // executeLLMTask runs a task using only the LLM.
-func (w *Worker) executeLLMTask(ctx context.Context, task Task) TaskResult {
+func (w *Worker) executeLLMTask(ctx context.Context, task Task, cb *WorkerCallback) TaskResult {
 	systemPrompt := "Kamu adalah worker agent yang bertugas menyelesaikan satu tugas spesifik dengan tepat."
 	if w.SystemPrompt != "" {
 		systemPrompt = w.SystemPrompt
@@ -153,7 +162,64 @@ func (w *Worker) executeLLMTask(ctx context.Context, task Task) TaskResult {
 		},
 	}
 
-	resp, err := w.provider.Chat(messages)
+	streamCb := func(chunk string, isThinking bool, _ llm.PhaseHint) {
+		if cb != nil && cb.OnStream != nil {
+			cb.OnStream(chunk, isThinking)
+		}
+	}
+	if streamer, ok := w.provider.(llm.ContextStreamer); ok {
+		resp, err := streamer.ChatStreamWithContext(ctx, messages, streamCb)
+		if err != nil {
+			return TaskResult{
+				TaskID: task.ID,
+				Status: TaskFailed,
+				Error:  fmt.Sprintf("gagal mendapatkan response: %v", err),
+			}
+		}
+		return TaskResult{
+			TaskID: task.ID,
+			Status: TaskCompleted,
+			Output: resp.Content,
+		}
+	}
+	if streamer, ok := w.provider.(llm.Streamer); ok {
+		resp, err := streamer.ChatStream(messages, streamCb)
+		if err != nil {
+			return TaskResult{
+				TaskID: task.ID,
+				Status: TaskFailed,
+				Error:  fmt.Sprintf("gagal mendapatkan response: %v", err),
+			}
+		}
+		return TaskResult{
+			TaskID: task.ID,
+			Status: TaskCompleted,
+			Output: resp.Content,
+		}
+	}
+
+	type chatResult struct {
+		resp *llm.ChatResponse
+		err  error
+	}
+	done := make(chan chatResult, 1)
+	go func() {
+		resp, err := w.provider.Chat(messages)
+		done <- chatResult{resp: resp, err: err}
+	}()
+
+	var resp *llm.ChatResponse
+	var err error
+	select {
+	case out := <-done:
+		resp, err = out.resp, out.err
+	case <-ctx.Done():
+		return TaskResult{
+			TaskID: task.ID,
+			Status: TaskFailed,
+			Error:  fmt.Sprintf("gagal mendapatkan response: %v", ctx.Err()),
+		}
+	}
 	if err != nil {
 		return TaskResult{
 			TaskID: task.ID,

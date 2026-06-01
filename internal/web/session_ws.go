@@ -307,22 +307,70 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	}
 
 	if response, handled, err := s.tryRunCustomWorkflowPromptWithProgress(msg.Payload, func(event, message, role, taskID string, details map[string]interface{}) {
-		touch("custom_workflow")
-		if event == "task_complete" && details != nil {
+		if event == "task_stream" {
+			touch("task_stream")
+			chunk := strings.TrimRight(message, "\r\n")
+			if chunk != "" {
+				write(wsMessage{
+					Type:      "log",
+					SessionID: msg.SessionID,
+					Payload:   chunk,
+					Role:      "Terminal",
+					Args: map[string]interface{}{
+						"event":         "task_stream",
+						"stream_append": true,
+					},
+				})
+			}
+			return
+		}
+		touch(event)
+		if details == nil {
+			details = map[string]interface{}{}
+		}
+		level := "info"
+		if event == "task_complete" {
+			if errText, _ := details["error"].(string); strings.TrimSpace(errText) != "" {
+				level = "error"
+			}
+		}
+		emitLog(level, event, message, "custom_workflow", details)
+		switch event {
+		case "blueprint_ready":
+			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: "Workflow", Description: message})
+		case "step_start", "step_complete":
+			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: "Workflow Step", Description: message})
+		case "role_start":
+			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: role, Description: message})
+		case "task_start":
 			toolName, _ := details["tool_name"].(string)
 			server, _ := details["mcp_server"].(string)
-			if toolName != "" || server != "" {
-				args, _ := details["tool_args"].(map[string]interface{})
-				if toolName == "" {
-					toolName = taskID
-				}
-				write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: server, Tool: toolName, Args: args})
-				output, _ := details["output"].(string)
-				if output == "" {
-					output, _ = details["error"].(string)
-				}
-				write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: s.rewriteGeneratedImageLinks(output)})
+			if toolName == "" {
+				toolName = "workflow_task"
 			}
+			if server == "" {
+				server = "smara"
+			}
+			args := map[string]interface{}{
+				"role":        role,
+				"task_id":     taskID,
+				"type":        details["task_type"],
+				"description": details["description"],
+			}
+			if rawArgs, ok := details["tool_args"].(map[string]interface{}); ok {
+				args["args"] = rawArgs
+			}
+			write(wsMessage{Type: "phase", SessionID: msg.SessionID, Phase: "Workflow Task", Description: message})
+			write(wsMessage{Type: "tool_call", SessionID: msg.SessionID, Server: server, Tool: toolName, Args: args})
+		case "task_complete":
+			output, _ := details["output"].(string)
+			if strings.TrimSpace(output) == "" {
+				output, _ = details["error"].(string)
+			}
+			if strings.TrimSpace(output) == "" {
+				output = message
+			}
+			write(wsMessage{Type: "tool_result", SessionID: msg.SessionID, Output: s.rewriteGeneratedImageLinks(output)})
 		}
 	}); handled {
 		if err != nil {
