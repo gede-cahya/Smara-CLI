@@ -147,6 +147,47 @@ func TestBuildPromptCustomWorkflowForLogoUsesGenerateImageTool(t *testing.T) {
 	}
 }
 
+func TestBuildPromptCustomWorkflowUsesTypedNodes(t *testing.T) {
+	cw := buildPromptCustomWorkflow("release-loop", "buat custom workflow release loop dengan tools skill memory agent dan retry loop")
+
+	roles := map[string]workflow.CustomAgent{}
+	for _, a := range cw.Agents {
+		roles[a.Role] = a
+		for _, task := range a.Tasks {
+			if task.Type == "" {
+				t.Fatalf("task %s/%s Type empty; want explicit task type", a.Role, task.ID)
+			}
+		}
+	}
+
+	if _, ok := roles["workflow-agent"]; !ok {
+		t.Fatalf("generated workflow missing workflow-agent: %#v", cw.Agents)
+	}
+	if roles["memory-context"].Memory == nil {
+		t.Fatalf("generated workflow missing memory node config: %#v", roles["memory-context"])
+	}
+	if roles["loop-controller"].Loop == nil {
+		t.Fatalf("generated workflow missing loop node config: %#v", roles["loop-controller"])
+	}
+	hasSkill := false
+	for _, sk := range roles["skill-router"].Skills {
+		if sk == "skill" {
+			hasSkill = true
+			break
+		}
+	}
+	if !hasSkill {
+		t.Fatalf("generated workflow missing skill node: %#v", roles["skill-router"])
+	}
+	tool := roles["tool-runner"]
+	if len(tool.Tasks) != 1 || tool.Tasks[0].MCPServer != "builtin" || tool.Tasks[0].ToolName != "run_command" {
+		t.Fatalf("generated tool node is not executable builtin run_command: %#v", tool)
+	}
+	if tool.Tasks[0].ToolArgs["command"] == "" {
+		t.Fatalf("generated tool node command empty: %#v", tool.Tasks[0])
+	}
+}
+
 func TestFindCustomWorkflowByAgentRole(t *testing.T) {
 	cfg := config.Get()
 	oldDBPath := cfg.DBPath

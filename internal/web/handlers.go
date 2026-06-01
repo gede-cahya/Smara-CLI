@@ -1119,18 +1119,163 @@ func buildPromptCustomWorkflow(name, prompt string) *workflow.CustomWorkflow {
 	if isLogoImageWorkflowPrompt(prompt) {
 		return buildLogoImageCustomWorkflow(name, prompt)
 	}
+	return buildTypedPromptCustomWorkflow(name, prompt)
+}
+
+type promptWorkflowFeatures struct {
+	tool   bool
+	skill  bool
+	memory bool
+	loop   bool
+}
+
+func detectPromptWorkflowFeatures(prompt string) promptWorkflowFeatures {
+	p := strings.ToLower(prompt)
+	containsAny := func(words ...string) bool {
+		for _, word := range words {
+			if strings.Contains(p, word) {
+				return true
+			}
+		}
+		return false
+	}
+	return promptWorkflowFeatures{
+		tool:   containsAny("tool", "tools", "command", "terminal", "shell", "jalankan", "run ", "execute", "eksekusi", "build", "test", "deploy", "release", "publish", "upload", "github", "git ", "npm", "go test", "docker"),
+		skill:  containsAny("skill", "skills", "kemampuan", "spesialisasi", "agent spesialis"),
+		memory: containsAny("memory", "memori", "ingat", "context", "konteks", "riwayat"),
+		loop:   containsAny("loop", "ulang", "mengulang", "pengulangan", "retry", "interval", "for each", "foreach", "sampai berhasil", "until success"),
+	}
+}
+
+func buildTypedPromptCustomWorkflow(name, prompt string) *workflow.CustomWorkflow {
+	features := detectPromptWorkflowFeatures(prompt)
+	agents := []workflow.CustomAgent{
+		{
+			Role:        "master",
+			Description: "Agent node orkestrator. Menangkap tujuan, scope, guardrail, dan routing node typed dari prompt utama.",
+			Skills:      []string{"orchestrator", "agent"},
+			Tasks: []workflow.Task{{
+				ID:          "intake",
+				Type:        "llm",
+				Description: "Baca prompt utama berikut, tetapkan tujuan workflow, acceptance criteria, batasan aman, dan node yang harus dijalankan: " + prompt,
+			}},
+		},
+	}
+	lastRole := "master"
+	if features.memory {
+		agents = append(agents, workflow.CustomAgent{
+			Role:        "memory-context",
+			Description: "Memory node untuk mengambil konteks workspace yang relevan sebelum agent/tool berjalan.",
+			Skills:      []string{"memory"},
+			Tasks: []workflow.Task{{
+				ID:          "load-context",
+				Type:        "llm",
+				Description: "Gunakan hasil memory hydration sebagai konteks workflow. Ringkas memori yang relevan dan guardrail yang harus dipakai.",
+			}},
+			DependsOn:  []string{lastRole},
+			InputsFrom: map[string][]string{lastRole: {"intake"}},
+			Memory:     &workflow.MemoryNodeConfig{Action: "search", Query: prompt, Limit: 5},
+		})
+		lastRole = "memory-context"
+	}
+	if features.skill {
+		agents = append(agents, workflow.CustomAgent{
+			Role:        "skill-router",
+			Description: "Skill node untuk memilih skill yang relevan dan menerjemahkannya menjadi instruksi kerja konkret.",
+			Skills:      []string{"skill", "skill-audit", "planning"},
+			Tasks: []workflow.Task{{
+				ID:          "map-skills",
+				Type:        "llm",
+				Description: "Petakan skill yang diperlukan untuk prompt ini, skill yang sudah cocok, gap skill, dan instruksi penggunaan skill per node.",
+			}},
+			DependsOn:  []string{lastRole},
+			InputsFrom: map[string][]string{lastRole: {"intake", "load-context"}},
+		})
+		lastRole = "skill-router"
+	}
+	agents = append(agents, workflow.CustomAgent{
+		Role:        "workflow-agent",
+		Description: "Agent node utama yang melakukan reasoning dan menyusun rencana eksekusi berdasarkan master, memory, dan skill.",
+		Skills:      []string{"agent", "planning", "execution-plan"},
+		Tasks: []workflow.Task{{
+			ID:          "plan",
+			Type:        "llm",
+			Description: "Susun rencana kerja konkret untuk menjalankan tujuan workflow. Jika ada tool node, hasilkan parameter dan urutan command yang aman.",
+		}},
+		DependsOn:  []string{lastRole},
+		InputsFrom: map[string][]string{lastRole: {"intake", "load-context", "map-skills"}},
+	})
+	lastRole = "workflow-agent"
+	if features.loop {
+		agents = append(agents, workflow.CustomAgent{
+			Role:        "loop-controller",
+			Description: "Loop node dengan guard eksplisit. Dipakai untuk pengulangan terbatas, retry, interval, atau evaluasi sampai kondisi terpenuhi.",
+			Skills:      []string{"loop", "control-flow"},
+			Tasks: []workflow.Task{{
+				ID:          "guard",
+				Type:        "llm",
+				Description: "Tentukan kondisi berhenti, guard keamanan, dan cara mengevaluasi hasil tiap iterasi sebelum node berikutnya berjalan.",
+			}},
+			DependsOn:  []string{lastRole},
+			InputsFrom: map[string][]string{lastRole: {"plan"}},
+			Loop:       &workflow.LoopNodeConfig{Mode: "count", MaxIterations: 3, DelayMs: 1000, TimeoutMs: 0, OnError: "stop"},
+		})
+		lastRole = "loop-controller"
+	}
+	if features.tool {
+		agents = append(agents, workflow.CustomAgent{
+			Role:        "tool-runner",
+			Description: "Tool node executable. Jalankan aksi eksternal melalui builtin run_command agar Smara Web menampilkan live tool_call/tool_result.",
+			Skills:      []string{"tool", "terminal", "run_command"},
+			Tasks: []workflow.Task{{
+				ID:          "run",
+				Type:        "mcp",
+				Description: "Jalankan command awal yang aman untuk workflow ini. Edit tool_args.command di Node Builder untuk command produksi spesifik.",
+				MCPServer:   "builtin",
+				ToolName:    "run_command",
+				ToolArgs: map[string]interface{}{
+					"command": generatedWorkflowToolCommand(name, prompt),
+				},
+			}},
+			DependsOn:  []string{lastRole},
+			InputsFrom: map[string][]string{lastRole: {"plan", "guard"}},
+		})
+		lastRole = "tool-runner"
+	}
+	agents = append(agents, workflow.CustomAgent{
+		Role:        "final-agent",
+		Description: "Agent node finalizer. Mengompilasi output agent/tool/memory/loop menjadi laporan akhir yang actionable.",
+		Skills:      []string{"agent", "reporting", "qa"},
+		Tasks: []workflow.Task{{
+			ID:          "final",
+			Type:        "llm",
+			Description: "Buat laporan final Markdown: apa yang dijalankan, output penting, risiko, status acceptance criteria, dan next action.",
+		}},
+		DependsOn:  []string{lastRole},
+		InputsFrom: map[string][]string{lastRole: {"run", "plan", "guard"}},
+	})
 	return &workflow.CustomWorkflow{
 		Name:        name,
 		Description: prompt,
-		Agents: []workflow.CustomAgent{
-			{Role: "master", Description: "Orkestrator workflow dari prompt utama. Pecah tujuan menjadi scope, batasan, agent route, dan acceptance criteria.", Skills: []string{"orchestrator"}, Tasks: []workflow.Task{{ID: "intake", Description: "Baca prompt utama berikut, tetapkan tujuan workflow, asumsi, batasan aman, dan urutan kerja: " + prompt}}},
-			{Role: "discover-logic", Description: "Agent discovery yang memetakan logic, alur keputusan, input/output, dan dependency penting.", Skills: []string{"analysis", "workflow"}, Tasks: []workflow.Task{{ID: "discover", Description: "Temukan logic inti, aktor, data/input, output, dependency, dan area yang perlu diverifikasi dari prompt master."}}, DependsOn: []string{"master"}, InputsFrom: map[string][]string{"master": {"intake"}}},
-			{Role: "range-summarizer", Description: "Agent yang merangkum range/scope dan batasan agar workflow tidak melebar ke hal generik.", Skills: []string{"planning", "scope"}, Tasks: []workflow.Task{{ID: "range", Description: "Ringkas range kerja, prioritas, out-of-scope, dan guardrail eksekusi."}}, DependsOn: []string{"discover-logic"}, InputsFrom: map[string][]string{"discover-logic": {"discover"}}},
-			{Role: "skill-fit-auditor", Description: "Agent yang menilai skill/tool yang cocok, yang terlalu generik, dan gap kemampuan.", Skills: []string{"skill-audit", "evaluation"}, Tasks: []workflow.Task{{ID: "fit", Description: "Petakan skill yang dibutuhkan, skill yang fit, skill yang terlalu generik, dan rekomendasi perbaikan instruction."}}, DependsOn: []string{"discover-logic"}, InputsFrom: map[string][]string{"discover-logic": {"discover"}}},
-			{Role: "weakness-auditor", Description: "Agent kritik yang mencari kelemahan workflow, ambiguity, edge case, dan risiko salah routing.", Skills: []string{"risk", "review"}, Tasks: []workflow.Task{{ID: "weakness", Description: "Jelaskan kelemahan, failure mode, ambiguity, risiko over-generic, dan mitigasi praktis."}}, DependsOn: []string{"range-summarizer", "skill-fit-auditor"}, InputsFrom: map[string][]string{"range-summarizer": {"range"}, "skill-fit-auditor": {"fit"}}},
-			{Role: "report-writer", Description: "Agent finalizer yang mengompilasi hasil menjadi laporan actionable.", Skills: []string{"reporting"}, Tasks: []workflow.Task{{ID: "final", Description: "Buat laporan final Markdown: ringkasan logic, range/scope, skill fit, kelemahan, rekomendasi, dan next actions."}}, DependsOn: []string{"weakness-auditor"}, InputsFrom: map[string][]string{"weakness-auditor": {"weakness"}}},
-		},
+		Agents:      agents,
 	}
+}
+
+func generatedWorkflowToolCommand(name, prompt string) string {
+	return strings.Join([]string{
+		"set -e",
+		"echo " + shellSingleQuote("== Smara generated workflow tool node =="),
+		"echo " + shellSingleQuote("workflow="+name),
+		"echo " + shellSingleQuote("prompt="+prompt),
+		"echo " + shellSingleQuote("Edit tool_args.command di Custom Workflow Node Builder untuk command produksi spesifik."),
+	}, "\n")
+}
+
+func shellSingleQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func isLogoImageWorkflowPrompt(prompt string) bool {
