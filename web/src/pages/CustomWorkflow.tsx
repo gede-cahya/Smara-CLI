@@ -170,10 +170,11 @@ export default function CustomWorkflow() {
     const pos = posOverride || positions
     const ns: Node<FlowData>[] = wf.agents.map((a, i) => {
       const id = roleId(a.role, i)
-      const isMaster = a.role.toLowerCase() === 'master' || i === 0
-      const isMemory = (a.skills || []).some(s => s.toLowerCase() === 'memory') || a.role.toLowerCase().startsWith('memory') || !!a.memory
-      const isTool = (a.skills || []).some(s => s.toLowerCase() === 'tool') || a.role.toLowerCase().startsWith('tool')
-      const isLoop = (a.skills || []).some(s => s.toLowerCase() === 'loop') || a.role.toLowerCase().startsWith('loop') || !!a.loop
+      const role = (a.role || '').toLowerCase()
+      const isMaster = role === 'master' || i === 0
+      const isMemory = (a.skills || []).some(s => s.toLowerCase() === 'memory') || role.startsWith('memory') || !!a.memory
+      const isTool = (a.skills || []).some(s => s.toLowerCase() === 'tool') || role.startsWith('tool')
+      const isLoop = (a.skills || []).some(s => s.toLowerCase() === 'loop') || role.startsWith('loop') || !!a.loop
       return {
         id,
         type: 'workflowNode',
@@ -187,21 +188,41 @@ export default function CustomWorkflow() {
       const target = roleId(a.role, i)
       ;(a.depends_on || []).forEach(dep => {
         if (roleSet.has(dep) && dep !== target) {
-          es.push({ id: `${dep}->${target}`, source: dep, target, animated: dep === 'master', style: { stroke: dep === 'master' ? '#22d3ee' : '#c084fc', strokeWidth: 2 } })
+          es.push({ id: `dep:${dep}->${target}`, source: dep, target, animated: dep === 'master', label: 'depends', style: { stroke: dep === 'master' ? '#22d3ee' : '#c084fc', strokeWidth: 2 } })
+        }
+      })
+      Object.entries(a.inputs_from || {}).forEach(([src, keys]) => {
+        if (roleSet.has(src) && src !== target) {
+          const existing = es.find(e => e.source === src && e.target === target)
+          if (existing) {
+            existing.id = `dep+input:${src}->${target}`
+            existing.label = `depends + ${keys.length ? keys.join(', ') : 'input'}`
+            existing.animated = true
+            existing.style = { stroke: '#34d399', strokeWidth: 3 }
+          } else {
+            es.push({ id: `input:${src}->${target}`, source: src, target, animated: true, label: keys.length ? keys.join(', ') : 'input', style: { stroke: '#34d399', strokeWidth: 2.5, strokeDasharray: '6 4' } })
+          }
         }
       })
     })
-    setNodes(ns); setEdges(es)
+    setNodes(ns)
+    setEdges(es)
   }, [positions])
 
-  useEffect(() => { syncGraphFromEditing(editing) }, [editing, syncGraphFromEditing])
-
   const selectWorkflow = async (name: string) => {
+    setError(null); setSuccess(null)
     try {
-      const data = await fetchJSON<CustomWorkflowItem>(`/api/custom-workflow/get?name=${encodeURIComponent(name)}`)
-      setSelected(data); setEditing(JSON.parse(JSON.stringify(data))); setError(null); setSuccess(null); setRunLog(null); setPhases([])
-    } catch (e: any) { setError('Gagal load workflow: ' + (e.message || e)) }
+      const wf = await fetchJSON<CustomWorkflowItem>(`/api/custom-workflow/get?name=${encodeURIComponent(name)}`)
+      setSelected(wf)
+      setEditing(JSON.parse(JSON.stringify(wf)))
+      setActiveNode(wf.agents?.length ? roleId(wf.agents[0].role, 0) : null)
+      syncGraphFromEditing(wf)
+    } catch (e: any) {
+      setError('Gagal memilih workflow: ' + (e.message || e))
+    }
   }
+
+  useEffect(() => { syncGraphFromEditing(editing) }, [editing, syncGraphFromEditing])
 
   const save = async () => {
     if (!editing) return

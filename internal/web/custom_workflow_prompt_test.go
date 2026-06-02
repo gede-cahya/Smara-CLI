@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/config"
 )
@@ -22,6 +23,21 @@ func TestExtractCustomWorkflowRunName(t *testing.T) {
 		if !ok || got != want {
 			t.Fatalf("extractCustomWorkflowRunName(%q) = %q, %v; want %q, true", input, got, ok, want)
 		}
+	}
+}
+
+func TestAllowsWorkflowModeAction(t *testing.T) {
+	if !allowsWorkflowModeAction("workflow", agent.ModeAsk) {
+		t.Fatal("request mode workflow should allow workflow action")
+	}
+	if allowsWorkflowModeAction("ask", agent.ModeWorkflow) {
+		t.Fatal("explicit request mode ask should not allow workflow action")
+	}
+	if !allowsWorkflowModeAction("", agent.ModeWorkflow) {
+		t.Fatal("empty request mode should use workflow fallback")
+	}
+	if allowsWorkflowModeAction("", agent.ModeRush) {
+		t.Fatal("empty request mode with rush fallback should not allow workflow action")
 	}
 }
 
@@ -331,6 +347,31 @@ func TestInferCustomWorkflowRunRequestsWithoutPrefix(t *testing.T) {
 	got, parallel, ok := inferCustomWorkflowRunRequests("halankan github-release-agent")
 	if !ok || parallel || len(got) != 1 || got[0] != "github-release-agent" {
 		t.Fatalf("inferCustomWorkflowRunRequests() = %#v, %v, %v; want github-release-agent false true", got, parallel, ok)
+	}
+}
+
+func TestInferCustomWorkflowRunRequestsSkipsRepairPrompt(t *testing.T) {
+	cfg := config.Get()
+	oldDBPath := cfg.DBPath
+	cfg.DBPath = t.TempDir() + "/memory.db"
+	t.Cleanup(func() { cfg.DBPath = oldDBPath })
+
+	cw := &workflow.CustomWorkflow{
+		Name:        "github-release-agent",
+		Description: "release workflow",
+		Agents: []workflow.CustomAgent{{
+			Role:        "release-agent",
+			Description: "release agent",
+			Tasks:       []workflow.Task{{ID: "main", Description: "run release"}},
+		}},
+	}
+	if err := workflow.SaveCustomWorkflow(cw); err != nil {
+		t.Fatalf("SaveCustomWorkflow() error = %v", err)
+	}
+
+	got, parallel, ok := inferCustomWorkflowRunRequests("untuk custom workflow di gitub-release-agent node-buildernya tidak nyambung ya tolong di perbaiki")
+	if ok || parallel || len(got) != 0 {
+		t.Fatalf("inferCustomWorkflowRunRequests() = %#v, %v, %v; want no inferred run", got, parallel, ok)
 	}
 }
 

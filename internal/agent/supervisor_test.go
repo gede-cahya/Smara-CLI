@@ -144,6 +144,16 @@ func TestSupervisor_BuildModeIncludesAllTools(t *testing.T) {
 	assert.True(t, hasWriteFile, "write_file should be available in Build Mode")
 }
 
+func TestSupervisor_WorkflowModeHidesAgenticTools(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+	require.NotNil(t, s)
+
+	s.SetMode(ModeWorkflow)
+
+	tools := s.ConvertMCPToolsToToolFunctions()
+	assert.Empty(t, tools, "workflow chat mode should only execute tools through custom workflow node builders")
+}
+
 func TestSupervisor_CognitiveValidation(t *testing.T) {
 	s := NewSupervisor(nil, nil)
 	require.NotNil(t, s)

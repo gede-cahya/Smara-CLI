@@ -489,6 +489,10 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if s.mode == ModeWorkflow {
+		return nil
+	}
+
 	// 1. Add built-in agentic tools (filtered by disabled_tool_groups config)
 	cfg := config.Get()
 	tools := GetBuiltinToolsFiltered(cfg.DisabledToolGroups)
@@ -529,6 +533,10 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 
 // executeToolCall routes a tool call to the appropriate MCP server.
 func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
+	if s.mode == ModeWorkflow {
+		return fmt.Sprintf("Tool '%s' tidak dijalankan dari chat mode workflow. Tool workflow hanya boleh dieksekusi melalui custom workflow node builder yang mendeklarasikan tool_name/mcp_server eksplisit.", tc.Function), nil
+	}
+
 	if tc.Function == "generate_image" && s.mode != ModeImage {
 		return "Tool generate_image hanya tersedia di mode image. Ganti mode ke image untuk membuat gambar.", nil
 	}
@@ -1262,7 +1270,8 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	if hostCtx, err := smarassh.AllHosts(); err == nil && hostCtx != "(tidak ada host SSH tersimpan)" {
 		sysPrompt += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx
 	}
-	sysPrompt += buildSkillContext()
+	sysPrompt += buildSkillContextForMode(s.mode)
+	sysPrompt += buildSkillRecommendationContext(userPrompt, s.mode)
 	sysPrompt += buildOrchestrationRuleSkillContext()
 	if BuiltinDB != nil {
 		if profile, err := LoadProfile(BuiltinDB); err == nil {
@@ -1518,7 +1527,8 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 	if hostCtx2, err := smarassh.AllHosts(); err == nil && hostCtx2 != "(tidak ada host SSH tersimpan)" {
 		sysPrompt2 += "\n\nHost VPS/Server yang tersimpan (gunakan saat user menyebut vps/server/remote):\n" + hostCtx2
 	}
-	sysPrompt2 += buildSkillContext()
+	sysPrompt2 += buildSkillContextForMode(s.mode)
+	sysPrompt2 += buildSkillRecommendationContext(userPrompt, s.mode)
 	sysPrompt2 += buildOrchestrationRuleSkillContext()
 	if BuiltinDB != nil {
 		if profile, err := LoadProfile(BuiltinDB); err == nil {

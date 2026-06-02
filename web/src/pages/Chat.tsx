@@ -2150,7 +2150,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             if ((msg.role === 'Terminal' || msg.role === 'terminal') && msg.payload !== undefined) {
               for (let i = next.length - 1; i >= 0; i--) {
                 if (next[i].role === 'tool_call' && next[i].status === 'running') {
-                  const appendToLast = Boolean(msg.args?.stream_append) || msg.args?.event === 'task_stream' || next[i].tool === 'workflow_task'
+                  const appendToLast = Boolean(msg.args?.stream_append) || msg.args?.event === 'task_stream'
                   const logs = appendRuntimeLog(next[i].logs || [], String(msg.payload), appendToLast)
                   next[i] = { ...next[i], logs }
                   return capRuntimeMessages(next)

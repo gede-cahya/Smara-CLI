@@ -194,13 +194,14 @@ func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error
 		return g.handleCommand(ctx, msg)
 	}
 
-	// 5. Route explicit workflow prompts from adapters (WA/Telegram/etc.)
-	// through the custom workflow runner so parallel waves are used automatically.
-	if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
-		if err != nil {
-			return g.sendReply(ctx, msg, "❌ "+err.Error())
+	// 5. Route explicit workflow prompts only while workflow mode is active.
+	if g.supervisor.GetMode() == agent.ModeWorkflow {
+		if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
+			if err != nil {
+				return g.sendReply(ctx, msg, "❌ "+err.Error())
+			}
+			return g.sendReply(ctx, msg, response)
 		}
-		return g.sendReply(ctx, msg, response)
 	}
 
 	// 6. Process as prompt
@@ -257,11 +258,13 @@ Atau langsung ketik pesan untuk memulai percakapan.`
 		prompt := strings.Join(msg.CommandArgs, " ")
 		promptMsg := msg
 		promptMsg.Content = prompt
-		if response, handled, err := g.tryRunCustomWorkflowPrompt(promptMsg); handled {
-			if err != nil {
-				return g.sendReply(ctx, msg, "❌ "+err.Error())
+		if g.supervisor.GetMode() == agent.ModeWorkflow {
+			if response, handled, err := g.tryRunCustomWorkflowPrompt(promptMsg); handled {
+				if err != nil {
+					return g.sendReply(ctx, msg, "❌ "+err.Error())
+				}
+				return g.sendReply(ctx, msg, response)
 			}
-			return g.sendReply(ctx, msg, response)
 		}
 		return g.processPrompt(ctx, promptMsg)
 
@@ -652,11 +655,13 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		return g.processBrowserPrompt(ctx, msg)
 	}
 
-	if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
-		if err != nil {
-			return g.sendReply(ctx, msg, "❌ "+err.Error())
+	if g.supervisor.GetMode() == agent.ModeWorkflow {
+		if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
+			if err != nil {
+				return g.sendReply(ctx, msg, "❌ "+err.Error())
+			}
+			return g.sendReply(ctx, msg, response)
 		}
-		return g.sendReply(ctx, msg, response)
 	}
 
 	if response, handled, err := g.tryRunAgentSwarmWorkflowPrompt(msg); handled {

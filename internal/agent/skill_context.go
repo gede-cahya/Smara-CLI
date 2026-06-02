@@ -15,6 +15,14 @@ import (
 const orchestrationRuleSkillName = "parallel-orchestration-rules"
 
 func buildSkillContext() string {
+	return buildSkillContextForMode(ModeAsk)
+}
+
+func buildSkillContextForMode(mode Mode) string {
+	if mode == ModeWorkflow {
+		return "\n\nWorkflow mode tool policy:\n- Jangan membuat skill/workflow task otomatis dari prompt chat.\n- Jangan menjalankan tool agentic umum dari mode workflow chat.\n- Eksekusi tool workflow hanya boleh melalui custom workflow node builder yang mendeklarasikan tool_name/mcp_server secara eksplisit.\n"
+	}
+
 	var sb strings.Builder
 	sb.WriteString("\n\nSkill system (otomasi yang bisa dipakai ulang):\n")
 	sb.WriteString("- Gunakan `skill_list` untuk melihat skill yang sudah ada sebelum membuat baru.\n")
@@ -49,6 +57,50 @@ func buildSkillContext() string {
 			sb.WriteString(fmt.Sprintf("  - %s — %s\n", sk.Name, desc))
 			shown++
 		}
+	}
+	return sb.String()
+}
+
+func buildSkillRecommendationContext(query string, mode Mode) string {
+	if mode == ModeWorkflow || strings.TrimSpace(query) == "" {
+		return ""
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	shortChats := map[string]bool{"halo": true, "hallo": true, "hai": true, "hi": true, "hello": true, "ok": true, "oke": true, "mantap": true, "thanks": true, "terima kasih": true}
+	if shortChats[q] || (len(strings.Fields(q)) <= 1 && len(q) <= 8) {
+		return "\n\nAuto skill recommendation: tidak ada rekomendasi; prompt terlihat seperti sapaan/chat singkat, jawab normal tanpa skill_run.\n"
+	}
+
+	names, err := skill.List()
+	if err != nil || len(names) == 0 {
+		return ""
+	}
+	skills := make([]*skill.Skill, 0, len(names))
+	for _, name := range names {
+		sk, err := skill.Load(name)
+		if err == nil && sk != nil {
+			skills = append(skills, sk)
+		}
+	}
+	recs := skill.RecommendSkills(query, skills, skill.RecommendationOptions{Limit: 5, LowConfidence: 25})
+	if len(recs) == 0 {
+		return "\n\nAuto skill recommendation: tidak ada skill yang cukup relevan; kerjakan manual atau tanya klarifikasi bila konteks kurang.\n"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\nAuto skill recommendation untuk prompt user saat ini:\n")
+	sb.WriteString("Policy: confidence high => prioritaskan panggil `skill_run`; confidence medium => panggil jika jelas cocok; confidence low/clarify => tanya klarifikasi atau kerjakan manual bila skill tidak pas. Sapaan/chat singkat jangan trigger skill.\n")
+	for i, rec := range recs {
+		clarify := ""
+		if rec.Clarify {
+			clarify = " clarify=true"
+		}
+		sb.WriteString(fmt.Sprintf("  %d. %s — score %.0f, confidence=%s%s", i+1, rec.SkillName, rec.Score, rec.Confidence, clarify))
+		if len(rec.Reasons) > 0 {
+			sb.WriteString("; alasan: ")
+			sb.WriteString(strings.Join(rec.Reasons, ", "))
+		}
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }

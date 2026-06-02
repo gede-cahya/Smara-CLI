@@ -59,6 +59,13 @@ type chatResponse struct {
 	Response string `json:"response"`
 }
 
+func allowsWorkflowModeAction(requestMode string, fallback agent.Mode) bool {
+	if agent.ValidMode(requestMode) {
+		return agent.Mode(requestMode) == agent.ModeWorkflow
+	}
+	return fallback == agent.ModeWorkflow
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
@@ -71,21 +78,23 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	if response, handled, err := s.tryRunCustomWorkflowPrompt(req.Message); handled {
-		if err != nil {
-			errorResponse(w, http.StatusInternalServerError, err.Error())
+	if allowsWorkflowModeAction(req.Mode, s.Supervisor.GetMode()) {
+		if response, handled, err := s.tryRunCustomWorkflowPrompt(req.Message); handled {
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			jsonResponse(w, http.StatusOK, chatResponse{Response: response})
 			return
 		}
-		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
-		return
-	}
-	if response, handled, err := s.tryCreateCustomWorkflowPrompt(req.Message); handled {
-		if err != nil {
-			errorResponse(w, http.StatusInternalServerError, err.Error())
+		if response, handled, err := s.tryCreateCustomWorkflowPrompt(req.Message); handled {
+			if err != nil {
+				errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			jsonResponse(w, http.StatusOK, chatResponse{Response: response})
 			return
 		}
-		jsonResponse(w, http.StatusOK, chatResponse{Response: response})
-		return
 	}
 	if s.Supervisor.GetMode() == agent.ModeParallel && orchestration.IsAgentSwarmWorkflowPrompt(req.Message) {
 		log.Printf("[web] Routing chat prompt to Agent Swarm Workflow")
@@ -550,23 +559,29 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 	defer cancel()
 
 	prompt := injectAttachmentSteer(msg.Payload)
-	if response, handled, err := s.tryRunCustomWorkflowPrompt(msg.Payload); handled {
-		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
-		if err != nil {
-			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
-			return
-		}
-		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
-		return
+	activeMode := msg.Mode
+	if activeMode == "" {
+		activeMode = string(s.Supervisor.GetMode())
 	}
-	if response, handled, err := s.tryCreateCustomWorkflowPrompt(msg.Payload); handled {
-		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
-		if err != nil {
-			_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
+	if agent.Mode(activeMode) == agent.ModeWorkflow {
+		if response, handled, err := s.tryRunCustomWorkflowPrompt(msg.Payload); handled {
+			_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
+			if err != nil {
+				_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
+				return
+			}
+			_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
 			return
 		}
-		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
-		return
+		if response, handled, err := s.tryCreateCustomWorkflowPrompt(msg.Payload); handled {
+			_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
+			if err != nil {
+				_ = session.WriteJSON(wsMessage{Type: "error", Payload: err.Error()})
+				return
+			}
+			_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
+			return
+		}
 	}
 	if orchestration.ShouldAutoParallelOrchestrate(msg.Payload, s.Supervisor.GetMode()) {
 		log.Printf("[web] Auto-routing complex websocket prompt to parallel orchestration")
@@ -584,10 +599,6 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 		return
 	}
 
-	activeMode := msg.Mode
-	if activeMode == "" {
-		activeMode = string(s.Supervisor.GetMode())
-	}
 	if activeMode == string(agent.ModeTest) && browser.IsBrowserPrompt(msg.Payload) {
 		_ = session.WriteJSON(wsMessage{Type: "tool_call", Server: "browser", Tool: "browser_run", Args: map[string]interface{}{"prompt": msg.Payload}})
 		output, err := s.runBrowserTest(ctx, msg.Payload)
@@ -938,6 +949,9 @@ func inferCustomWorkflowRunRequests(prompt string) ([]string, bool, bool) {
 	if text == "" {
 		return nil, false, false
 	}
+	if isCustomWorkflowNonRunPrompt(text) {
+		return nil, false, false
+	}
 	parallelRequested := strings.Contains(strings.ToLower(text), "parallel") || strings.Contains(strings.ToLower(text), "paralel")
 	names, err := workflow.ListCustomWorkflows()
 	if err != nil || len(names) == 0 {
@@ -959,6 +973,25 @@ func inferCustomWorkflowRunRequests(prompt string) ([]string, bool, bool) {
 		}
 	}
 	return candidates, parallelRequested, len(candidates) > 0
+}
+
+func isCustomWorkflowNonRunPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	if p == "" {
+		return false
+	}
+	nonRunTerms := []string{
+		"tidak nyambung", "nggak nyambung", "ngga nyambung", "gak nyambung", "ga nyambung",
+		"tolong di perbaiki", "tolong diperbaiki", "di perbaiki", "diperbaiki", "perbaiki", "fix", "repair",
+		"node-builder", "node builder", "builder", "edit", "ubah", "update", "cek", "check", "inspect", "debug",
+		"kenapa", "mengapa", "gimana", "bagaimana", "apakah", "?",
+	}
+	for _, term := range nonRunTerms {
+		if strings.Contains(p, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func customWorkflowMentioned(prompt string, cw *workflow.CustomWorkflow, fileName string) bool {
@@ -2600,6 +2633,10 @@ func (s *Server) handleCustomWorkflowDelete(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleCustomWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	if s.Supervisor.GetMode() != agent.ModeWorkflow {
+		errorResponse(w, http.StatusBadRequest, "custom workflow hanya dapat dijalankan saat mode workflow aktif")
 		return
 	}
 	var req struct {
