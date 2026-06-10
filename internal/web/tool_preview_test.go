@@ -40,6 +40,16 @@ func TestFormatToolResultPreviewHTTP(t *testing.T) {
 	}
 }
 
+func TestFormatToolResultPreviewPreservesNumberedSource(t *testing.T) {
+	input := "   1 | {\n   2 |   \"name\": \"smara ▶ web\",\n   3 |   \"private\": true\n   4 | }"
+	got := formatToolResultPreview(input)
+	want := strings.TrimSpace(input)
+
+	if got != want {
+		t.Fatalf("numbered source formatting changed:\nwant: %q\n got: %q", want, got)
+	}
+}
+
 func TestFormatToolResultPreviewScraper(t *testing.T) {
 	input := `Found 24 manga from Kiryuu
 ▶popular 24 {

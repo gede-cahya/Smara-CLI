@@ -7,14 +7,21 @@ import (
 )
 
 const maxToolPreviewLen = 700
+const maxSourcePreviewLen = 20000
+
+var numberedSourceLineRE = regexp.MustCompile(`^\d+$`)
 
 // formatToolResultPreview keeps web chat tool results readable by replacing
 // noisy terminal-style dumps with compact structured summaries.
 func formatToolResultPreview(output string) string {
-	trimmed := strings.TrimSpace(strings.ReplaceAll(output, "▶", ""))
+	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return "(kosong)"
 	}
+	if isNumberedSourcePreview(trimmed) {
+		return truncateSourcePreview(trimmed, maxSourcePreviewLen)
+	}
+	trimmed = strings.ReplaceAll(trimmed, "▶", "")
 	if summary, ok := compactSystemdStatusPreview(trimmed); ok {
 		return summary
 	}
@@ -28,6 +35,32 @@ func formatToolResultPreview(output string) string {
 		return summary
 	}
 	return truncatePreview(singleLine(trimmed), maxToolPreviewLen)
+}
+
+func isNumberedSourcePreview(output string) bool {
+	lines := strings.Split(output, "\n")
+	if len(lines) < 2 {
+		return false
+	}
+
+	numbered := 0
+	for _, line := range lines {
+		parts := strings.SplitN(strings.TrimSpace(line), "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if numberedSourceLineRE.MatchString(strings.TrimSpace(parts[0])) {
+			numbered++
+		}
+	}
+	return numbered >= 2 && numbered*2 >= len(lines)
+}
+
+func truncateSourcePreview(output string, maxLen int) string {
+	if len(output) <= maxLen {
+		return output
+	}
+	return strings.TrimRight(output[:maxLen], "\r\n") + "\n[... source preview truncated ...]"
 }
 
 func compactSystemdStatusPreview(output string) (string, bool) {

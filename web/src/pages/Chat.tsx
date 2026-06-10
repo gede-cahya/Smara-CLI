@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, memo, forwardRef, useImperativeHandle } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import mermaid from 'mermaid'
@@ -11,7 +11,8 @@ import {
   Terminal, ChevronDown, ChevronRight, Loader2, AlertCircle, Wrench,
   Archive, ArchiveRestore, StopCircle, Pencil, Server, Settings, Mic,
 } from 'lucide-react'
-import type { ChatMessage, WebSessionItem, WebSessionStatus } from '../api'
+import { APIError, type ChatMessage, type WebSessionItem, type WebSessionStatus } from '../api'
+import type { BackendHealth } from '../App'
 import {
   uploadClipboardImage,
   uploadAttachment,
@@ -60,6 +61,12 @@ function formatCostUSD(cost?: number): string {
 }
 
 const CHART_COLORS = ['#bef264', '#84cc16', '#65a30d', '#d9f99d', '#22c55e', '#facc15']
+
+function chatWebSocketURL() {
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+  const host = location.port === '5173' ? `${location.hostname}:8080` : location.host
+  return `${protocol}://${host}/ws`
+}
 
 function MermaidBlock({ code }: { code: string }) {
   const [svg, setSvg] = useState('')
@@ -191,7 +198,7 @@ function MarkdownCodeBlock({ children, className, inline, ...props }: any) {
   )
 }
 
-function SmaraMarkdown({ content }: { content: string }) {
+const SmaraMarkdown = memo(function SmaraMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -226,18 +233,20 @@ function SmaraMarkdown({ content }: { content: string }) {
       {content}
     </ReactMarkdown>
   )
-}
+})
 
 // Tools whose primary purpose is to mutate the filesystem or remote state.
 // We use this to pick a color and icon for the card chrome.
 const WRITE_TOOLS = new Set(['edit_file', 'write_file', 'create_file', 'rm', 'remove_file'])
 const SHELL_TOOLS = new Set(['run_command', 'ssh_exec'])
+const FILE_VIEW_TOOLS = new Set(['view_file', 'read_file', 'ssh_view_file'])
+const NUMBERED_SOURCE_LINE_RE = /^\s*(\d+)\s*\|\s?(.*)$/
 
 function toolKind(tool?: string): 'shell' | 'write' | 'read' | 'tool' {
   if (!tool) return 'tool'
   if (SHELL_TOOLS.has(tool)) return 'shell'
   if (WRITE_TOOLS.has(tool)) return 'write'
-  if (tool.startsWith('read_') || tool === 'list_directory' || tool === 'search_path') return 'read'
+  if (FILE_VIEW_TOOLS.has(tool) || tool.startsWith('read_') || tool === 'list_directory' || tool === 'search_path') return 'read'
   return 'tool'
 }
 
@@ -254,6 +263,8 @@ function describeToolCall(msg: ChatMessage): { title: string; subtitle?: string 
       const cmd = String(args.command ?? '')
       return { title: `ssh ${host}`, subtitle: cmd }
     }
+    case 'view_file':
+    case 'ssh_view_file':
     case 'read_file':
     case 'edit_file':
     case 'write_file': {
@@ -272,7 +283,82 @@ function describeToolCall(msg: ChatMessage): { title: string; subtitle?: string 
   }
 }
 
-function ToolCallCard({
+interface SourceLine {
+  number: string
+  content: string
+}
+
+function sourceLanguageLabel(path?: string): string {
+  const filename = (path || '').split('/').pop() || ''
+  const extension = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() : ''
+  return extension ? extension.slice(0, 8) : 'text'
+}
+
+function parseSourceLines(output: string): SourceLine[] {
+  // Older sessions may contain the legacy single-line preview. Recover its
+  // numbered boundaries so those cards also become readable after this fix.
+  const normalized = output.includes('\n')
+    ? output
+    : output.replace(/\s+(?=\d+\s*\|\s)/g, '\n')
+
+  return normalized.split(/\r?\n/).map((line, index) => {
+    const match = line.match(NUMBERED_SOURCE_LINE_RE)
+    return match
+      ? { number: match[1], content: match[2] }
+      : { number: String(index + 1), content: line }
+  })
+}
+
+const SourceFileViewer = memo(function SourceFileViewer({
+  output,
+  path,
+  copied,
+  onCopy,
+}: {
+  output: string
+  path?: string
+  copied: boolean
+  onCopy: (text: string) => void
+}) {
+  const lines = useMemo(() => parseSourceLines(output), [output])
+  const language = sourceLanguageLabel(path)
+
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 border-b border-[#26351c]/70 bg-[#1b2814]/88 px-4 py-2 text-[10px] text-neutral-400">
+        <span className="rounded-md border border-[#42552f]/60 bg-[#26351d]/80 px-2 py-0.5 font-mono font-semibold uppercase tracking-wide text-smara-200">
+          {language}
+        </span>
+        <span>{lines.length} baris</span>
+        <button
+          onClick={() => onCopy(output)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#42552f]/60 bg-[#26351d]/70 px-2 py-1 text-neutral-300 transition-colors hover:bg-[#304326] hover:text-white"
+          title="Salin isi file"
+        >
+          {copied ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+          Copy
+        </button>
+      </div>
+      <div className="max-h-[32rem] overflow-auto font-mono text-[12px] leading-6 [tab-size:2]">
+        <div className="min-w-max py-2">
+          {lines.map((line, index) => (
+            <div
+              key={`${line.number}-${index}`}
+              className="grid grid-cols-[minmax(3.5rem,auto)_minmax(max-content,1fr)] hover:bg-smara-400/[0.04]"
+            >
+              <span className="sticky left-0 select-none border-r border-[#31421f]/60 bg-[#172211] px-3 text-right text-neutral-500">
+                {line.number}
+              </span>
+              <code className="whitespace-pre px-4 text-gray-200">{line.content || ' '}</code>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+})
+
+const ToolCallCard = memo(function ToolCallCard({
   msg,
   onToggle,
   onCopy,
@@ -283,11 +369,19 @@ function ToolCallCard({
   onCopy: (text: string) => void
   copied: boolean
 }) {
+  const [showAllLogs, setShowAllLogs] = useState(false)
   const kind = toolKind(msg.tool)
   const { title, subtitle } = describeToolCall(msg)
   const status = msg.status || 'running'
   const logs = msg.logs || []
+  const logLines = useMemo(() => logs.flatMap(log => log.split(/\r?\n/)).filter(Boolean), [logs])
+  const snapshotCount = useMemo(() => logLines.filter(line => /found snapshot/i.test(line)).length, [logLines])
+  const warningCount = useMemo(() => logLines.filter(line => /\b(warn|warning|failed|error)\b/i.test(line)).length, [logLines])
+  const compactLogLimit = 18
+  const hiddenLogCount = Math.max(0, logLines.length - compactLogLimit)
+  const visibleLogLines = showAllLogs || hiddenLogCount === 0 ? logLines : logLines.slice(-compactLogLimit)
   const hasOutput = !!msg.output && msg.output.trim().length > 0
+  const isFileView = hasOutput && FILE_VIEW_TOOLS.has(msg.tool || '')
   const imageUrls = generatedImageUrls(msg.output)
   const collapsed = msg.collapsed ?? false
   const hasBody = logs.length > 0 || hasOutput || imageUrls.length > 0
@@ -307,7 +401,7 @@ function ToolCallCard({
   const Icon = kind === 'shell' ? Terminal : kind === 'write' || kind === 'read' ? FileText : Wrench
 
   return (
-    <div className={`ml-11 max-w-4xl rounded-2xl border ${accent} overflow-hidden shadow-lg shadow-black/20 backdrop-blur-sm`}>
+    <div className={`ml-11 max-w-4xl rounded-2xl border ${accent} overflow-hidden shadow-lg shadow-black/20 backdrop-blur-sm [content-visibility:auto] [contain-intrinsic-size:180px]`}>
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3">
         <button
@@ -367,14 +461,64 @@ function ToolCallCard({
 
       {/* Body — terminal-style stream + final result */}
       {!collapsed && hasBody && (
-        <div className="border-t border-[#223018]/75 bg-[#172211]/72 px-4 py-4 max-h-80 overflow-y-auto font-mono text-[12px] leading-6 sm:px-5">
+        <div className="border-t border-[#223018]/75 bg-[#172211]/72">
           {logs.length > 0 && (
-            <pre className="m-0 whitespace-pre-wrap break-words text-gray-200 [tab-size:2]">
-              {logs.join('\n')}
-            </pre>
+            <>
+              <div className="flex flex-wrap items-center gap-2 border-b border-[#26351c]/70 bg-[#1b2814]/88 px-4 py-2 text-[10px] text-neutral-400">
+                <span className="inline-flex items-center gap-1.5 font-medium text-smara-200">
+                  <Terminal className="h-3 w-3" />
+                  Live output
+                </span>
+                <span className="rounded-full bg-[#2a391f]/80 px-2 py-0.5">{logLines.length} baris</span>
+                {snapshotCount > 0 && <span className="rounded-full bg-sky-400/10 px-2 py-0.5 text-sky-200">{snapshotCount} snapshot</span>}
+                {warningCount > 0 && <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-amber-200">{warningCount} perhatian</span>}
+                <div className="ml-auto flex items-center gap-2">
+                  {hiddenLogCount > 0 && (
+                    <button
+                      onClick={() => setShowAllLogs(value => !value)}
+                      className="rounded-lg border border-[#42552f]/60 bg-[#26351d]/70 px-2 py-1 text-neutral-300 transition-colors hover:bg-[#304326] hover:text-white"
+                    >
+                      {showAllLogs ? 'Ringkas' : `Tampilkan semua (+${hiddenLogCount})`}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onCopy(logLines.join('\n'))}
+                    className="inline-flex items-center gap-1 rounded-lg border border-[#42552f]/60 bg-[#26351d]/70 px-2 py-1 text-neutral-300 transition-colors hover:bg-[#304326] hover:text-white"
+                  >
+                    {copied ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                    Copy
+                  </button>
+                </div>
+              </div>
+              {!showAllLogs && hiddenLogCount > 0 && (
+                <div className="border-b border-[#26351c]/60 px-4 py-2 text-[10px] text-neutral-500">
+                  Menampilkan {compactLogLimit} baris terbaru. Output sebelumnya disembunyikan agar chat tetap ringkas.
+                </div>
+              )}
+              <div className={`overflow-y-auto px-4 py-3 font-mono text-[11px] leading-5 sm:px-5 ${showAllLogs ? 'max-h-[32rem]' : 'max-h-72'}`}>
+                <div className="space-y-0.5">
+                  {visibleLogLines.map((line, index) => {
+                    const clean = line.replace(/^▶\s?/, '')
+                    const isWarning = /\b(warn|warning|failed|error)\b/i.test(clean)
+                    const isSuccess = /\b(success|done|completed|up-to-date)\b/i.test(clean)
+                    return (
+                      <div key={`${index}-${clean.slice(0, 32)}`} className="grid grid-cols-[14px_minmax(0,1fr)] gap-2">
+                        <span className={isWarning ? 'text-amber-300' : isSuccess ? 'text-emerald-300' : 'text-smara-400/70'}>
+                          {isWarning ? '!' : isSuccess ? '✓' : '›'}
+                        </span>
+                        <span className={`break-words ${isWarning ? 'text-amber-100/90' : isSuccess ? 'text-emerald-100/90' : 'text-gray-300'}`}>{clean}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </>
           )}
-          {hasOutput && logs.length === 0 && (
-            <pre className="m-0 whitespace-pre-wrap break-words text-gray-300 [tab-size:2]">
+          {isFileView && logs.length === 0 && msg.output && (
+            <SourceFileViewer output={msg.output} path={subtitle} copied={copied} onCopy={onCopy} />
+          )}
+          {hasOutput && logs.length === 0 && !isFileView && (
+            <pre className="m-0 max-h-80 overflow-y-auto whitespace-pre-wrap break-words px-4 py-4 font-mono text-[12px] leading-6 text-gray-300 [tab-size:2] sm:px-5">
               {(msg.output || '').slice(0, 4000)}
               {(msg.output || '').length > 4000 && (
                 <span className="text-neutral-400">{`\n[... ${(msg.output || '').length - 4000} chars truncated ...]`}</span>
@@ -382,7 +526,7 @@ function ToolCallCard({
             </pre>
           )}
           {hasOutput && logs.length > 0 && msg.output && msg.output.trim() !== logs.join('\n').trim() && (
-            <details className="mt-2 text-gray-400">
+            <details className="border-t border-[#26351c]/60 px-4 py-3 text-gray-400">
               <summary className="cursor-pointer text-[10px] text-neutral-400 hover:text-gray-300">
                 full result ({msg.output.length} chars)
               </summary>
@@ -390,7 +534,7 @@ function ToolCallCard({
             </details>
           )}
           {imageUrls.length > 0 && (
-            <div className="mt-3 grid gap-2">
+            <div className="grid gap-2 border-t border-[#26351c]/60 p-4">
               {imageUrls.map(url => (
                 <img key={url} src={url} alt="generated image" className="max-h-72 rounded-lg border border-[#31421f]/60 object-contain shadow-lg shadow-black/30" />
               ))}
@@ -400,7 +544,7 @@ function ToolCallCard({
       )}
     </div>
   )
-}
+})
 
 const spinnerFrames = ['\u280B','\u2819','\u2839','\u2838','\u283C','\u2834','\u2826','\u2827','\u2807','\u280F']
 
@@ -525,6 +669,37 @@ interface RunStatus {
   heartbeatCount: number
 }
 
+interface PendingChatSend {
+  payload: string
+  mode: string
+  sessionId: string
+  runID: string
+}
+
+function createClientRunID(): string {
+  return `web-client-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function buildPromptWithAttachments(messageText: string, files: Attachment[]): string {
+  if (!files.length) return messageText
+  const hasImage = files.some(file => file.kind === 'image')
+  const hasFile = files.some(file => file.kind === 'file')
+  const lines = files.map((a, i) => {
+    const token = a.kind === 'image' ? `[image:${a.path}]` : `[file:${a.path}]`
+    const label = a.name ? ` (${a.name})` : ''
+    return `${i + 1}. ${token}${label}`
+  })
+  const guidance = [
+    hasImage
+      ? 'Gambar terlampir adalah bagian utama dari pesan ini. Baca dan analisis gambar secara otomatis sebelum menjawab, termasuk saat teks user singkat atau kosong.'
+      : '',
+    hasFile
+      ? 'Dokumen terlampir tersedia untuk dibaca ketika diperlukan untuk menjawab pesan user.'
+      : '',
+  ].filter(Boolean).join(' ')
+  return [messageText, guidance, 'Lampiran:', ...lines].filter(Boolean).join('\n\n')
+}
+
 function parsePlanQuest(content: string): { cleanContent: string; quest: PlanQuest | null } {
   const startToken = '[[SMARA_PLAN_QUEST]]'
   const endToken = '[[/SMARA_PLAN_QUEST]]'
@@ -532,9 +707,8 @@ function parsePlanQuest(content: string): { cleanContent: string; quest: PlanQue
   if (start < 0) return { cleanContent: content, quest: null }
   const afterStart = start + startToken.length
   const end = content.indexOf(endToken, afterStart)
-  const rawBlock = end >= 0 ? content.slice(afterStart, end) : content.slice(afterStart)
-  const blockWithNewlines = rawBlock
-    .replace(/\s+(title:)/i, '\n$1')
+  const block = (end >= 0 ? content.slice(afterStart, end) : content.slice(afterStart)).trim()
+  const blockWithNewlines = block
     .replace(/\s+(options:)/i, '\n$1')
     .replace(/\s+(allow_custom:)/i, '\n$1')
     .replace(/\s+(-\s+)/g, '\n$1')
@@ -1116,6 +1290,46 @@ function PlanInsightCard({
   )
 }
 
+const AssistantMessageContent = memo(function AssistantMessageContent({
+  msg,
+  activePhases,
+  runStatus,
+  showApproval,
+  onApprove,
+  onReject,
+}: {
+  msg: ChatMessage
+  activePhases: ActivePhase[]
+  runStatus: RunStatus | null
+  showApproval: boolean
+  onApprove: () => void
+  onReject: () => void
+}) {
+  const insight = useMemo(() => parsePlanInsight(msg.content), [msg.content])
+
+  return (
+    <>
+      <div className="text-gray-100"><SmaraMarkdown content={msg.content} /></div>
+      {insight && (
+        <PlanInsightCard
+          insight={insight}
+          activePhases={activePhases}
+          runStatus={runStatus}
+          showApproval={showApproval}
+          onApprove={onApprove}
+          onReject={onReject}
+        />
+      )}
+      {msg.requestPrompt && (
+        <details className="mt-3 rounded-lg border border-[#31421f]/60 bg-[#20291a]/78 px-2 py-1 text-[10px] text-gray-400">
+          <summary className="cursor-pointer select-none text-smara-200">Request prompt</summary>
+          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-gray-300">{msg.requestPrompt}</pre>
+        </details>
+      )}
+    </>
+  )
+})
+
 interface ChatSession {
   id: string
   name: string
@@ -1247,7 +1461,8 @@ const MAX_LOG_LINES = 50
 const MAX_RUNTIME_MESSAGES = 60
 const SESSION_LIST_HISTORY_LIMIT = 1
 const SESSION_VIEW_HISTORY_LIMIT = 60
-// const MAX_RUNTIME_OUTPUT_CHARS = 20_000 // reserved for future use
+const MAX_RUNTIME_OUTPUT_CHARS = 20_000
+const MAX_RUNTIME_PREVIEW_MESSAGES = 12
 const MAX_RUNTIME_LOG_LINES = 120
 const MAX_RUNTIME_LOG_CHARS = 40_000
 const MAX_ANALYSIS_EVENTS = 18
@@ -1285,8 +1500,28 @@ export function slimMessage(m: ChatMessage): ChatMessage {
 }
 
 function capRuntimeMessages(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length <= MAX_RUNTIME_MESSAGES) return messages
-  return messages.slice(-MAX_RUNTIME_MESSAGES)
+  const capped = messages.length <= MAX_RUNTIME_MESSAGES ? messages : messages.slice(-MAX_RUNTIME_MESSAGES)
+  const previewCutoff = Math.max(0, capped.length - MAX_RUNTIME_PREVIEW_MESSAGES)
+  let changed = capped !== messages
+  const next = capped.map((message, index) => {
+    let out = message
+    if (message.output && message.output.length > MAX_RUNTIME_OUTPUT_CHARS) {
+      const suffix = `\n[... ${message.output.length - MAX_RUNTIME_OUTPUT_CHARS} chars truncated from live view ...]`
+      out = {
+        ...out,
+        output: `${message.output.slice(0, MAX_RUNTIME_OUTPUT_CHARS - suffix.length)}${suffix}`,
+      }
+    }
+    if (index < previewCutoff && message.attachments?.some(attachment => attachment.preview)) {
+      out = {
+        ...out,
+        attachments: message.attachments.map(attachment => ({ ...attachment, preview: undefined })),
+      }
+    }
+    if (out !== message) changed = true
+    return out
+  })
+  return changed ? next : messages
 }
 
 function capRuntimeLogs(logs: string[]): string[] {
@@ -1314,6 +1549,10 @@ function capAnalysisDetail(detail: string): string {
 
 function analysisID(kind: AnalysisEvent['kind']): string {
   return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function isTerminalRunState(state?: RunStatus['state']): boolean {
+  return state === 'completed' || state === 'cancelled' || state === 'error'
 }
 
 function runStateLabel(state: RunStatus['state']): string {
@@ -1473,7 +1712,7 @@ export function saveSession(id: string, messages: ChatMessage[]) {
 
 export type ChatHandle = { openSessions: () => void }
 
-function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
+function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>) {
   const [sessions, setSessions] = useState<ChatSession[]>(getAllSessions)
   const [current, setCurrentRaw] = useState<ChatSession>(loadCurrentSession)
   const [messages, setMessages] = useState<ChatMessage[]>(current.messages)
@@ -1526,6 +1765,19 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   useEffect(() => {
     sessionIdRef.current = sessionId
   }, [sessionId])
+  const thinkingRef = useRef(thinking)
+  useEffect(() => {
+    thinkingRef.current = thinking
+  }, [thinking])
+  const runStatusRef = useRef(runStatus)
+  useEffect(() => {
+    runStatusRef.current = runStatus
+  }, [runStatus])
+  const pendingChatRef = useRef<PendingChatSend | null>(null)
+  const activeRunIDRef = useRef<string | null>(null)
+  useEffect(() => {
+    activeRunIDRef.current = null
+  }, [sessionId])
   const streamingAssistantRef = useRef(false)
   const streamBufferRef = useRef('')
   const generatingPhaseActiveRef = useRef(false)
@@ -1538,6 +1790,129 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   useImperativeHandle(ref, () => ({
     openSessions: () => setShowSessions(true),
   }), [])
+
+  const stopProcessSpinner = useCallback(() => {
+    if (spinnerTimer.current) clearInterval(spinnerTimer.current)
+    spinnerTimer.current = null
+  }, [])
+
+  const interruptLocalRun = useCallback((state: RunStatus['state'], lastEvent: string, message: string, status: WebSessionStatus = 'cancelled') => {
+    const currentRun = runStatusRef.current
+    if (!thinkingRef.current && (!currentRun || isTerminalRunState(currentRun.state))) return
+
+    stopProcessSpinner()
+    setThinking(false)
+    setActivePhases([])
+    setAnalysisEvents(prev => prev.map(event => (
+      event.status === 'running'
+        ? {
+            ...event,
+            status: 'done' as const,
+            level: state === 'error' ? 'error' as const : event.level,
+            detail: event.detail || message,
+            timestamp: new Date(),
+          }
+        : event
+    )))
+    streamingAssistantRef.current = false
+    streamBufferRef.current = ''
+    generatingPhaseActiveRef.current = false
+
+    setRunStatus(prev => prev ? {
+      ...prev,
+      state,
+      updatedAt: Date.now(),
+      lastEvent,
+      lastMessage: message,
+      currentTool: undefined,
+    } : prev)
+
+    setCurrentRaw(prev => ({ ...prev, status, error: state === 'error' ? message : prev.error }))
+    setMessages(prev => capRuntimeMessages(prev.map(msg => {
+      if (msg.role !== 'tool_call' || msg.status !== 'running') return msg
+      return {
+        ...msg,
+        status: 'error',
+        output: msg.output || message,
+        logs: msg.logs && msg.logs.length > 0 ? [...msg.logs, message] : [message],
+        timestamp: new Date(),
+      }
+    })))
+  }, [stopProcessSpinner])
+
+  const settleFromSessionStatus = useCallback(async (status: WebSessionStatus, reason?: string) => {
+    if (status === 'running') return
+    const currentRun = runStatusRef.current
+    if (pendingChatRef.current || (!thinkingRef.current && !currentRun)) return
+    const alreadySettled = currentRun && isTerminalRunState(currentRun.state)
+    if (!thinkingRef.current && alreadySettled) return
+
+    let state: RunStatus['state'] = 'completed'
+    let lastMessage = 'Status sesi sudah sinkron dengan backend.'
+    if (status === 'cancelled') {
+      state = 'cancelled'
+      lastMessage = 'Proses dibatalkan.'
+    } else if (status === 'error') {
+      state = 'error'
+      lastMessage = reason || 'Proses gagal.'
+    } else if (status === 'idle') {
+      state = 'cancelled'
+      lastMessage = reason || 'Backend restart/offline saat proses berjalan; proses lama dihentikan.'
+    }
+
+    interruptLocalRun(state, status, lastMessage, status)
+
+    if (status === 'completed' || status === 'cancelled' || status === 'error') {
+      try {
+        const fresh = webToChatSession(await getWebSession(sessionIdRef.current, SESSION_VIEW_HISTORY_LIMIT))
+        setCurrentRaw(fresh)
+        setMessages(capRuntimeMessages(fresh.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))))
+      } catch {
+        // Kalau backend baru hidup dan history belum siap, status UI tetap harus berhenti.
+      }
+    }
+  }, [interruptLocalRun])
+
+  const queuePendingChat = useCallback((payload: string, activeMode: string, runID: string) => {
+    pendingChatRef.current = { payload, mode: activeMode, sessionId: sessionIdRef.current, runID }
+    setThinking(true)
+    setRunStatus(prev => prev ? {
+      ...prev,
+      state: 'waiting',
+      updatedAt: Date.now(),
+      lastEvent: 'queued',
+      lastMessage: 'Menunggu koneksi WebSocket ke backend kembali.',
+    } : prev)
+  }, [])
+
+  const flushPendingChat = useCallback((ws: WebSocket) => {
+    const pending = pendingChatRef.current
+    if (!pending) return false
+    pendingChatRef.current = null
+    if (pending.sessionId !== sessionIdRef.current) {
+      setThinking(false)
+      setRunStatus(prev => prev ? {
+        ...prev,
+        state: 'cancelled',
+        updatedAt: Date.now(),
+        lastEvent: 'session_changed',
+        lastMessage: 'Pengiriman dibatalkan karena sesi aktif berubah saat reconnect.',
+      } : prev)
+      return false
+    }
+    activeRunIDRef.current = pending.runID
+    ws.send(JSON.stringify({ type: 'chat', payload: pending.payload, mode: pending.mode, session_id: pending.sessionId, run_id: pending.runID }))
+    setThinking(true)
+    setRunStatus(prev => prev ? {
+      ...prev,
+      state: 'starting',
+      updatedAt: Date.now(),
+      mode: pending.mode,
+      lastEvent: 'request',
+      lastMessage: 'Request dikirim setelah koneksi WebSocket siap.',
+    } : prev)
+    return true
+  }, [])
 
   const refreshBackendSessions = useCallback(async () => {
     try {
@@ -1556,6 +1931,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       const currentBackend = backend.find(s => s.id === sessionIdRef.current)
       if (currentBackend) {
         setCurrentRaw(prev => mergeSessionPreview(prev.id === currentBackend.id ? prev : undefined, currentBackend))
+        void settleFromSessionStatus(currentBackend.status || 'idle', currentBackend.error)
         // Jangan replace message list aktif dari polling session-list.
         // List endpoint sekarang hanya membawa preview supaya dropdown ringan.
       } else {
@@ -1572,9 +1948,10 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
         }
       }
     } catch (err) {
-      console.warn('[smara] backend sessions unavailable, fallback localStorage:', err)
+      const backendUnavailable = err instanceof APIError && err.status === 503 && err.message === 'backend unavailable'
+      if (!backendUnavailable) console.warn('[smara] backend sessions unavailable, fallback localStorage:', err)
     }
-  }, [mode])
+  }, [mode, settleFromSessionStatus])
 
   const setCurrent = async (s: ChatSession) => {
     setCurrentRaw(s)
@@ -1618,9 +1995,16 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   }, [])
 
   useEffect(() => {
-    refreshBackendSessions()
-    const timer = window.setInterval(refreshBackendSessions, 5000)
-    return () => window.clearInterval(timer)
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void refreshBackendSessions()
+    }
+    refreshWhenVisible()
+    const timer = window.setInterval(refreshWhenVisible, 5000)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
   }, [refreshBackendSessions])
 
   useEffect(() => {
@@ -1732,8 +2116,9 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const cancelSession = async (id: string) => {
     try {
       await cancelWebSession(id)
-      if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify({ type: 'cancel', session_id: id }))
-      setThinking(false)
+      if (id === sessionIdRef.current) {
+        interruptLocalRun('cancelled', 'cancelled', 'Proses dibatalkan.')
+      }
       await refreshBackendSessions()
     } catch (err) {
       showToast(`Gagal stop: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -1766,18 +2151,62 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       reconnectTimer.current = null
     }
     closingWsRef.current = false
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`)
+    const ws = new WebSocket(chatWebSocketURL())
     wsRef.current = ws
 
     ws.onopen = () => {
       if (wsRef.current !== ws) return
       setConnected(true)
       ws.send(JSON.stringify({ type: 'session', payload: sessionIdRef.current, session_id: sessionIdRef.current }))
+      if (!flushPendingChat(ws)) void refreshBackendSessions()
     }
     ws.onclose = () => {
       if (wsRef.current !== ws) return
       setConnected(false)
       wsRef.current = null
+      const activeRun = runStatusRef.current
+      if (!pendingChatRef.current && (thinkingRef.current || (activeRun && !isTerminalRunState(activeRun.state)))) {
+        const prompt = (activeRun?.prompt || '').trim()
+        if (prompt) {
+          pendingChatRef.current = {
+            payload: prompt,
+            mode: activeRun?.mode || mode,
+            sessionId: sessionIdRef.current,
+            runID: activeRun?.runID || createClientRunID(),
+          }
+        }
+        setThinking(true)
+        setRunStatus(prev => prev ? {
+          ...prev,
+          state: 'waiting',
+          updatedAt: Date.now(),
+          lastEvent: 'backend_rebuilding',
+          lastMessage: prompt
+            ? 'Backend sedang rebuilding/restart. Smara Web menunggu backend online lalu menjalankan ulang request otomatis.'
+            : 'Backend sedang rebuilding/restart. Smara Web menunggu backend online kembali.',
+          currentTool: undefined,
+        } : {
+          state: 'waiting',
+          startedAt: Date.now(),
+          updatedAt: Date.now(),
+          prompt,
+          mode,
+          lastEvent: 'backend_rebuilding',
+          lastMessage: 'Backend sedang rebuilding/restart. Smara Web menunggu backend online kembali.',
+          toolCount: 0,
+          heartbeatCount: 0,
+        })
+        pushAnalysisEvent({
+          kind: 'log',
+          title: 'Backend rebuilding',
+          detail: prompt
+            ? 'Koneksi terputus saat backend rebuild/restart. Request akan dijalankan ulang otomatis setelah backend online.'
+            : 'Koneksi terputus saat backend rebuild/restart. Menunggu backend online.',
+          status: 'running',
+          level: 'warning',
+          event: 'backend_rebuilding',
+        })
+      }
       if (!closingWsRef.current) reconnectTimer.current = setTimeout(connectWs, 3000)
     }
     ws.onerror = () => {
@@ -1788,6 +2217,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data)
       if (msg.session_id && msg.session_id !== sessionIdRef.current && msg.type !== 'session_status') return
+      const messageRunID = String(msg.run_id || msg.args?.run_id || '')
+      if (messageRunID && activeRunIDRef.current && messageRunID !== activeRunIDRef.current) return
       switch (msg.type) {
         case 'connected':
           break
@@ -1824,7 +2255,6 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
               spinnerTimer.current = setInterval(() => {
                 setSpinnerIdx(i => (i + 1) % spinnerFrames.length)
                 tickCounter++
-                // Update elapsed display roughly every second (80ms * 12 ≈ 960ms)
                 if (tickCounter % 12 === 0) setElapsedTick(t => t + 1)
               }, 80)
             }
@@ -2163,6 +2593,17 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           break
         case 'session_status':
           if (msg.session_id === sessionIdRef.current) {
+            if (msg.payload === 'running' && messageRunID) {
+              activeRunIDRef.current = messageRunID
+              setRunStatus(prev => prev ? {
+                ...prev,
+                state: 'starting',
+                updatedAt: Date.now(),
+                runID: messageRunID,
+                lastEvent: 'running',
+                lastMessage: 'Proses baru berjalan.',
+              } : prev)
+            }
             setCurrentRaw(c => ({ ...c, status: msg.payload as WebSessionStatus }))
             if (msg.payload === 'completed' || msg.payload === 'cancelled' || msg.payload === 'error') {
               if (streamingAssistantRef.current && streamBufferRef.current.trim()) {
@@ -2210,7 +2651,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           break
       }
     }
-  }, [appendThinkingAnalysis, completeAnalysisEvent, markAutoScrollIfNearBottom, mode, pushAnalysisEvent])
+  }, [appendThinkingAnalysis, completeAnalysisEvent, flushPendingChat, interruptLocalRun, markAutoScrollIfNearBottom, mode, pushAnalysisEvent, refreshBackendSessions])
 
   useEffect(() => {
     connectWs()
@@ -2315,6 +2756,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
   const send = useCallback(() => {
     const messageText = input.trim()
     if (!messageText && attachments.length === 0) return
+    const agentPayload = buildPromptWithAttachments(messageText, attachments)
     const wantsRoadmapProgress = isRoadmapProgressPrompt(messageText)
     const userMessage: ChatMessage = {
       role: 'user',
@@ -2336,6 +2778,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setAnalysisFilter('all')
     streamingAssistantRef.current = false
     streamBufferRef.current = ''
+    const runID = createClientRunID()
+    activeRunIDRef.current = runID
     setRunStatus({
       state: 'starting',
       startedAt: Date.now(),
@@ -2344,18 +2788,20 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       mode,
       lastEvent: 'queued',
       lastMessage: 'Menunggu koneksi proses.',
+      runID,
       toolCount: 0,
       heartbeatCount: 0,
     })
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      queuePendingChat(agentPayload, mode, runID)
       connectWs()
       return
     }
 
-    wsRef.current.send(JSON.stringify({ type: 'chat', payload: messageText, mode, session_id: sessionIdRef.current }))
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: agentPayload, mode, session_id: sessionIdRef.current, run_id: runID }))
     setThinking(true)
-  }, [input, attachments, connectWs, mode])
+  }, [input, attachments, connectWs, mode, queuePendingChat])
 
   const sendPlanQuestAnswer = useCallback((answer: string) => {
     const text = `Saya pilih: ${answer}`
@@ -2365,6 +2811,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setAnalysisFilter('all')
     streamingAssistantRef.current = false
     streamBufferRef.current = ''
+    const runID = createClientRunID()
+    activeRunIDRef.current = runID
     setRunStatus({
       state: 'starting',
       startedAt: Date.now(),
@@ -2373,18 +2821,20 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       mode,
       lastEvent: 'queued',
       lastMessage: 'Menunggu koneksi proses.',
+      runID,
       toolCount: 0,
       heartbeatCount: 0,
     })
     shouldAutoScrollRef.current = true
     setMessages(prev => capRuntimeMessages([...prev, { role: 'user', content: text, timestamp: new Date() }]))
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      queuePendingChat(text, mode, runID)
       connectWs()
       return
     }
-    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode, session_id: sessionIdRef.current }))
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode, session_id: sessionIdRef.current, run_id: runID }))
     setThinking(true)
-  }, [connectWs, mode])
+  }, [connectWs, mode, queuePendingChat])
 
   const sendPlanApproval = useCallback((approved: boolean) => {
     const text = approved ? 'Ya, lanjutkan eksekusi rencana.' : 'Tidak, jangan lanjutkan dulu. Revisi rencana sebelum eksekusi.'
@@ -2394,6 +2844,8 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setAnalysisFilter('all')
     streamingAssistantRef.current = false
     streamBufferRef.current = ''
+    const runID = createClientRunID()
+    activeRunIDRef.current = runID
     setRunStatus({
       state: 'starting',
       startedAt: Date.now(),
@@ -2402,18 +2854,23 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       mode,
       lastEvent: 'queued',
       lastMessage: 'Menunggu koneksi proses.',
+      runID,
       toolCount: 0,
       heartbeatCount: 0,
     })
     shouldAutoScrollRef.current = true
     setMessages(prev => capRuntimeMessages([...prev, { role: 'user', content: text, timestamp: new Date() }]))
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      queuePendingChat(text, mode, runID)
       connectWs()
       return
     }
-    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode, session_id: sessionIdRef.current }))
+    wsRef.current.send(JSON.stringify({ type: 'chat', payload: text, mode, session_id: sessionIdRef.current, run_id: runID }))
     setThinking(true)
-  }, [connectWs, mode])
+  }, [connectWs, mode, queuePendingChat])
+
+  const approvePlan = useCallback(() => sendPlanApproval(true), [sendPlanApproval])
+  const rejectPlan = useCallback(() => sendPlanApproval(false), [sendPlanApproval])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2520,6 +2977,40 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     }
   }, [roadmapGoal, roadmapPath])
 
+  const imageFileToFastDataUrl = useCallback(async (file: File): Promise<string> => {
+    const raw = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(file)
+    })
+    // Small images are cheap enough; keep original for fidelity.
+    if (file.size <= 900 * 1024) return raw
+
+    // Large screenshots/photos make chat feel slow because base64 upload +
+    // preview state becomes huge. Downscale client-side before upload.
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image()
+        el.onload = () => resolve(el)
+        el.onerror = reject
+        el.src = raw
+      })
+      const maxSide = 1600
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+      if (scale >= 1) return raw
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.width * scale))
+      canvas.height = Math.max(1, Math.round(img.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return raw
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      return canvas.toDataURL('image/jpeg', 0.82)
+    } catch {
+      return raw
+    }
+  }, [])
+
   const uploadImageDataUrl = useCallback(async (dataUrl: string, name = 'pasted-image.png') => {
     setUploading(true)
     try {
@@ -2544,14 +3035,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setUploading(true)
     try {
       if (file.type.startsWith('image/')) {
-        // Read as dataURL for inline preview AND for the lightweight
-        // /api/clipboard/upload endpoint (handles base64 directly).
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(String(reader.result))
-          reader.onerror = () => reject(reader.error)
-          reader.readAsDataURL(file)
-        })
+        const dataUrl = await imageFileToFastDataUrl(file)
         const res = await uploadClipboardImage(dataUrl)
         setAttachments(prev => [...prev, {
           path: res.path,
@@ -2559,12 +3043,11 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           kind: 'image',
           name: file.name || 'pasted-image.png',
           preview: dataUrl,
-          mime: file.type,
+          mime: res.mime || file.type,
         }])
         showToast(`📎 ${(res.size / 1024).toFixed(0)} KB → ${res.path.split('/').pop()}`)
         return
       }
-      // Documents and everything else go through multipart.
       const res = await uploadAttachment(file)
       setAttachments(prev => [...prev, {
         path: res.path,
@@ -2579,42 +3062,30 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     } finally {
       setUploading(false)
     }
-  }, [])
+  }, [imageFileToFastDataUrl])
 
   const uploadFiles = useCallback(async (files: FileList | File[]) => {
-    for (const f of Array.from(files)) {
-      await uploadFile(f)
-    }
+    for (const file of Array.from(files)) await uploadFile(file)
   }, [uploadFile])
 
-  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from(e.clipboardData?.items || [])
-    const fileItems = items.filter(it => it.kind === 'file')
-    if (fileItems.length > 0) {
-      e.preventDefault()
-      const files: File[] = []
-      for (const it of fileItems) {
-        const f = it.getAsFile()
-        if (f) files.push(f)
+    const imageItem = items.find(item => item.kind === 'file' && item.type.startsWith('image/'))
+    if (imageItem) {
+      const file = imageItem.getAsFile()
+      if (file) {
+        e.preventDefault()
+        await uploadFile(file)
+        return
       }
-      if (files.length > 0) await uploadFiles(files)
-      return
     }
-
-    const plain = e.clipboardData?.getData('text/plain')?.trim() || ''
-    if (plain.startsWith('data:image/') && plain.includes(';base64,')) {
-      e.preventDefault()
-      await uploadImageDataUrl(plain)
-      return
-    }
-
     const html = e.clipboardData?.getData('text/html') || ''
     const match = html.match(/<img[^>]+src=["'](data:image\/[^"']+;base64,[^"']+)["']/i)
     if (match?.[1]) {
       e.preventDefault()
       await uploadImageDataUrl(match[1].replace(/&amp;/g, '&'))
     }
-  }, [uploadFiles, uploadImageDataUrl])
+  }, [uploadFile, uploadImageDataUrl])
 
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -2653,7 +3124,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     setAttachments(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const copyMessage = async (idx: number, text: string) => {
+  const copyMessage = useCallback(async (idx: number, text: string) => {
     try {
       await navigator.clipboard.writeText(text)
       setCopiedIdx(idx)
@@ -2662,9 +3133,9 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
     } catch {
       showToast('Browser menolak akses clipboard')
     }
-  }
+  }, [showToast])
 
-  const toggleCard = (idx: number) => {
+  const toggleCard = useCallback((idx: number) => {
     setMessages(prev => {
       const next = [...prev]
       if (next[idx]) {
@@ -2672,7 +3143,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
       }
       return next
     })
-  }
+  }, [])
 
   const providerWaitActive = !!runStatus && runStatus.toolCount === 0 && runStatus.state === 'waiting'
   const providerIdleMs = runStatus?.providerIdleMs || 0
@@ -2728,7 +3199,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           </button>
           <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-neutral-400 font-mono truncate max-w-[220px]"><Server className="w-3 h-3" />{sessionId}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center justify-end gap-2">
           <button
             onClick={() => {
               setShowRoadmapPopup(v => !v)
@@ -2749,15 +3220,21 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           >
             <Plus className="w-3 h-3" /> Sesi Baru
           </button>
-          {!connected && (
-            <button onClick={connectWs} className="flex items-center gap-1 text-xs text-smara-400 hover:text-smara-300 transition-colors">
-              <RefreshCw className="w-3 h-3" /> Reconnect
-            </button>
-          )}
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${connected ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300' : 'border-red-400/20 bg-red-500/10 text-red-300'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.9)]' : 'bg-red-400'}`} />
-            {connected ? 'Online' : 'Offline'}
-          </span>
+          <button
+            onClick={() => { if (!connected) connectWs() }}
+            disabled={connected}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors ${
+              connected && health.providerOnline
+                ? 'cursor-default border-emerald-400/20 bg-emerald-400/10 text-emerald-300'
+                : connected
+                  ? 'cursor-default border-amber-400/25 bg-amber-500/10 text-amber-200'
+                  : 'border-red-400/25 bg-red-500/10 text-red-200 hover:bg-red-500/16'
+            }`}
+            title={!connected ? 'Hubungkan ulang ke backend' : health.providerOnline ? 'Backend dan LLM terhubung' : `Backend terhubung, LLM ${health.provider || 'provider'} offline`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${connected && health.providerOnline ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.9)]' : connected ? 'bg-amber-400' : 'bg-red-400'}`} />
+            {!connected ? <><RefreshCw className="h-3 w-3" /> Backend offline</> : health.providerOnline === null ? 'Checking LLM' : health.providerOnline ? 'Ready' : 'LLM offline'}
+          </button>
         </div>
       </div>
 
@@ -3013,21 +3490,21 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
             // compact muted block. The common case is rendered inside the
             // ToolCallCard above.
             return (
-              <div key={i} className="ml-11 px-3 py-2 bg-[#20291a]/78 border border-[#223018]/75 rounded text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
+              <div key={i} className="ml-11 px-3 py-2 bg-[#20291a]/78 border border-[#223018]/75 rounded text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto [content-visibility:auto] [contain-intrinsic-size:100px]">
                 {msg.output || msg.content}
               </div>
             )
           }
           if (msg.role === 'log') {
             return (
-              <div key={i} className="flex items-center gap-2 text-xs text-neutral-400 px-2 ml-11">
+              <div key={i} className="flex items-center gap-2 text-xs text-neutral-400 px-2 ml-11 [content-visibility:auto] [contain-intrinsic-size:28px]">
                 <span className="text-neutral-500">&#9654;</span>
                 <span>{msg.content}</span>
               </div>
             )
           }
           return (
-            <div key={i} className={`flex gap-3 group ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+            <div key={i} className={`flex gap-3 group [content-visibility:auto] [contain-intrinsic-size:180px] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ring-1 ${
                 msg.role === 'user'
                   ? 'bg-gradient-to-br from-smara-600 to-smara-800 ring-smara-400/30 shadow-smara-950/40'
@@ -3080,29 +3557,14 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
                 ) : msg.role === 'error' ? (
                   <div className="whitespace-pre-wrap leading-6">{msg.content}</div>
                 ) : (
-                  <>
-                    <div className="text-gray-100"><SmaraMarkdown content={msg.content} /></div>
-                    {(() => {
-                      const insight = parsePlanInsight(msg.content)
-                      if (!insight) return null
-                      return (
-                        <PlanInsightCard
-                          insight={insight}
-                          activePhases={activePhases}
-                          runStatus={runStatus}
-                          showApproval={mode === 'plan' && i === latestAssistantIndex && !thinking && !activePlanQuest}
-                          onApprove={() => sendPlanApproval(true)}
-                          onReject={() => sendPlanApproval(false)}
-                        />
-                      )
-                    })()}
-                    {msg.requestPrompt && (
-                      <details className="mt-3 rounded-lg border border-[#31421f]/60 bg-[#20291a]/78 px-2 py-1 text-[10px] text-gray-400">
-                        <summary className="cursor-pointer select-none text-smara-200">Request prompt</summary>
-                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-gray-300">{msg.requestPrompt}</pre>
-                      </details>
-                    )}
-                  </>
+                  <AssistantMessageContent
+                    msg={msg}
+                    activePhases={activePhases}
+                    runStatus={runStatus}
+                    showApproval={mode === 'plan' && i === latestAssistantIndex && !thinking && !activePlanQuest}
+                    onApprove={approvePlan}
+                    onReject={rejectPlan}
+                  />
                 )}
                 {(msg.role !== 'user' && msg.role !== 'error' && (msg.inputTokens !== undefined || msg.outputTokens !== undefined || msg.totalTokens !== undefined || msg.duration || msg.estimatedCostUSD !== undefined || msg.model || msg.provider)) ? (
                   <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-neutral-800/60 pt-1.5 text-[10px] text-gray-400">
@@ -3134,7 +3596,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           )
         })}
 
-        {runStatus && (thinking || runStatus.state !== 'completed') && (
+        {runStatus && (thinking || !['completed', 'cancelled', 'error'].includes(runStatus.state)) && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center shrink-0">
               <Bot className="w-4 h-4 text-smara-300" />
@@ -3515,7 +3977,7 @@ function Chat(_props: {}, ref: React.Ref<ChatHandle>) {
           />
           <button
             onClick={send}
-            disabled={(!input.trim() && attachments.length === 0) || current.status === 'running' || uploading}
+            disabled={(!input.trim() && attachments.length === 0) || thinking || uploading}
             className="px-4 py-2 rounded-2xl bg-smara-300 text-black shadow-lg shadow-smara-950/25 transition-colors hover:bg-smara-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4" />

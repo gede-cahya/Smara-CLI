@@ -23,6 +23,41 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b))
 }
 
+function stableHash(str: string): string {
+  let h = 0
+  for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0
+  return (h >>> 0).toString(36)
+}
+
+interface SkillEntry {
+  id: string
+  skill: SkillItem
+}
+
+function skillSignature(skill: SkillItem): string {
+  return [
+    skill.name,
+    skill.version,
+    skill.description,
+    (skill.tags || []).join('/'),
+    (skill.category_path || []).join('/'),
+    (skill.dependencies || []).join('/'),
+  ].join('\u0000')
+}
+
+function createSkillEntries(skills: SkillItem[]): SkillEntry[] {
+  const seen = new Map<string, number>()
+  return skills.map((skill, index) => {
+    const signature = skillSignature(skill)
+    const occurrence = seen.get(signature) ?? 0
+    seen.set(signature, occurrence + 1)
+    return {
+      id: `${skill.name}:${stableHash(signature)}:${occurrence}:${index}`,
+      skill,
+    }
+  })
+}
+
 function matchesSkillQuery(skill: SkillItem, q: string): boolean {
   if (!q.trim()) return true
   const needle = q.toLowerCase()
@@ -36,28 +71,41 @@ function matchesSkillQuery(skill: SkillItem, q: string): boolean {
   return haystack.includes(needle)
 }
 
-function relatedSkillNames(skills: SkillItem[], center: SkillItem | null, depth: number): Set<string> {
+function relatedSkillIds(entries: SkillEntry[], center: SkillEntry | null, depth: number): Set<string> {
   const result = new Set<string>()
   if (!center) return result
-  const byName = new Map(skills.map(s => [s.name, s]))
-  const neighbors = (name: string): string[] => {
-    const sk = byName.get(name)
+  const byID = new Map(entries.map(e => [e.id, e]))
+  const idsByName = new Map<string, string[]>()
+  for (const entry of entries) {
+    const ids = idsByName.get(entry.skill.name) ?? []
+    ids.push(entry.id)
+    idsByName.set(entry.skill.name, ids)
+  }
+  const addNameMatches = (out: Set<string>, name: string) => {
+    for (const id of idsByName.get(name) || []) out.add(id)
+  }
+  const neighbors = (id: string): string[] => {
+    const entry = byID.get(id)
+    const sk = entry?.skill
     const out = new Set<string>()
-    if (sk?.parent_id && byName.has(sk.parent_id)) out.add(sk.parent_id)
-    for (const d of sk?.dependencies || []) if (byName.has(d)) out.add(d)
-    for (const other of skills) {
-      if (other.parent_id === name) out.add(other.name)
-      if ((other.dependencies || []).includes(name)) out.add(other.name)
+    if (sk?.parent_id) addNameMatches(out, sk.parent_id)
+    for (const d of sk?.dependencies || []) addNameMatches(out, d)
+    if (sk) {
+      for (const other of entries) {
+        if (other.skill.parent_id === sk.name) out.add(other.id)
+        if ((other.skill.dependencies || []).includes(sk.name)) out.add(other.id)
+      }
     }
+    out.delete(id)
     return [...out]
   }
 
-  let frontier = [center.name]
-  result.add(center.name)
+  let frontier = [center.id]
+  result.add(center.id)
   for (let i = 0; i < depth; i++) {
     const next: string[] = []
-    for (const name of frontier) {
-      for (const n of neighbors(name)) {
+    for (const id of frontier) {
+      for (const n of neighbors(id)) {
         if (!result.has(n)) {
           result.add(n)
           next.push(n)
@@ -72,8 +120,10 @@ function relatedSkillNames(skills: SkillItem[], center: SkillItem | null, depth:
 // ---- Tree construction (mirrors 2D views) ----------------------------------
 
 interface FractalNode3D {
+  id: string
   name: string
   label: string
+  entry: SkillEntry | null
   skill: SkillItem | null
   children: FractalNode3D[]
   subtreeSize: number
@@ -84,28 +134,38 @@ interface FractalNode3D {
   radius: number
 }
 
-function buildFractal3D(skills: SkillItem[]): FractalNode3D {
-  const byName = new Map<string, SkillItem>()
-  for (const s of skills) byName.set(s.name, s)
+function buildFractal3D(entries: SkillEntry[]): FractalNode3D {
+  const byID = new Map<string, SkillEntry>()
+  const idsByName = new Map<string, string[]>()
+  for (const entry of entries) {
+    byID.set(entry.id, entry)
+    const ids = idsByName.get(entry.skill.name) ?? []
+    ids.push(entry.id)
+    idsByName.set(entry.skill.name, ids)
+  }
+  const firstIDForName = (name: string, selfID?: string): string | null => {
+    return (idsByName.get(name) || []).find(id => id !== selfID) ?? null
+  }
 
   const parentOf = new Map<string, string | null>()
-  for (const s of skills) {
+  for (const entry of entries) {
+    const s = entry.skill
     let parent: string | null = null
-    if (s.parent_id && byName.has(s.parent_id)) {
-      parent = s.parent_id
+    if (s.parent_id) {
+      parent = firstIDForName(s.parent_id, entry.id)
     } else if (s.dependencies && s.dependencies.length > 0) {
-      const firstDep = s.dependencies.find(d => byName.has(d))
+      const firstDep = s.dependencies.map(d => firstIDForName(d, entry.id)).find(Boolean)
       if (firstDep) parent = firstDep
     }
-    parentOf.set(s.name, parent)
+    parentOf.set(entry.id, parent)
   }
   // Break cycles
-  for (const [name] of parentOf) {
+  for (const [id] of parentOf) {
     const seen = new Set<string>()
-    let cur: string | null | undefined = name
+    let cur: string | null | undefined = id
     while (cur != null) {
       if (seen.has(cur)) {
-        parentOf.set(name, null)
+        parentOf.set(id, null)
         break
       }
       seen.add(cur)
@@ -114,27 +174,30 @@ function buildFractal3D(skills: SkillItem[]): FractalNode3D {
   }
 
   const childrenOf = new Map<string, string[]>()
-  for (const s of skills) childrenOf.set(s.name, [])
+  for (const entry of entries) childrenOf.set(entry.id, [])
   for (const [c, p] of parentOf) {
     if (p && childrenOf.has(p)) childrenOf.get(p)!.push(c)
   }
 
   const sortSkills = (a: string, b: string) => {
-    const sa = byName.get(a)!
-    const sb = byName.get(b)!
+    const sa = byID.get(a)!.skill
+    const sb = byID.get(b)!.skill
     const scoreA = childrenOf.get(a)?.length ?? 0
     const scoreB = childrenOf.get(b)?.length ?? 0
     if (scoreA !== scoreB) return scoreB - scoreA
-    return sa.name.localeCompare(sb.name)
+    return sa.name.localeCompare(sb.name) || a.localeCompare(b)
   }
 
-  const buildSkillNode = (name: string, depth: number): FractalNode3D => {
-    const sk = byName.get(name)!
-    const kids = (childrenOf.get(name) ?? []).sort(sortSkills).map(cn => buildSkillNode(cn, depth + 1))
+  const buildSkillNode = (id: string, depth: number): FractalNode3D => {
+    const entry = byID.get(id)!
+    const sk = entry.skill
+    const kids = (childrenOf.get(id) ?? []).sort(sortSkills).map(cn => buildSkillNode(cn, depth + 1))
     const subtreeSize = 1 + kids.reduce((a, k) => a + k.subtreeSize, 0)
     return {
+      id,
       name: sk.name,
       label: sk.name,
+      entry,
       skill: sk,
       children: kids,
       subtreeSize,
@@ -145,11 +208,11 @@ function buildFractal3D(skills: SkillItem[]): FractalNode3D {
     }
   }
 
-  const roots = skills.filter(s => !parentOf.get(s.name))
-  const categoryMap = new Map<string, Map<string, SkillItem[]>>()
+  const roots = entries.filter(entry => !parentOf.get(entry.id))
+  const categoryMap = new Map<string, Map<string, SkillEntry[]>>()
   for (const r of roots) {
-    const cat = r.category_path?.[0] || r.tags?.[0] || 'Uncategorized'
-    const subcat = r.category_path?.[1] || '__direct'
+    const cat = r.skill.category_path?.[0] || r.skill.tags?.[0] || 'Uncategorized'
+    const subcat = r.skill.category_path?.[1] || '__direct'
     if (!categoryMap.has(cat)) categoryMap.set(cat, new Map())
     const subMap = categoryMap.get(cat)!
     if (!subMap.has(subcat)) subMap.set(subcat, [])
@@ -164,12 +227,14 @@ function buildFractal3D(skills: SkillItem[]): FractalNode3D {
     const subcatKeys = [...subMap.keys()].filter(k => k !== '__direct').sort()
 
     for (const sc of subcatKeys) {
-      const skillNodes = subMap.get(sc)!.map(s => buildSkillNode(s.name, 3))
+      const skillNodes = subMap.get(sc)!.map(s => buildSkillNode(s.id, 3))
       const size = 1 + skillNodes.reduce((a, n) => a + n.subtreeSize, 0)
       catSize += size
       subNodes.push({
+        id: `category:${cat}/subcategory:${sc}`,
         name: `${cat}/${sc}`,
         label: sc,
+        entry: null,
         skill: null,
         children: skillNodes,
         subtreeSize: size,
@@ -179,12 +244,14 @@ function buildFractal3D(skills: SkillItem[]): FractalNode3D {
         radius: 0,
       })
     }
-    const directNodes = directSkills.map(s => buildSkillNode(s.name, 2))
+    const directNodes = directSkills.map(s => buildSkillNode(s.id, 2))
     catSize += directNodes.reduce((a, n) => a + n.subtreeSize, 0)
 
     categoryNodes.push({
+      id: `category:${cat}`,
       name: cat,
       label: cat,
+      entry: null,
       skill: null,
       children: [...subNodes, ...directNodes].sort((a, b) => b.subtreeSize - a.subtreeSize),
       subtreeSize: catSize,
@@ -199,8 +266,10 @@ function buildFractal3D(skills: SkillItem[]): FractalNode3D {
   const totalSize = 1 + categoryNodes.reduce((a, n) => a + n.subtreeSize, 0)
 
   return {
+    id: '__root',
     name: '__root',
     label: 'Skills',
+    entry: null,
     skill: null,
     children: categoryNodes,
     subtreeSize: totalSize,
@@ -458,9 +527,9 @@ function CameraFocus({ target }: { target: THREE.Vector3 | null }) {
 // ---- Scene -----------------------------------------------------------------
 
 interface SceneProps {
-  skills: SkillItem[]
-  selected: SkillItem | null
-  setSelected: (s: SkillItem | null) => void
+  skills: SkillEntry[]
+  selected: SkillEntry | null
+  setSelected: (s: SkillEntry | null) => void
   hovered: string | null
   setHovered: (n: string | null) => void
   focusToken: number
@@ -474,24 +543,24 @@ function Scene({ skills, selected, setSelected, hovered, setHovered, focusToken 
   }, [skills])
 
   const selectedNode = useMemo(
-    () => selected ? nodes.find(n => n.skill?.name === selected.name) || null : null,
+    () => selected ? nodes.find(n => n.entry?.id === selected.id) || null : null,
     [nodes, selected],
   )
-  const hoverNodeName = hovered
-  const activeNames = useMemo(() => {
+  const hoverNodeID = hovered
+  const activeIds = useMemo(() => {
     const active = new Set<string>()
-    const center = selectedNode?.name || hoverNodeName
+    const center = selectedNode?.id || hoverNodeID
     if (!center) return active
     active.add(center)
     for (const e of edges) {
-      if (e.from.name === center || e.to.name === center) {
-        active.add(e.from.name)
-        active.add(e.to.name)
+      if (e.from.id === center || e.to.id === center) {
+        active.add(e.from.id)
+        active.add(e.to.id)
       }
     }
     return active
-  }, [edges, selectedNode, hoverNodeName])
-  const hasFocus = activeNames.size > 0
+  }, [edges, selectedNode, hoverNodeID])
+  const hasFocus = activeIds.size > 0
 
   return (
     <>
@@ -502,10 +571,10 @@ function Scene({ skills, selected, setSelected, hovered, setHovered, focusToken 
       <Stars radius={120} depth={60} count={3000} factor={4} saturation={0} fade speed={0.3} />
 
       {edges.map((e, i) => {
-        const active = activeNames.has(e.from.name) && activeNames.has(e.to.name)
+        const active = activeIds.has(e.from.id) && activeIds.has(e.to.id)
         return (
           <Edge
-            key={`e-${i}`}
+            key={`e-${e.from.id}-${e.to.id}-${i}`}
             from={e.from}
             to={e.to}
             active={active}
@@ -515,20 +584,20 @@ function Scene({ skills, selected, setSelected, hovered, setHovered, focusToken 
       })}
 
       {nodes.map(n => {
-        const active = activeNames.has(n.name)
+        const active = activeIds.has(n.id)
         const dimmed = hasFocus && !active
-        if (n.name === '__root') return <RootStar key={n.name} node={n} dimmed={dimmed} />
+        if (n.id === '__root') return <RootStar key={n.id} node={n} dimmed={dimmed} />
         return (
           <StarMesh
-            key={n.name}
+            key={n.id}
             node={n}
-            hovered={hovered === n.name}
-            selected={selected?.name === n.name}
+            hovered={hovered === n.id}
+            selected={selected?.id === n.entry?.id}
             active={active}
             dimmed={dimmed}
             onPointerOver={(e) => {
               e.stopPropagation()
-              setHovered(n.name)
+              setHovered(n.id)
               document.body.style.cursor = n.skill ? 'pointer' : 'default'
             }}
             onPointerOut={() => {
@@ -536,7 +605,7 @@ function Scene({ skills, selected, setSelected, hovered, setHovered, focusToken 
               document.body.style.cursor = 'auto'
             }}
             onClick={() => {
-              if (n.skill) setSelected(n.skill)
+              if (n.entry) setSelected(n.entry)
             }}
           />
         )
@@ -676,7 +745,8 @@ function DetailPanel({ skill, onClose, onRun, running }: { skill: SkillItem; onC
 // ---- Main component --------------------------------------------------------
 
 export default function SkillTree3D({ skills }: { skills: SkillItem[] }) {
-  const [selected, setSelected] = useState<SkillItem | null>(null)
+  const skillEntries = useMemo(() => createSkillEntries(skills), [skills])
+  const [selected, setSelected] = useState<SkillEntry | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [autoRotate, setAutoRotate] = useState(true)
   const [query, setQuery] = useState('')
@@ -689,31 +759,34 @@ export default function SkillTree3D({ skills }: { skills: SkillItem[] }) {
   const tags = useMemo(() => uniqueSorted(skills.flatMap(s => [...(s.tags || []), ...(s.category_path || []).slice(0, 1)])), [skills])
 
   const visibleSkills = useMemo(() => {
-    let out = skills.filter(sk => matchesSkillQuery(sk, query))
+    let out = skillEntries.filter(entry => matchesSkillQuery(entry.skill, query))
     if (tagFilter !== 'all') {
-      out = out.filter(sk => (sk.tags || []).includes(tagFilter) || (sk.category_path || []).includes(tagFilter))
+      out = out.filter(entry => (entry.skill.tags || []).includes(tagFilter) || (entry.skill.category_path || []).includes(tagFilter))
     }
     if (localGraph && selected) {
-      const keep = relatedSkillNames(skills, selected, 2)
-      out = out.filter(sk => keep.has(sk.name))
-    }
-    if (selected && !out.some(sk => sk.name === selected.name)) {
-      setSelected(null)
+      const keep = relatedSkillIds(skillEntries, selected, 2)
+      out = out.filter(entry => keep.has(entry.id))
     }
     return out
-  }, [skills, query, tagFilter, localGraph, selected])
+  }, [skillEntries, query, tagFilter, localGraph, selected])
+
+  useEffect(() => {
+    if (selected && !visibleSkills.some(entry => entry.id === selected.id)) {
+      setSelected(null)
+    }
+  }, [selected, visibleSkills])
 
   const searchMatches = useMemo(() => {
     if (!query.trim()) return []
-    return skills.filter(sk => matchesSkillQuery(sk, query)).slice(0, 6)
-  }, [skills, query])
+    return skillEntries.filter(entry => matchesSkillQuery(entry.skill, query)).slice(0, 6)
+  }, [skillEntries, query])
 
   useEffect(() => {
     if (selected !== null || hovered !== null) setAutoRotate(false)
   }, [selected, hovered])
 
-  const selectAndFocus = (skill: SkillItem) => {
-    setSelected(skill)
+  const selectAndFocus = (entry: SkillEntry) => {
+    setSelected(entry)
     setFocusToken(t => t + 1)
     setAutoRotate(false)
   }
@@ -788,9 +861,9 @@ export default function SkillTree3D({ skills }: { skills: SkillItem[] }) {
           {searchMatches.length > 0 && (
             <div className="mt-1 overflow-hidden rounded-xl ring-1 ring-black/30 bg-gray-900/95 shadow-2xl backdrop-blur">
               {searchMatches.map(sk => (
-                <button key={sk.name} onClick={() => selectAndFocus(sk)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-800/80">
-                  <span>{getSkillIcon(sk)}</span>
-                  <span className="truncate">{sk.name}</span>
+                <button key={sk.id} onClick={() => selectAndFocus(sk)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-800/80">
+                  <span>{getSkillIcon(sk.skill)}</span>
+                  <span className="truncate">{sk.skill.name}</span>
                 </button>
               ))}
             </div>
@@ -840,7 +913,7 @@ export default function SkillTree3D({ skills }: { skills: SkillItem[] }) {
         {autoRotate && <span className="ml-2 text-smara-400">⟳</span>}
       </div>
 
-      {selected && <DetailPanel skill={selected} onClose={() => setSelected(null)} onRun={runSkill} running={runningSkill === selected.name} />}
+      {selected && <DetailPanel skill={selected.skill} onClose={() => setSelected(null)} onRun={runSkill} running={runningSkill === selected.skill.name} />}
 
       {runResult && (
         <div className="absolute bottom-4 left-4 z-30 w-96 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl ring-1 ring-black/35 bg-gray-900/95 shadow-2xl backdrop-blur">

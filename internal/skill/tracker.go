@@ -252,7 +252,37 @@ func (t *ExecutionTracker) RecordImprovement(si SkillImprovement) error {
 }
 
 func (t *ExecutionTracker) GetImprovements(skillName string, limit int) ([]SkillImprovement, error) {
-	return nil, nil
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := t.db.Query(`SELECT id, skill_name, version, triggered_at, trigger, change_summary, success_rate_before, success_rate_after, applied, proposed_json
+		FROM skill_improvements WHERE skill_name = ? ORDER BY triggered_at DESC LIMIT ?`, skillName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var improvements []SkillImprovement
+	for rows.Next() {
+		var item SkillImprovement
+		var applied int
+		if err := rows.Scan(
+			&item.ID,
+			&item.SkillName,
+			&item.Version,
+			&item.TriggeredAt,
+			&item.Trigger,
+			&item.ChangeSummary,
+			&item.SuccessRateBefore,
+			&item.SuccessRateAfter,
+			&applied,
+			&item.ProposedJSON,
+		); err != nil {
+			return nil, err
+		}
+		item.Applied = applied != 0
+		improvements = append(improvements, item)
+	}
+	return improvements, rows.Err()
 }
 
 func (t *ExecutionTracker) GlobalAnalytics() (map[string]interface{}, error) {

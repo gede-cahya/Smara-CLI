@@ -19,3 +19,5 @@ import (
 func main() {
 	Execute()
 }
+
+// air hot reload test marker - temporary changed

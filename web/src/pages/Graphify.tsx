@@ -239,7 +239,10 @@ export default function Graphify() {
         setWarning(`Graph has ${data.node_count} nodes — showing first 500. Use search to narrow results.`)
       }
     } catch (e: any) {
-      setError(e.message || 'Failed to load graph data')
+      const message = e?.status === 404 && String(e?.message || '').toLowerCase().includes('not found')
+        ? 'Backend Smara terlalu lama dan belum memiliki endpoint data Graphify. Restart development backend atau rebuild Smara CLI terbaru.'
+        : e.message || 'Failed to load graph data'
+      setError(message)
     } finally {
       setLoadingData(false)
     }

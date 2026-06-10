@@ -4,6 +4,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,4 +218,97 @@ func TestIsBlockingError(t *testing.T) {
 		}
 		assert.Equal(t, want, isBlockingError(err), "msg=%q", msg)
 	}
+}
+
+func TestWebSearchParsers_HandleModernRedirects(t *testing.T) {
+	duckHTML := `<div class="result__body"><a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Fddg">Duck Result</a><a class="result__snippet">Duck snippet</a></div>`
+	bingHTML := `<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9iaW5n">Bing Result</a></h2><p>Bing snippet</p></li>`
+	googleHTML := `<a href="/url?q=https%3A%2F%2Fexample.com%2Fgoogle&sa=U"><h3>Google Result</h3></a>`
+
+	duckResult, ok := parseDuckDuckGoResults("smara test", duckHTML)
+	require.True(t, ok)
+	assert.Contains(t, duckResult, "https://example.com/ddg")
+	assert.NotContains(t, duckResult, "duckduckgo.com/l")
+
+	bingResult, ok := parseBingResults("smara test", bingHTML)
+	require.True(t, ok)
+	assert.Contains(t, bingResult, "https://example.com/bing")
+	assert.NotContains(t, bingResult, "bing.com/ck")
+
+	googleResult, ok := parseGenericSearchResults("smara test", googleHTML)
+	require.True(t, ok)
+	assert.Contains(t, googleResult, "https://example.com/google")
+}
+
+func TestBuildSearchFallback_ReturnsDirectSearchLinks(t *testing.T) {
+	result := buildSearchFallback("smara cli", []string{"DuckDuckGo: 202", "Bing: blocked"})
+	assert.Contains(t, result, "DuckDuckGo: https://duckduckgo.com/?q=smara+cli")
+	assert.Contains(t, result, "DuckDuckGo Lite: https://lite.duckduckgo.com/lite/?q=smara+cli")
+	assert.Contains(t, result, "Bing: https://www.bing.com/search?q=smara+cli")
+	assert.Contains(t, result, "Google: https://www.google.com/search?q=smara+cli")
+	assert.Contains(t, result, "Detail kegagalan provider")
+}
+
+func TestFetchWebPage_HTMLRegression_LocalServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.Header.Get("User-Agent"), "Mozilla/5.0")
+		assert.Contains(t, r.Header.Get("Accept-Language"), "id-ID")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html>
+<head><title>ignored title</title><style>.x{display:none}</style></head>
+<body>
+<header>top nav</header><nav>menu</nav><form>login</form>
+<article><h1>Judul Utama</h1><p>Isi artikel &amp; data penting.<br>Baris kedua.</p></article>
+<script>alert('x')</script><footer>copyright</footer>
+</body></html>`))
+	}))
+	defer server.Close()
+
+	out, err := fetchWebPage(server.URL, 5000)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Fetched: "+server.URL)
+	assert.Contains(t, out, "Content-Type: text/html")
+	assert.Contains(t, out, "Judul Utama")
+	assert.Contains(t, out, "Isi artikel & data penting")
+	assert.Contains(t, out, "Baris kedua")
+	assert.NotContains(t, out, "alert")
+	assert.NotContains(t, out, "top nav")
+	assert.NotContains(t, out, "login")
+	assert.NotContains(t, out, "copyright")
+}
+
+func TestFetchWebPage_JSONRegression_LocalServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","items":[{"name":"smara"}]}`))
+	}))
+	defer server.Close()
+
+	out, err := fetchWebPage(server.URL, 20)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Fetched: "+server.URL)
+	assert.Contains(t, out, "Content-Type: application/json")
+	assert.Contains(t, out, "dipotong ke 20 karakter")
+	assert.Contains(t, out, `{"status":"ok"`)
+}
+
+func TestFetchWebPage_ReturnsHTTPStatusErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	_, err := fetchWebPage(server.URL, 1000)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 403")
+	assert.Contains(t, err.Error(), server.URL)
+}
+
+func TestExportData_RejectsNonObjectRows(t *testing.T) {
+	_, err := exportData(map[string]interface{}{
+		"format": "json",
+		"data":   []interface{}{map[string]interface{}{"ok": true}, "bad row"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "data[1] bukan object")
 }

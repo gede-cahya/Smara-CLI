@@ -1,14 +1,40 @@
 package web
 
 import (
+	"context"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/stretchr/testify/require"
 )
+
+type blockingWebSessionProvider struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingWebSessionProvider) Name() string { return "blocking-web-session" }
+
+func (p *blockingWebSessionProvider) Chat(_ []llm.Message) (*llm.ChatResponse, error) {
+	p.once.Do(func() { close(p.started) })
+	<-p.release
+	return &llm.ChatResponse{Content: "old response"}, nil
+}
+
+func (p *blockingWebSessionProvider) ChatWithTools(_ []llm.Message, _ []llm.ToolFunction) (*llm.ChatResponse, []llm.ToolCall, error) {
+	resp, err := p.Chat(nil)
+	return resp, nil, err
+}
+
+func (p *blockingWebSessionProvider) GenerateEmbedding(string) ([]float32, error) {
+	return nil, nil
+}
 
 func TestWebSessionManagerCopiesMCPConnectionsToSessionSupervisor(t *testing.T) {
 	manager := NewWebSessionManager(nil, llm.ProviderConfig{}, nil, "default", 1, 0, filepath.Join(t.TempDir(), "sessions.json"))
@@ -48,4 +74,45 @@ func TestWebSessionManagerRecordDirectResultPersistsWorkflowResponse(t *testing.
 	require.Equal(t, "jalankan workflow release", dto.History[1].Content)
 	require.Equal(t, "assistant", dto.History[2].Role)
 	require.Equal(t, "workflow selesai", dto.History[2].Content)
+}
+
+func TestWebSessionManagerStaleRunCannotOverwriteReplacementStatus(t *testing.T) {
+	provider := &blockingWebSessionProvider{started: make(chan struct{}), release: make(chan struct{})}
+	manager := NewWebSessionManager(provider, llm.ProviderConfig{}, nil, "default", 1, 0, filepath.Join(t.TempDir(), "sessions.json"))
+	session := manager.Create("Race", string(agent.ModeAsk))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := manager.Run(context.Background(), session.ID, "old prompt", string(agent.ModeAsk), agent.AgenticCallback{})
+		done <- err
+	}()
+
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("old run did not start")
+	}
+
+	session.mu.Lock()
+	oldCancel := session.cancel
+	session.activeRun++
+	session.Status = WebSessionRunning
+	session.Error = ""
+	session.cancel = nil
+	session.mu.Unlock()
+
+	require.NotNil(t, oldCancel)
+	oldCancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("old run did not stop after cancellation")
+	}
+	close(provider.release)
+
+	dto, ok := manager.GetCompact(session.ID, 10)
+	require.True(t, ok)
+	require.Equal(t, WebSessionRunning, dto.Status)
+	require.Empty(t, dto.Error)
 }

@@ -132,18 +132,6 @@ curl -fsSL https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.s
 irm https://raw.githubusercontent.com/gede-cahya/Smara-CLI/main/install.ps1 | iex
 ```
 
-### Desktop (Wails)
-Smara juga tersedia dalam bentuk aplikasi desktop modern:
-```bash
-cd smara-desktop
-wails build
-# atau untuk development
-wails dev
-```
-*Memerlukan Go 1.23+, Node.js, dan Wails CLI terinstall.*
-
----
-
 ## 📖 Panduan Penggunaan
 Untuk melihat panduan interaktif langsung di terminal, jalankan:
 ```bash

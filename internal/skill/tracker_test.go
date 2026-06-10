@@ -125,4 +125,11 @@ func TestExecutionTracker_RecordImprovement(t *testing.T) {
 	}
 	err := tr.RecordImprovement(imp)
 	require.NoError(t, err)
+
+	items, err := tr.GetImprovements("test", 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "auto-refine", items[0].Trigger)
+	assert.True(t, items[0].Applied)
+	assert.Equal(t, 2, items[0].Version)
 }

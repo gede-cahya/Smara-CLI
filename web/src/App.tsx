@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon, Zap } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon, Zap, Server, Loader2, WifiOff } from 'lucide-react'
 import { loadSmaraConfig } from './configStore'
 import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
@@ -91,6 +91,18 @@ const navItems = [
 
 const navGroups = ['Core', 'Build', 'Media', 'System']
 
+export type BackendState = 'checking' | 'online' | 'recovering' | 'offline'
+
+export interface BackendHealth {
+  state: BackendState
+  label: string
+  detail: string
+  since: number
+  provider: string
+  providerOnline: boolean | null
+  providerEndpoint: string
+}
+
 function loadTab(): string {
   try {
     const saved = localStorage.getItem(TAB_KEY)
@@ -99,9 +111,132 @@ function loadTab(): string {
   return 'chat'
 }
 
+function backendCopy(state: BackendState, seconds: number) {
+  if (state === 'online') return { label: 'Backend online', detail: 'API 8080 siap' }
+  if (state === 'checking') return { label: 'Cek backend', detail: 'Menghubungi API 8080' }
+  if (state === 'recovering') {
+    return {
+      label: 'Backend rebuild/restart',
+      detail: seconds >= 8 ? `Belum online ${seconds}s, cek terminal build` : 'Air sedang build ulang atau server restart',
+    }
+  }
+  return {
+    label: 'Backend offline',
+    detail: seconds >= 8 ? `Tidak merespons ${seconds}s, kemungkinan build gagal` : 'Menunggu API 8080 hidup',
+  }
+}
+
+function useBackendHealth(): BackendHealth {
+  const [health, setHealth] = useState<BackendHealth>(() => ({
+    state: 'checking',
+    label: 'Cek backend',
+    detail: 'Menghubungi API 8080',
+    since: Date.now(),
+    provider: '',
+    providerOnline: null,
+    providerEndpoint: '',
+  }))
+  const lastOnlineRef = useRef(false)
+
+  useEffect(() => {
+    let disposed = false
+
+    const update = (state: BackendState, providerHealth?: { provider?: string; provider_online?: boolean; provider_endpoint?: string }) => {
+      setHealth(prev => {
+        const since = prev.state === state ? prev.since : Date.now()
+        const seconds = Math.max(0, Math.floor((Date.now() - since) / 1000))
+        const copy = backendCopy(state, seconds)
+        return {
+          ...prev,
+          state,
+          since,
+          ...copy,
+          provider: providerHealth?.provider ?? prev.provider,
+          providerOnline: state === 'online' ? (providerHealth?.provider_online ?? null) : false,
+          providerEndpoint: providerHealth?.provider_endpoint ?? prev.providerEndpoint,
+        }
+      })
+    }
+
+    const check = async () => {
+      if (document.hidden) return
+      const controller = new AbortController()
+      const timer = window.setTimeout(() => controller.abort(), 1600)
+      try {
+        const res = await fetch('/api/status', { signal: controller.signal, cache: 'no-store' })
+        window.clearTimeout(timer)
+        if (!disposed && res.ok) {
+          const status = await res.json() as { provider?: string; provider_online?: boolean; provider_endpoint?: string }
+          lastOnlineRef.current = true
+          update('online', status)
+          return
+        }
+      } catch {
+        window.clearTimeout(timer)
+      }
+      if (!disposed) update(lastOnlineRef.current ? 'recovering' : 'offline')
+    }
+
+    void check()
+    const interval = window.setInterval(check, 2000)
+    const handleVisibility = () => {
+      if (!document.hidden) void check()
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (health.state === 'online') return
+    const interval = window.setInterval(() => {
+      if (document.hidden) return
+      setHealth(prev => {
+        if (prev.state === 'online') return prev
+        const seconds = Math.max(0, Math.floor((Date.now() - prev.since) / 1000))
+        return { ...prev, ...backendCopy(prev.state, seconds) }
+      })
+    }, 1000)
+    return () => window.clearInterval(interval)
+  }, [health.state])
+
+  return health
+}
+
+function BackendStatusPill({ health, compact = false }: { health: BackendHealth; compact?: boolean }) {
+  const isOnline = health.state === 'online'
+  const isChecking = health.state === 'checking'
+  const Icon = isOnline ? Server : isChecking ? Loader2 : WifiOff
+  const tone = isOnline
+    ? 'border-emerald-400/15 bg-emerald-400/10 text-emerald-200'
+    : health.state === 'recovering'
+      ? 'border-amber-400/20 bg-amber-400/10 text-amber-100'
+      : 'border-red-400/20 bg-red-500/10 text-red-200'
+
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${tone}`}>
+      <div className="flex items-center gap-2 text-[11px] font-medium">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${isChecking ? 'animate-spin' : ''}`} />
+        <span className="truncate">{health.label}</span>
+      </div>
+      {!compact && <div className="mt-1 text-[10px] opacity-70">{health.detail}</div>}
+      {!compact && health.state === 'online' && (
+        <div className={`mt-1 text-[10px] ${health.providerOnline ? 'text-emerald-200/80' : 'text-red-200'}`}>
+          LLM {health.providerOnline === null ? 'checking' : health.providerOnline ? 'online' : 'offline'}
+          {health.provider ? ` · ${health.provider}` : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const [active, setActiveRaw] = useState(loadTab)
   const chatRef = useRef<ChatHandle>(null)
+  const backendHealth = useBackendHealth()
   const setActive = (id: string) => {
     setActiveRaw(id)
     try { localStorage.setItem(TAB_KEY, id) } catch {}
@@ -117,6 +252,28 @@ export default function App() {
     window.addEventListener('storage', storageHandler)
     return () => window.removeEventListener('storage', storageHandler)
   }, [])
+
+  const activePage = (() => {
+    switch (active) {
+      case 'chat': return <PageErrorBoundary label="Chat"><Chat ref={chatRef} health={backendHealth} /></PageErrorBoundary>
+      case 'image-flow': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><ImageFlow /></Suspense>
+      case 'workflow': return <Workflow />
+      case 'magic-pointer': return <MagicPointer />
+      case 'voice': return <VoiceAssistant />
+      case 'avatar': return <AvatarAssistant />
+      case 'remote-desktop': return <RemoteDesktop />
+      case 'custom-workflow': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense>
+      case 'parallel-tasks': return <ParallelTasks />
+      case 'skilltree': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense>
+      case 'skilldash': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense>
+      case 'graphify': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense>
+      case 'memory': return <Memory />
+      case 'workspace': return <Workspace />
+      case 'config': return <Config />
+      case 'dashboard': return <Dashboard />
+      default: return <PageErrorBoundary label="Chat"><Chat ref={chatRef} health={backendHealth} /></PageErrorBoundary>
+    }
+  })()
 
   return (
     <div className="smara-shell flex h-screen w-screen overflow-hidden text-gray-100">
@@ -139,9 +296,10 @@ export default function App() {
               <div className="text-[10px] uppercase tracking-[0.24em] text-smara-200/70">Autonomous Console</div>
             </div>
           </div>
-          <div className="mt-4 rounded-2xl border border-neutral-900/70 bg-neutral-900/35 px-3 py-2 shadow-inner shadow-black/20">
-            <div className="flex items-center gap-2 text-[11px] text-smara-100"><Sparkles className="h-3.5 w-3.5 text-smara-300" /> Ready for work</div>
+          <div className="mt-4 space-y-2 rounded-2xl border border-neutral-900/70 bg-neutral-900/35 px-3 py-2 shadow-inner shadow-black/20">
+            <div className="flex items-center gap-2 text-[11px] text-smara-100"><Sparkles className="h-3.5 w-3.5 text-smara-300" /> Local console</div>
             <div className="mt-1 text-[10px] text-neutral-500">CLI · Web · Skills · Memory</div>
+            <BackendStatusPill health={backendHealth} />
           </div>
         </div>
 
@@ -194,22 +352,7 @@ export default function App() {
 
       <main className="relative z-10 flex-1 overflow-hidden p-4">
         <div className="h-full overflow-hidden rounded-[1.65rem] bg-[#151d10]/96 shadow-2xl shadow-black/22 backdrop-blur-xl ring-1 ring-black/35">
-          <div className={active === 'chat' ? 'h-full' : 'hidden'}><PageErrorBoundary label="Chat"><Chat ref={chatRef} /></PageErrorBoundary></div>
-          <div className={active === 'image-flow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><ImageFlow /></Suspense></div>
-          <div className={active === 'workflow' ? 'h-full' : 'hidden'}><Workflow /></div>
-          <div className={active === 'magic-pointer' ? 'h-full' : 'hidden'}><MagicPointer /></div>
-          <div className={active === 'voice' ? 'h-full' : 'hidden'}><VoiceAssistant /></div>
-          <div className={active === 'avatar' ? 'h-full' : 'hidden'}><AvatarAssistant /></div>
-          <div className={active === 'remote-desktop' ? 'h-full' : 'hidden'}><RemoteDesktop /></div>
-          <div className={active === 'custom-workflow' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><CustomWorkflow /></Suspense></div>
-          <div className={active === 'parallel-tasks' ? 'h-full' : 'hidden'}><ParallelTasks /></div>
-          <div className={active === 'skilltree' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillTree /></Suspense></div>
-          <div className={active === 'skilldash' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SkillDashboard /></Suspense></div>
-          <div className={active === 'graphify' ? 'h-full' : 'hidden'}><Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><Graphify /></Suspense></div>
-          <div className={active === 'memory' ? 'h-full' : 'hidden'}><Memory /></div>
-          <div className={active === 'workspace' ? 'h-full' : 'hidden'}><Workspace /></div>
-          <div className={active === 'config' ? 'h-full' : 'hidden'}><Config /></div>
-          <div className={active === 'dashboard' ? 'h-full' : 'hidden'}><Dashboard /></div>
+          <div className="h-full">{activePage}</div>
         </div>
       </main>
     </div>

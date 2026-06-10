@@ -1,12 +1,12 @@
-VERSION := 1.20.11
+VERSION := $(shell cat VERSION)
 BINARY := smara
 GOFLAGS := -trimpath
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := linux/amd64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: all build clean install release test-cloud web-build sync-dist
+AIR_BIN := $(shell command -v air 2>/dev/null || printf '%s/bin/air' "$$(go env GOPATH 2>/dev/null)")
 
-all: build
+.PHONY: all build clean install release test-cloud web-build sync-dist dev dev-web dev-backend dev-frontend dev-stop dev-check-tools dev-install-tools
 
 # Build the React front-end and copy the dist into internal/web so that
 # //go:embed picks it up. Run this whenever the front-end changes.
@@ -60,5 +60,73 @@ release: clean sync-dist
 # Arch Linux package
 pkg-arch:
 	makepkg -si
+
+dev: dev-web
+
+# Browser development mode: frontend HMR on :5173 + Go backend auto-reload on :8080.
+dev-web: dev-check-tools dev-stop
+	@echo "Starting Smara Web development mode..."
+	@echo "Frontend: http://127.0.0.1:5173"
+	@echo "Backend:  http://127.0.0.1:8080"
+	@frontend_pid=""; air_pid=""; \
+		cleanup() { \
+			[ -n "$$air_pid" ] && kill "$$air_pid" >/dev/null 2>&1 || true; \
+			[ -n "$$frontend_pid" ] && kill "$$frontend_pid" >/dev/null 2>&1 || true; \
+		}; \
+		trap 'cleanup; exit 0' INT TERM; \
+		trap 'cleanup' EXIT; \
+		(cd web && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort) & \
+		frontend_pid=$$!; \
+		while true; do \
+			"$(AIR_BIN)" & \
+			air_pid=$$!; \
+			wait $$air_pid; \
+			status=$$?; \
+			air_pid=""; \
+			if ! kill -0 $$frontend_pid >/dev/null 2>&1; then \
+				echo "Frontend dev server stopped; exiting."; \
+				exit $$status; \
+			fi; \
+			echo "Backend watcher stopped with status $$status; restarting in 2s..."; \
+			sleep 2; \
+		done
+
+dev-backend: dev-check-tools
+	@air_pid=""; \
+		cleanup() { \
+			[ -n "$$air_pid" ] && kill "$$air_pid" >/dev/null 2>&1 || true; \
+		}; \
+		trap 'cleanup; exit 0' INT TERM; \
+		trap 'cleanup' EXIT; \
+		while true; do \
+			"$(AIR_BIN)" & \
+			air_pid=$$!; \
+			wait $$air_pid; \
+			status=$$?; \
+			air_pid=""; \
+			echo "Backend watcher stopped with status $$status; restarting in 2s..."; \
+			sleep 2; \
+		done
+
+dev-frontend:
+	cd web && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+
+dev-stop:
+	-@lsof -ti:8080 | xargs -r kill
+	-@lsof -ti:5173 | xargs -r kill
+
+dev-check-tools:
+	@command -v npm >/dev/null 2>&1 || { echo "Missing 'npm'. Install Node.js/npm first."; exit 1; }
+	@command -v curl >/dev/null 2>&1 || { echo "Missing 'curl'. Install curl first."; exit 1; }
+	@command -v lsof >/dev/null 2>&1 || { echo "Missing 'lsof'. Install lsof first."; exit 1; }
+	@if [ ! -x "$(AIR_BIN)" ]; then \
+		echo "Installing air to $$(go env GOPATH)/bin/air..."; \
+		go install github.com/air-verse/air@latest; \
+	fi
+
+dev-install-tools:
+	@go install github.com/air-verse/air@latest
+	@echo "air installed at $$(go env GOPATH)/bin/air"
+	@command -v npm >/dev/null 2>&1 || { echo "Missing 'npm'. Install Node.js/npm first."; exit 1; }
 
 .DEFAULT_GOAL := build

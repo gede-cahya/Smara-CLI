@@ -98,17 +98,38 @@ func AutoApplyRefinement(proposedJSON string, sk *Skill, tracker *ExecutionTrack
 	}
 	newSkill.Name = sk.Name
 	newSkill.Version = sk.Version + 1
+	if err := newSkill.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid refined skill: %w", err)
+	}
 	// Preserve ancestry so the Hierarchy view can render the refine chain.
 	AttachLineage(newSkill, sk, "auto")
+	if !cfg.AutoApply {
+		if tracker != nil {
+			_ = tracker.RecordImprovement(SkillImprovement{
+				SkillName:     sk.Name,
+				Version:       newSkill.Version,
+				TriggeredAt:   time.Now(),
+				Trigger:       "auto-refine",
+				ChangeSummary: "Refinement proposal generated and waiting for review.",
+				Applied:       false,
+				ProposedJSON:  proposedJSON,
+			})
+		}
+		return newSkill, nil
+	}
 	if err := Save(newSkill, nil); err != nil {
 		return nil, fmt.Errorf("failed to save refined skill: %w", err)
 	}
-	_ = tracker.RecordImprovement(SkillImprovement{
-		SkillName:   sk.Name,
-		Version:     newSkill.Version,
-		TriggeredAt: time.Now(),
-		Trigger:     "auto-refine",
-		Applied:     true,
-	})
+	if tracker != nil {
+		_ = tracker.RecordImprovement(SkillImprovement{
+			SkillName:     sk.Name,
+			Version:       newSkill.Version,
+			TriggeredAt:   time.Now(),
+			Trigger:       "auto-refine",
+			ChangeSummary: "Automatically refined after repeated execution failures.",
+			Applied:       true,
+			ProposedJSON:  proposedJSON,
+		})
+	}
 	return newSkill, nil
 }

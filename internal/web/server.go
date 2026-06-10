@@ -80,6 +80,18 @@ func NewServer(addr string, supervisor *agent.Supervisor, memStore memory.Memory
 	return srv
 }
 
+func (s *Server) registerGraphRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/graph/init", s.handleGraphInit)
+	mux.HandleFunc("/api/graph/list", s.handleGraphList)
+	mux.HandleFunc("/api/graph/get", s.handleGraphGet)
+	mux.HandleFunc("/api/graph/nodes", s.handleGraphNodes)
+	mux.HandleFunc("/api/graph/query", s.handleGraphQuery)
+	mux.HandleFunc("/api/graph/neighbors", s.handleGraphNeighbors)
+	mux.HandleFunc("/api/graph/path", s.handleGraphPath)
+	mux.HandleFunc("/api/graph/data", s.handleGraphData)
+	mux.HandleFunc("/api/graph/export", s.handleGraphExport)
+}
+
 // Start launches the HTTP server and blocks until shutdown.
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -155,7 +167,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/image-flow/audit", s.handleImageFlowAudit)
 	mux.HandleFunc("/api/image-flow/cancel", s.handleImageFlowCancel)
 	mux.HandleFunc("/api/image-flow/retry", s.handleImageFlowRetry)
-	mux.HandleFunc("/api/graph/list", s.handleGraphList)
+	s.registerGraphRoutes(mux)
 	mux.HandleFunc("/api/browser-artifact", s.handleBrowserArtifact)
 	mux.HandleFunc("/api/web-sessions", s.handleWebSessions)
 	mux.HandleFunc("/api/web-sessions/", s.handleWebSessionByID)

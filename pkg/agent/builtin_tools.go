@@ -2,7 +2,9 @@ package agent
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gede-cahya/Smara-CLI/pkg/llm"
 )
@@ -746,74 +749,379 @@ func searchPath(query, root string, logFn func(string, string)) (string, error) 
 }
 
 func searchWeb(query string) (string, error) {
-	searchURL := fmt.Sprintf("https://duckduckgo.com/html/?q=%s", url.QueryEscape(query))
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", fmt.Errorf("query pencarian kosong")
+	}
 
+	providers := []struct {
+		name  string
+		url   string
+		parse func(string, string) (string, bool)
+	}{
+		{name: "DuckDuckGo", url: fmt.Sprintf("https://duckduckgo.com/html/?q=%s", url.QueryEscape(query)), parse: parseDuckDuckGoResults},
+		{name: "DuckDuckGo Lite", url: fmt.Sprintf("https://lite.duckduckgo.com/lite/?q=%s", url.QueryEscape(query)), parse: parseDuckDuckGoResults},
+		{name: "Bing RSS", url: fmt.Sprintf("https://www.bing.com/search?format=rss&q=%s&setlang=id-ID&count=10", url.QueryEscape(query)), parse: parseBingRSSResults},
+		{name: "Bing", url: fmt.Sprintf("https://www.bing.com/search?q=%s&setlang=id-ID&count=10", url.QueryEscape(query)), parse: parseBingResults},
+		{name: "Google", url: fmt.Sprintf("https://www.google.com/search?q=%s&hl=id&num=10", url.QueryEscape(query)), parse: parseGoogleResults},
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	errs := []string{}
+	for _, provider := range providers {
+		htmlBody, err := fetchSearchHTML(client, provider.url)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", provider.name, err))
+			continue
+		}
+		if result, ok := provider.parse(query, htmlBody); ok {
+			if provider.name != "DuckDuckGo" && provider.name != "DuckDuckGo Lite" {
+				return fmt.Sprintf("⚠ DuckDuckGo tidak tersedia/hasilnya tidak terparse, memakai fallback %s.\n\n%s", provider.name, result), nil
+			}
+			return result, nil
+		}
+		if result, ok := parseGenericSearchResults(query, htmlBody); ok {
+			return fmt.Sprintf("⚠ Parser khusus %s tidak menemukan hasil, memakai parser generic.\n\n%s", provider.name, result), nil
+		}
+		errs = append(errs, provider.name+": tidak ada hasil terparse")
+	}
+
+	// Jangan biarkan tool benar-benar buntu ketika search engine memblokir,
+	// mengubah HTML, atau jaringan sedang membatasi TLS/anti-bot. Kembalikan
+	// tautan pencarian langsung supaya agent tetap bisa membantu user dan bisa
+	// lanjut dengan web_fetch pada URL yang diberikan user.
+	return buildSearchFallback(query, errs), nil
+}
+
+func buildSearchFallback(query string, errs []string) string {
+	encoded := url.QueryEscape(strings.TrimSpace(query))
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### Pencarian web untuk: '%s'\n\n", query))
+	sb.WriteString("⚠ Semua provider search gagal atau hasilnya tidak dapat diparse otomatis. Berikut tautan pencarian langsung yang bisa dibuka/difetch ulang:\n\n")
+	sb.WriteString(fmt.Sprintf("1. DuckDuckGo: https://duckduckgo.com/?q=%s\n", encoded))
+	sb.WriteString(fmt.Sprintf("2. DuckDuckGo Lite: https://lite.duckduckgo.com/lite/?q=%s\n", encoded))
+	sb.WriteString(fmt.Sprintf("3. Bing: https://www.bing.com/search?q=%s\n", encoded))
+	sb.WriteString(fmt.Sprintf("4. Google: https://www.google.com/search?q=%s\n", encoded))
+	if len(errs) > 0 {
+		maxErrs := len(errs)
+		if maxErrs > 5 {
+			maxErrs = 5
+		}
+		sb.WriteString("\nDetail kegagalan provider:\n")
+		for i := 0; i < maxErrs; i++ {
+			sb.WriteString(fmt.Sprintf("- %s\n", errs[i]))
+		}
+		if len(errs) > maxErrs {
+			sb.WriteString(fmt.Sprintf("- ... dan %d error lain\n", len(errs)-maxErrs))
+		}
+	}
+	return sb.String()
+}
+
+func fetchSearchHTML(client *http.Client, searchURL string) (string, error) {
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
 		return "", err
 	}
-
-	// Gunakan User-Agent stealth untuk menghindari blokir
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/rss+xml,application/xml;q=0.8,*/*;q=0.7")
+	req.Header.Set("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7")
 
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("gagal menghubungi search engine: %w", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("search engine mengembalikan status: %d", resp.StatusCode)
 	}
-
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
 		return "", err
 	}
+	return string(body), nil
+}
 
-	html := string(body)
+func parseDuckDuckGoResults(query, htmlBody string) (string, bool) {
+	patterns := []*regexp.Regexp{
+		// DuckDuckGo HTML. Attribute order/classes can change, so keep this tolerant.
+		regexp.MustCompile(`(?is)<div[^>]+class=["'][^"']*result__body[^"']*["'][^>]*>.*?<a[^>]+class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>.*?<(?:a|div)[^>]+class=["'][^"']*result__snippet[^"']*["'][^>]*>(.*?)</(?:a|div)>`),
+		regexp.MustCompile(`(?is)<div[^>]+class=["'][^"']*result__body[^"']*["'][^>]*>.*?<a[^>]+href=["']([^"']+)["'][^>]*class=["'][^"']*result__a[^"']*["'][^>]*>(.*?)</a>.*?<(?:a|div)[^>]+class=["'][^"']*result__snippet[^"']*["'][^>]*>(.*?)</(?:a|div)>`),
+		// DuckDuckGo Lite.
+		regexp.MustCompile(`(?is)<a[^>]+class=["'][^"']*result-link[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>.*?<td[^>]+class=["'][^"']*result-snippet[^"']*["'][^>]*>(.*?)</td>`),
+		regexp.MustCompile(`(?is)<a[^>]+href=["']([^"']+)["'][^>]*class=["'][^"']*result-link[^"']*["'][^>]*>(.*?)</a>.*?<td[^>]+class=["'][^"']*result-snippet[^"']*["'][^>]*>(.*?)</td>`),
+	}
+	for _, re := range patterns {
+		if result, ok := formatSearchMatches(query, re.FindAllStringSubmatch(htmlBody, 10)); ok {
+			return result, true
+		}
+	}
+	return "", false
+}
 
-	// Regex sederhana untuk mengekstrak hasil (title, link, snippet)
-	// Struktur: <a class="result__a" href="URL">TITLE</a> ... <a class="result__snippet">SNIPPET</a>
-	re := regexp.MustCompile(`(?s)<div class="result__body">.*?<a class="result__a" href="(.*?)">(.*?)</a>.*?<a class="result__snippet".*?>(.*?)</a>`)
-	matches := re.FindAllStringSubmatch(html, 10)
+func parseGoogleResults(query, htmlBody string) (string, bool) {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?is)<a\s+href=["']/url\?q=([^"'&]+)[^"']*["'][^>]*>(.*?)</a>`),
+		regexp.MustCompile(`(?is)<a\s+href=["'](https?://[^"']+)["'][^>]*>\s*<br\s*/?>?\s*<h3[^>]*>(.*?)</h3>`),
+		regexp.MustCompile(`(?is)<a\s+href=["'](https?://[^"']+)["'][^>]*>.*?<h3[^>]*>(.*?)</h3>.*?</a>`),
+	}
+	for _, re := range patterns {
+		if result, ok := formatSearchMatches(query, re.FindAllStringSubmatch(htmlBody, 10)); ok {
+			return result, true
+		}
+	}
+	return "", false
+}
 
+func parseBingResults(query, htmlBody string) (string, bool) {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?is)<li[^>]+class=["'][^"']*b_algo[^"']*["'][^>]*>.*?<h2[^>]*>.*?<a\s+href=["'](https?://[^"']+)["'][^>]*>(.*?)</a>.*?</h2>.*?<p[^>]*>(.*?)</p>`),
+		regexp.MustCompile(`(?is)<li[^>]+class=["'][^"']*b_algo[^"']*["'][^>]*>.*?<a\s+href=["'](https?://[^"']+)["'][^>]*>(.*?)</a>`),
+		regexp.MustCompile(`(?is)<h2[^>]*>\s*<a\s+href=["'](https?://[^"']+)["'][^>]*>(.*?)</a>\s*</h2>`),
+	}
+	for _, re := range patterns {
+		if result, ok := formatSearchMatches(query, re.FindAllStringSubmatch(htmlBody, 10)); ok {
+			return result, true
+		}
+	}
+	return "", false
+}
+
+func parseBingRSSResults(query, xmlBody string) (string, bool) {
+	re := regexp.MustCompile(`(?is)<item\b[^>]*>.*?<title>(.*?)</title>.*?<link>(.*?)</link>.*?(?:<description>|<content:encoded>)(.*?)(?:</description>|</content:encoded>).*?</item>`)
+	matches := re.FindAllStringSubmatch(xmlBody, 10)
 	if len(matches) == 0 {
-		return "Tidak ada hasil pencarian yang ditemukan atau format halaman berubah.", nil
+		return "", false
+	}
+	converted := make([][]string, 0, len(matches))
+	for _, m := range matches {
+		converted = append(converted, []string{m[0], m[2], m[1], m[3]})
+	}
+	return formatSearchMatches(query, converted)
+}
+
+func parseGenericSearchResults(query, htmlBody string) (string, bool) {
+	// Generic fallback for frequently changing search-result HTML. Prefer
+	// anchors that expose an h3 title, then fall back to a tolerant anchor
+	// scanner. Search engines often alter wrappers/classes while keeping links.
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?is)<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>\s*<h3[^>]*>(.*?)</h3>.*?</a>`),
+		regexp.MustCompile(`(?is)<h3[^>]*>\s*<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)</a>\s*</h3>`),
+		regexp.MustCompile(`(?is)<a\b[^>]*\bhref=["'](https?://[^"']+)["'][^>]*>(.*?)</a>`),
+		regexp.MustCompile(`(?is)<a\b[^>]*\bhref=["'](/url\?q=[^"']+)["'][^>]*>(.*?)</a>`),
+	}
+	for _, re := range patterns {
+		if result, ok := formatSearchMatches(query, re.FindAllStringSubmatch(htmlBody, 30)); ok {
+			return result, true
+		}
+	}
+	return formatSearchMatches(query, extractSearchAnchors(htmlBody, 40))
+}
+
+func extractSearchAnchors(htmlBody string, limit int) [][]string {
+	if limit <= 0 {
+		limit = 40
+	}
+	anchorRe := regexp.MustCompile(`(?is)<a\b([^>]*)>(.*?)</a>`)
+	hrefRe := regexp.MustCompile(`(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	matches := anchorRe.FindAllStringSubmatch(htmlBody, -1)
+	out := make([][]string, 0, limit)
+	for _, m := range matches {
+		if len(m) < 3 {
+			continue
+		}
+		h := hrefRe.FindStringSubmatch(m[1])
+		if len(h) == 0 {
+			continue
+		}
+		rawHref := firstNonEmpty(h[1:]...)
+		title := cleanHTML(m[2])
+		if rawHref == "" || title == "" || len([]rune(title)) < 3 {
+			continue
+		}
+		// Drop obvious navigation/noise anchors before formatting.
+		lowerTitle := strings.ToLower(title)
+		if lowerTitle == "images" || lowerTitle == "videos" || lowerTitle == "news" || lowerTitle == "maps" || lowerTitle == "login" || lowerTitle == "sign in" || lowerTitle == "next" {
+			continue
+		}
+		out = append(out, []string{m[0], rawHref, title})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func formatSearchMatches(query string, matches [][]string) (string, bool) {
+	if len(matches) == 0 {
+		return "", false
 	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("### Hasil Pencarian Internet untuk: '%s'\n\n", query))
+	seen := map[string]bool{}
+	count := 0
 
-	for i, m := range matches {
-		link := m[1]
-		// Bersihkan link jika melalui proxy DDG
-		if strings.Contains(link, "uddg=") {
+	for _, m := range matches {
+		if len(m) < 3 {
+			continue
+		}
+
+		link := normalizeSearchLink(m[1])
+		title := cleanHTML(m[2])
+		snippet := ""
+		if len(m) > 3 {
+			snippet = cleanHTML(m[3])
+		}
+
+		if title == "" || link == "" || isSearchInternalLink(link) || seen[link] {
+			continue
+		}
+		seen[link] = true
+		count++
+
+		if snippet != "" {
+			sb.WriteString(fmt.Sprintf("%d. **%s**\n   - Link: %s\n   - %s\n\n", count, title, link, snippet))
+		} else {
+			sb.WriteString(fmt.Sprintf("%d. **%s**\n   - Link: %s\n\n", count, title, link))
+		}
+		if count >= 10 {
+			break
+		}
+	}
+
+	if count == 0 {
+		return "", false
+	}
+	return sb.String(), true
+}
+
+func normalizeSearchLink(link string) string {
+	link = strings.TrimSpace(html.UnescapeString(link))
+	if link == "" {
+		return ""
+	}
+
+	// Google redirect: /url?q=https://example.com or full URL with q parameter.
+	if strings.HasPrefix(link, "/url?") || strings.Contains(link, "?q=") || strings.Contains(link, "&q=") {
+		if u, err := url.Parse(link); err == nil {
+			if q := u.Query().Get("q"); q != "" {
+				link = q
+			}
+		}
+	}
+
+	// DuckDuckGo redirect: /l/?uddg=https%3A%2F%2Fexample.com
+	if strings.Contains(link, "uddg=") {
+		if u, err := url.Parse(link); err == nil {
+			if uddg := u.Query().Get("uddg"); uddg != "" {
+				link = uddg
+			}
+		} else {
 			parts := strings.Split(link, "uddg=")
 			if len(parts) > 1 {
 				decoded, _ := url.QueryUnescape(strings.Split(parts[1], "&")[0])
 				link = decoded
 			}
 		}
-
-		title := cleanHTML(m[2])
-		snippet := cleanHTML(m[3])
-
-		sb.WriteString(fmt.Sprintf("%d. **%s**\n   - Link: %s\n   - %s\n\n", i+1, title, link, snippet))
 	}
 
-	return sb.String(), nil
+	// Bing redirect: https://www.bing.com/ck/a?...&u=a1aHR0cHM6Ly9leGFtcGxlLmNvbQ&...
+	if strings.Contains(link, "bing.com/ck/") {
+		if u, err := url.Parse(link); err == nil {
+			if target := decodeBingUParam(u.Query().Get("u")); target != "" {
+				link = target
+			}
+		}
+	}
+
+	if decoded, err := url.QueryUnescape(link); err == nil {
+		link = decoded
+	}
+	link = strings.TrimSpace(link)
+	if u, err := url.Parse(link); err == nil && u.Scheme != "" && u.Host != "" {
+		return u.String()
+	}
+	return link
 }
 
+func decodeBingUParam(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	// Bing commonly prefixes the URL-safe base64 payload with "a1".
+	if strings.HasPrefix(value, "a1") && len(value) > 2 {
+		value = value[2:]
+	}
+
+	// Add missing base64 padding when Bing omits it.
+	for len(value)%4 != 0 {
+		value += "="
+	}
+
+	decoded, err := base64.URLEncoding.DecodeString(value)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(value)
+	}
+	if err != nil {
+		return ""
+	}
+	out := strings.TrimSpace(string(decoded))
+	if u, err := url.Parse(out); err == nil && u.Scheme != "" && u.Host != "" {
+		return u.String()
+	}
+	return ""
+}
 func cleanHTML(s string) string {
-	// Hapus tag HTML dasar dan decode entitas umum
-	s = regexp.MustCompile(`<.*?>`).ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&quot;", "\"")
-	s = strings.ReplaceAll(s, "&#39;", "'")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
+	if s == "" {
+		return ""
+	}
+	// Remove tags/scripts that may appear inside titles/snippets, decode entities,
+	// and collapse whitespace so parser output is stable across providers.
+	s = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`).ReplaceAllString(s, " ")
+	s = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`).ReplaceAllString(s, " ")
+	s = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(s, " ")
+	s = html.UnescapeString(s)
+	s = decodeEntities(s)
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
+}
+
+func isSearchInternalLink(link string) bool {
+	link = strings.TrimSpace(strings.ToLower(link))
+	if link == "" || strings.HasPrefix(link, "#") || strings.HasPrefix(link, "javascript:") || strings.HasPrefix(link, "mailto:") {
+		return true
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		return true
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return true
+	}
+	host := strings.TrimPrefix(u.Hostname(), "www.")
+	path := strings.ToLower(u.EscapedPath())
+
+	// Exclude search/navigation/redirect-only URLs so generic fallback does not
+	// return provider chrome instead of actual web results.
+	if strings.Contains(host, "google.") {
+		return strings.HasPrefix(path, "/search") || strings.HasPrefix(path, "/preferences") || strings.HasPrefix(path, "/advanced_search") || strings.HasPrefix(path, "/sorry") || strings.HasPrefix(path, "/setprefs")
+	}
+	if strings.Contains(host, "bing.com") {
+		return strings.HasPrefix(path, "/search") || strings.HasPrefix(path, "/images") || strings.HasPrefix(path, "/videos") || strings.HasPrefix(path, "/maps") || strings.HasPrefix(path, "/news") || strings.HasPrefix(path, "/account")
+	}
+	if strings.Contains(host, "duckduckgo.com") {
+		return strings.HasPrefix(path, "/html") || strings.HasPrefix(path, "/lite") || strings.HasPrefix(path, "/settings") || strings.HasPrefix(path, "/params")
+	}
+	return false
 }

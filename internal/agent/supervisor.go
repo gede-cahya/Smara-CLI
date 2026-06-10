@@ -812,10 +812,12 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 				if err != nil {
 					return "", fmt.Errorf("skill '%s' tidak ditemukan: %w", name, err)
 				}
+				start := time.Now()
 				res, err := sk.Run(s.SkillExecutor())
 				if err != nil {
 					return "", err
 				}
+				s.logSkillRunAndMaybeRefine(name, res, start)
 				return fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary), nil
 			}
 
@@ -1232,6 +1234,31 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}, nil
 	}
 
+	// Uploaded/pasted images are primary context. Analyze them before the model
+	// runs so short prompts such as "ini kenapa?" do not depend on the model
+	// deciding to call analyze_image itself.
+	if hasImageAttachment(userPrompt) {
+		imagePath := firstImageAttachmentPath(userPrompt)
+		args := map[string]interface{}{
+			"path":             imagePath,
+			"ocr_lang":         "eng+ind",
+			"include_metadata": true,
+		}
+		cb := s.snapshotCallback()
+		if cb.OnToolCall != nil {
+			cb.OnToolCall("", "analyze_image", args)
+		}
+		analysis, err := ExecuteBuiltinToolWithContext(ctx, "analyze_image", args, cb.OnLog)
+		if err != nil {
+			analysis = fmt.Sprintf("Analyze image gagal: %v", err)
+		}
+		if cb.OnToolResult != nil {
+			cb.OnToolResult(analysis)
+		}
+		userPrompt += "\n\n[Sistem: analyze_image sudah dijalankan otomatis untuk gambar terlampir. Jangan panggil analyze_image ulang. Gunakan hasil berikut sebagai konteks utama jawaban:\n" +
+			truncateToolResultForContext(analysis) + "\n]"
+	}
+
 	// Direct fast-path for image/logo requests. Some chat models fail to emit a
 	// native tool call for very short prompts (e.g. "buatkan logo smara") and keep
 	// cycling until the iteration budget is exhausted. If the user's intent is
@@ -1380,7 +1407,6 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 
 		if useStream {
-			streamer := s.provider.(llm.Streamer)
 			// Emit initial Thinking phase before stream starts
 			if s.callback.OnPhaseChange != nil {
 				s.callback.OnPhaseChange("Thinking", "Analyzing the request and planning approach...")
@@ -1398,7 +1424,12 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 					s.callback.OnStream(chunk, isThinking)
 				}
 			}
-			resp, err = streamer.ChatStream(messages, streamCb)
+			if ctxStreamer, ok := s.provider.(llm.ContextStreamer); ok {
+				resp, err = ctxStreamer.ChatStreamWithContext(ctx, messages, streamCb)
+			} else {
+				streamer := s.provider.(llm.Streamer)
+				resp, err = streamer.ChatStream(messages, streamCb)
+			}
 		} else {
 			if s.callback.OnPhaseChange != nil {
 				s.callback.OnPhaseChange("Waiting", "Waiting for provider response...")
@@ -1420,7 +1451,11 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 							s.callback.OnStream(chunk, isThinking)
 						}
 					}
-					resp, err = streamer.ChatStream(messages, streamCb)
+					if ctxStreamer, ok := s.provider.(llm.ContextStreamer); ok {
+						resp, err = ctxStreamer.ChatStreamWithContext(ctx, messages, streamCb)
+					} else {
+						resp, err = streamer.ChatStream(messages, streamCb)
+					}
 				}
 			}
 		}
@@ -1489,6 +1524,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		s.memStore.Save(content, tag, "supervisor", s.workspaceID, embedding)
 	}
 	s.captureChangeJournalAsync(userPrompt, result)
+	s.captureSelfImprovement(userPrompt)
 
 	// 7. Auto-skill detection: record trace and capture if a repeating pattern
 	// has been observed. Runs asynchronously so it never blocks the reply.

@@ -39,6 +39,9 @@ export interface Status {
   mode_desc: string
   mode_emoji: string
   provider: string
+  provider_online?: boolean
+  provider_endpoint?: string
+  provider_error?: string
   workspace: string
   version: string
 }

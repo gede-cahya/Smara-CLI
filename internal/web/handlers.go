@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,17 +35,69 @@ import (
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	mode := s.Supervisor.GetMode()
 	modeInfo := agent.GetModeInfo(mode)
+	providerEndpoint := providerHealthEndpoint(s.Cfg)
+	providerOnline, providerError := providerReachable(providerEndpoint)
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"status":       "running",
-		"mode":         string(mode),
-		"mode_label":   modeInfo.Label,
-		"mode_desc":    modeInfo.Description,
-		"mode_emoji":   modeInfo.Emoji,
-		"provider":     s.Supervisor.GetProvider().Name(),
-		"workspace":    s.Cfg.ActiveWorkspace,
-		"version":      "1.0.0",
-		"web_sessions": s.WebSessions != nil,
+		"status":            "running",
+		"mode":              string(mode),
+		"mode_label":        modeInfo.Label,
+		"mode_desc":         modeInfo.Description,
+		"mode_emoji":        modeInfo.Emoji,
+		"provider":          s.Supervisor.GetProvider().Name(),
+		"provider_online":   providerOnline,
+		"provider_endpoint": providerEndpoint,
+		"provider_error":    providerError,
+		"workspace":         s.Cfg.ActiveWorkspace,
+		"version":           "1.0.0",
+		"web_sessions":      s.WebSessions != nil,
 	})
+}
+
+func providerHealthEndpoint(cfg *config.SmaraConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	switch cfg.Provider {
+	case "ollama":
+		return cfg.OllamaHost
+	case "custom":
+		return cfg.CustomBaseURL
+	case "openai":
+		if cfg.OpenAIBaseURL != "" {
+			return cfg.OpenAIBaseURL
+		}
+		return "https://api.openai.com"
+	case "openrouter":
+		return "https://openrouter.ai"
+	case "anthropic":
+		return "https://api.anthropic.com"
+	default:
+		return ""
+	}
+}
+
+func providerReachable(endpoint string) (bool, string) {
+	if endpoint == "" {
+		return false, "endpoint provider belum dikonfigurasi"
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Hostname() == "" {
+		return false, "endpoint provider tidak valid"
+	}
+	port := parsed.Port()
+	if port == "" {
+		if parsed.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(parsed.Hostname(), port), 450*time.Millisecond)
+	if err != nil {
+		return false, err.Error()
+	}
+	_ = conn.Close()
+	return true, ""
 }
 
 // --- Chat (non-streaming fallback) ---
@@ -373,6 +426,7 @@ type wsMessage struct {
 	Type          string                 `json:"type"`
 	Payload       string                 `json:"payload"`
 	SessionID     string                 `json:"session_id,omitempty"`
+	RunID         string                 `json:"run_id,omitempty"`
 	Mode          string                 `json:"mode,omitempty"`
 	Phase         string                 `json:"phase,omitempty"`
 	Description   string                 `json:"description,omitempty"`

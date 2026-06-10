@@ -341,7 +341,7 @@ func injectAttachmentSteer(prompt string) string {
 		if looksLikeImageEditPrompt(lower) {
 			hints = append(hints, "pesan ini terlihat seperti permintaan edit/ubah gambar atau image-to-image. Gunakan tool edit_image langsung dengan image_path dari token [image:/path] dan prompt edit user. Jangan pakai analyze_image hanya untuk style transfer dan jangan fallback ke generate_image tanpa input gambar")
 		} else {
-			hints = append(hints, "untuk gambar pakai tool analyze_image dengan path tersebut")
+			hints = append(hints, "gambar terlampir adalah konteks utama pesan ini. Backend otomatis menjalankan analyze_image sebelum model menjawab. WAJIB gunakan hasil analisis gambar tersebut untuk memberi jawaban yang relevan, termasuk bila teks user singkat, ambigu, atau kosong; jangan panggil analyze_image ulang")
 		}
 	}
 	if hasFile {
@@ -349,6 +349,6 @@ func injectAttachmentSteer(prompt string) string {
 	}
 	steer := "\n\n[Sistem: pesan ini menyertakan lampiran. " +
 		strings.Join(hints, "; ") +
-		". Setelah dapat hasilnya, jawab user berdasarkan info aktual.]"
+		". Untuk dokumen non-gambar, jangan membaca isi file bila tidak diperlukan untuk menjawab pesan user.]"
 	return prompt + steer
 }

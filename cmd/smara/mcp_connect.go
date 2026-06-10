@@ -32,11 +32,6 @@ func connectMCPServersForStartup(supervisor *agent.Supervisor, enabledConfigs []
 		return
 	}
 
-	if supervisor == nil || supervisor.GetMode() != agent.ModeParallel {
-		connectMCPServersSerialForStartup(supervisor, enabledConfigs)
-		return
-	}
-
 	ui.PrintInfo("Menghubungkan %d MCP server secara paralel...", len(enabledConfigs))
 
 	results := make(chan mcpConnResult, len(enabledConfigs))
@@ -72,15 +67,6 @@ func connectMCPServersForStartup(supervisor *agent.Supervisor, enabledConfigs []
 			}
 			return
 		}
-	}
-}
-
-func connectMCPServersSerialForStartup(supervisor *agent.Supervisor, enabledConfigs []mcp.MCPServerConfig) {
-	ui.PrintInfo("Menghubungkan %d MCP server secara serial...", len(enabledConfigs))
-	for _, mcpCfg := range enabledConfigs {
-		results := make(chan mcpConnResult, 1)
-		connectMCPServerWithTimeout(mcpCfg, results)
-		registerMCPStartupResult(supervisor, <-results)
 	}
 }
 

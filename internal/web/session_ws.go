@@ -34,10 +34,18 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		_ = conn.WriteJSON(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "error"})
 		return
 	}
+	runID := msg.RunID
+	if runID == "" {
+		runID = fmt.Sprintf("web-%d", time.Now().UnixNano())
+	}
 	var writeMu sync.Mutex
 	write := func(v interface{}) {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		if message, ok := v.(wsMessage); ok {
+			message.RunID = runID
+			v = message
+		}
 		_ = conn.WriteJSON(v)
 	}
 	write(wsMessage{Type: "thinking", SessionID: msg.SessionID, Payload: "true"})
@@ -48,7 +56,6 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		activeMode = "ask"
 	}
 
-	runID := fmt.Sprintf("web-%d", time.Now().UnixNano())
 	runStarted := time.Now()
 	var eventMu sync.Mutex
 	lastEventAt := runStarted
@@ -233,7 +240,7 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 	emitPhase := func(phase, description string) {
 		phaseMu.Lock()
 		now := time.Now()
-		if phase == lastPhase && description == lastPhaseDescription && now.Sub(lastPhaseAt) < 500*time.Millisecond {
+		if phase == lastPhase && description == lastPhaseDescription && now.Sub(lastPhaseAt) < 5*time.Second {
 			phaseMu.Unlock()
 			return
 		}

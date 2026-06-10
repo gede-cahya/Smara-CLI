@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ var (
 	webNoOpen         bool
 	webMode           string
 	webToken          string
+	webSkipMCP        bool
 	desktopAgentAddr  string
 	desktopAgentToken string
 )
@@ -52,6 +54,7 @@ func init() {
 	webCmd.Flags().BoolVar(&webNoOpen, "no-open", false, "jangan buka browser otomatis")
 	webCmd.Flags().StringVar(&webMode, "mode", "ask", "mode agen default: ask, rush, plan, test, image, workflow")
 	webCmd.Flags().StringVar(&webToken, "auth-token", "", "token akses remote opsional (header Authorization: Bearer atau ?token=)")
+	webCmd.Flags().BoolVar(&webSkipMCP, "skip-mcp", false, "lewati koneksi MCP saat startup web")
 	webCmd.Flags().StringVar(&desktopAgentAddr, "desktop-agent", "", "URL desktop-agent untuk auto-pair remote desktop, contoh http://127.0.0.1:8765")
 	webCmd.Flags().StringVar(&desktopAgentToken, "desktop-token", "", "Token desktop-agent untuk auto-pair")
 	rootCmd.AddCommand(webCmd)
@@ -209,16 +212,10 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	connectMCPServersForStartup(supervisor, enabledConfigs)
-
 	// 5. Setup metrics
 	smaraDir := filepath.Dir(cfg.DBPath)
 	metricsPath := filepath.Join(smaraDir, "metrics.json")
 	collector := metrics.NewCollector(metricsPath, providerCfg.Name, providerCfg.Model)
-	mcpInfo := supervisor.GetMCPInfo()
-	for name, info := range mcpInfo {
-		collector.RegisterMCP(name, info.Connected, len(info.Tools))
-	}
 
 	// Apply configurable agent iteration cap (matches `smara serve` behavior
 	// so long roadmap-style chains don't get cut off in web mode).
@@ -249,6 +246,13 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		server.AuthToken = webToken
 	}
 
+	go func() {
+		if err := server.Start(ctx); err != nil {
+			ui.PrintError("Web server error: %v", err)
+			cancel()
+		}
+	}()
+
 	elapsed := time.Since(startTime)
 	ui.PrintInfo("Startup: %s", elapsed.Round(time.Millisecond))
 	fmt.Println()
@@ -258,12 +262,23 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	ui.PrintInfo("Tekan Ctrl+C untuk berhenti")
 	fmt.Println()
 
-	go func() {
-		if err := server.Start(ctx); err != nil {
-			ui.PrintError("Web server error: %v", err)
-			cancel()
-		}
-	}()
+	var mcpWG sync.WaitGroup
+	if webSkipMCP {
+		ui.PrintInfo("MCP startup dilewati (--skip-mcp)")
+	} else if len(enabledConfigs) > 0 {
+		ui.PrintInfo("MCP sedang dihubungkan paralel di background; web sudah dapat digunakan.")
+		mcpWG.Add(1)
+		go func() {
+			defer mcpWG.Done()
+			connectMCPServersForStartup(supervisor, enabledConfigs)
+			mcpInfo := supervisor.GetMCPInfo()
+			for name, info := range mcpInfo {
+				collector.RegisterMCP(name, info.Connected, len(info.Tools))
+			}
+			server.WebSessions.SetMCPConnections(supervisor.GetMCPClients(), mcpInfo)
+			ui.PrintSuccess("Koneksi MCP background selesai: %d server aktif", len(supervisor.GetMCPClients()))
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -272,6 +287,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	ui.PrintInfo("Mematikan server...")
 	cancel()
+	mcpWG.Wait()
 	time.Sleep(500 * time.Millisecond)
 	ui.PrintSuccess("Server dihentikan.")
 	return nil

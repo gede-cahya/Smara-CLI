@@ -76,6 +76,8 @@ type WebAgentSession struct {
 
 	supervisor *agent.Supervisor  `json:"-"`
 	cancel     context.CancelFunc `json:"-"`
+	runSeq     uint64             `json:"-"`
+	activeRun  uint64             `json:"-"`
 	mu         sync.Mutex         `json:"-"`
 }
 
@@ -138,7 +140,12 @@ func (m *WebSessionManager) Load() error {
 	return nil
 }
 
-func (s *WebAgentSession) sessionsResetRuntime() { s.supervisor = nil; s.cancel = nil }
+func (s *WebAgentSession) sessionsResetRuntime() {
+	s.supervisor = nil
+	s.cancel = nil
+	s.runSeq = 0
+	s.activeRun = 0
+}
 
 func (m *WebSessionManager) SetMCPConnections(clients map[string]*mcp.Client, info map[string]agent.MCPServerInfo) {
 	clientCopy := make(map[string]*mcp.Client, len(clients))
@@ -460,8 +467,16 @@ func (m *WebSessionManager) Run(ctx context.Context, id, prompt, mode string, cb
 		cancel()
 		return nil, fmt.Errorf("session sedang berjalan")
 	}
+	if s.activeRun != 0 {
+		// A cancelled run may still be unwinding. Give the replacement run its
+		// own supervisor so stale callbacks cannot leak into the new WebSocket.
+		s.supervisor = nil
+	}
 	s.Status = WebSessionRunning
 	s.Error = ""
+	s.runSeq++
+	runID := s.runSeq
+	s.activeRun = runID
 	s.cancel = cancel
 	if mode != "" {
 		s.Mode = mode
@@ -476,9 +491,14 @@ func (m *WebSessionManager) Run(ctx context.Context, id, prompt, mode string, cb
 	}
 	sup.SetCallback(cb)
 	res, err := sup.ProcessPrompt(runCtx, prompt)
-	sup.SetCallback(agent.AgenticCallback{})
 	s.mu.Lock()
+	if s.activeRun != runID {
+		s.mu.Unlock()
+		return res, err
+	}
+	sup.SetCallback(agent.AgenticCallback{})
 	s.cancel = nil
+	s.activeRun = 0
 	if err != nil {
 		if runCtx.Err() != nil || ctx.Err() != nil {
 			s.Status = WebSessionCancelled

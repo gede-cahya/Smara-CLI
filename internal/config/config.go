@@ -193,6 +193,13 @@ type SmaraConfig struct {
 	// must be observed before being auto-captured as a skill. Default: 3.
 	AutoSkillThreshold int `mapstructure:"auto_skill_threshold" yaml:"auto_skill_threshold"`
 
+	// AutoSkillRefine enables automatic refinement for repeatedly failing skills.
+	AutoSkillRefine bool `mapstructure:"auto_skill_refine" yaml:"auto_skill_refine"`
+
+	// AutoSkillRefineApply applies valid LLM refinement proposals automatically.
+	// When false, proposals are still generated and stored for review.
+	AutoSkillRefineApply bool `mapstructure:"auto_skill_refine_apply" yaml:"auto_skill_refine_apply"`
+
 	// PlatformPromptTimeout limits how long a single Telegram/Discord/WhatsApp
 	// prompt may run, in seconds. Long-running workflow tasks (multi-step
 	// SSH, file edits, deep reasoning) often exceed the previous 300s default.
@@ -290,6 +297,8 @@ func DefaultConfig() *SmaraConfig {
 		},
 		AutoSkillDetect:        true,
 		AutoSkillThreshold:     3,
+		AutoSkillRefine:        true,
+		AutoSkillRefineApply:   true,
 		PlatformPromptTimeout:  600,        // 10 minutes; was hardcoded 300s
 		AgentMaxIterations:     80,         // long roadmap chains routinely exceed 30
 		AgentRequestTimeoutSec: 3600,       // 60 min; web/TUI was hardcoded 5 min
@@ -395,6 +404,8 @@ func Init(configPath string) error {
 	viper.SetDefault("skill_registries", defaults.SkillRegistries)
 	viper.SetDefault("auto_skill_detect", defaults.AutoSkillDetect)
 	viper.SetDefault("auto_skill_threshold", defaults.AutoSkillThreshold)
+	viper.SetDefault("auto_skill_refine", defaults.AutoSkillRefine)
+	viper.SetDefault("auto_skill_refine_apply", defaults.AutoSkillRefineApply)
 	viper.SetDefault("platform_prompt_timeout", defaults.PlatformPromptTimeout)
 	viper.SetDefault("agent_max_iterations", defaults.AgentMaxIterations)
 	viper.SetDefault("agent_request_timeout_sec", defaults.AgentRequestTimeoutSec)
@@ -535,6 +546,8 @@ func allSettingsFromStruct(c *SmaraConfig) map[string]interface{} {
 		"reasoning_effort":                               c.ReasoningEffort,
 		"auto_skill_detect":                              c.AutoSkillDetect,
 		"auto_skill_threshold":                           c.AutoSkillThreshold,
+		"auto_skill_refine":                              c.AutoSkillRefine,
+		"auto_skill_refine_apply":                        c.AutoSkillRefineApply,
 		"platform_prompt_timeout":                        c.PlatformPromptTimeout,
 		"image_model":                                    c.ImageModel,
 		"image_base_url":                                 c.ImageBaseURL,

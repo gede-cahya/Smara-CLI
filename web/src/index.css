@@ -68,13 +68,12 @@
     border-radius: 9999px;
     filter: blur(34px);
     opacity: .26;
-    animation: smara-float 8s ease-in-out infinite;
     pointer-events: none;
   }
 
   .smara-orb-a { width: 240px; height: 240px; left: 18%; top: 8%; background: rgba(190, 242, 100, .11); }
-  .smara-orb-b { width: 280px; height: 280px; right: 12%; top: 12%; background: rgba(132, 204, 22, .08); animation-delay: -2.5s; }
-  .smara-orb-c { width: 240px; height: 240px; left: 42%; bottom: 5%; background: rgba(245, 245, 245, .035); animation-delay: -5s; }
+  .smara-orb-b { width: 280px; height: 280px; right: 12%; top: 12%; background: rgba(132, 204, 22, .08); }
+  .smara-orb-c { width: 240px; height: 240px; left: 42%; bottom: 5%; background: rgba(245, 245, 245, .035); }
 
   .memory-dot-node { animation: memory-dot-float 4.5s ease-in-out infinite; }
   .memory-dot-node:hover { z-index: 20; filter: saturate(1.35) brightness(1.12); }
@@ -97,11 +96,63 @@
     transform: scale(1.18);
     filter: brightness(1.18);
   }
-}
 
-@keyframes smara-float {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(18px, -16px, 0) scale(1.08); }
+  .memory-graph-toolbar {
+    background: #10180d;
+    box-shadow: inset 0 -1px rgba(190, 242, 100, 0.06);
+  }
+
+  .memory-graph-canvas {
+    contain: strict;
+    isolation: isolate;
+  }
+
+  .memory-graph-canvas canvas {
+    display: block;
+    image-rendering: auto;
+  }
+
+  .memory-graph-search,
+  .memory-graph-floating-control {
+    border: 1px solid rgba(190, 242, 100, 0.16);
+    background: #111a0e;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  }
+
+  .memory-graph-control {
+    appearance: none;
+    border: 1px solid rgba(190, 242, 100, 0.2);
+    background-color: #182314 !important;
+    color: #e4eadf !important;
+    color-scheme: dark;
+    outline: none;
+  }
+
+  .memory-graph-control:hover {
+    border-color: rgba(190, 242, 100, 0.38);
+    background-color: #202d1a !important;
+  }
+
+  .memory-graph-control:focus {
+    border-color: rgba(190, 242, 100, 0.62);
+    box-shadow: 0 0 0 3px rgba(190, 242, 100, 0.1);
+  }
+
+  .memory-graph-control option {
+    background: #182314;
+    color: #e4eadf;
+  }
+
+  .memory-graph-secondary-button {
+    border: 1px solid rgba(190, 242, 100, 0.18);
+    background: #1a2516;
+    color: #d6dfd0;
+  }
+
+  .memory-graph-secondary-button:hover {
+    border-color: rgba(190, 242, 100, 0.35);
+    background: #24311f;
+  }
 }
 
 @keyframes memory-dot-float {
