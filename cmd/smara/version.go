@@ -7,7 +7,7 @@ import (
 )
 
 // Version is set during release builds.
-var version = "1.20.15"
+var version = "1.20.20"
 
 
 var versionCmd = &cobra.Command{
