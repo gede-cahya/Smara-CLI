@@ -1205,6 +1205,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	// Pre-process: Search relevant memories
 
 	startTime := time.Now()
+	var autoToolsExecuted []string
 
 	// Fast-path image-edit / image-to-image prompts before the normal attachment
 	// steering asks the model to analyze the image. In image mode, call edit_image
@@ -1279,6 +1280,46 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 		s.captureChangeJournalAsync(userPrompt, promptResult)
 		return promptResult, nil
+	}
+
+	// Deterministically run one clearly relevant, approval-free skill before
+	// asking the model. Ambiguous, risky, and parameterized skills remain
+	// prompt-driven and are only recommended through the system context.
+	if selected := selectAutoRunnableSkill(userPrompt, s.mode); selected != nil {
+		args := map[string]interface{}{
+			"skill_name": selected.Skill.Name,
+			"automatic":  true,
+			"confidence": selected.Recommendation.Confidence,
+			"score":      selected.Recommendation.Score,
+		}
+		cb := s.snapshotCallback()
+		if cb.OnToolCall != nil {
+			cb.OnToolCall("", "skill_run", args)
+		}
+
+		started := time.Now()
+		res, err := selected.Skill.WithArgs(nil).Run(s.SkillExecutor())
+		output := ""
+		if err != nil {
+			output = fmt.Sprintf("Skill '%s' gagal dijalankan otomatis: %v", selected.Skill.Name, err)
+		} else if res == nil {
+			output = fmt.Sprintf("Skill '%s' gagal dijalankan otomatis: hasil eksekusi kosong", selected.Skill.Name)
+		} else {
+			s.logSkillRunAndMaybeRefine(selected.Skill.Name, res, started)
+			output = fmt.Sprintf("Skill '%s' dijalankan otomatis. Sukses=%v. %s", selected.Skill.Name, res.Success, res.Summary)
+		}
+		if cb.OnToolResult != nil {
+			cb.OnToolResult(output)
+		}
+		autoToolsExecuted = append(autoToolsExecuted, "skill_run")
+		userPrompt += fmt.Sprintf(
+			"\n\n%s\nSkill otomatis yang dipakai: %s (confidence=%s, score=%.0f).\nHasil: %s\nGunakan hasil ini untuk menjawab user, sebutkan nama skill yang dipakai secara ringkas, dan jangan panggil skill_run yang sama lagi.",
+			autoSkillResultMarker,
+			selected.Skill.Name,
+			selected.Recommendation.Confidence,
+			selected.Recommendation.Score,
+			truncateToolResultForContext(output),
+		)
 	}
 
 	modeInfo := GetModeInfo(s.mode)
@@ -1380,7 +1421,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	var finalResp string
 	var finalThinking string
 	var finalThoughts []string
-	var finalToolsExecuted []string
+	finalToolsExecuted := append([]string(nil), autoToolsExecuted...)
 
 	// Use agentic loop if tools are available, regardless of mode (with different behavior)
 	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
@@ -1393,7 +1434,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		finalResp = resp
 		finalThinking = thinking
 		finalThoughts = thoughts
-		finalToolsExecuted = executed
+		finalToolsExecuted = append(finalToolsExecuted, executed...)
 	} else {
 		var resp *llm.ChatResponse
 		var err error
@@ -1777,6 +1818,15 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		// merge any extracted tool calls with native ones.
 		if resp != nil {
 			extracted, cleaned := llm.ExtractToolCallsFromContent(resp.Content)
+			// Strip inline <think>...</think> reasoning tags. Only the Ollama
+			// provider does this itself; the custom/OpenAI-compatible providers
+			// leave them in content. Without this, an empty "<think></think>"
+			// shard counts as non-empty content and is mislabeled as a final
+			// answer / leaks into the fallback summary.
+			cleaned, extractedThinking := llm.StripThinkTags(cleaned)
+			if resp.Thinking == "" {
+				resp.Thinking = extractedThinking
+			}
 			resp.Content = cleaned
 			toolCalls = append(toolCalls, extracted...)
 		}
@@ -1792,8 +1842,24 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			// cleaned content is empty. Fall back to thoughts+tools so the
 			// user sees something actionable instead of a blank bubble.
 			content := strings.TrimSpace(resp.Content)
+			// An empty answer here means the model returned no usable prose
+			// (e.g. it emitted only "<think></think>" reasoning that got
+			// stripped). This is NOT an iteration-budget exhaustion — so we
+			// must not synthesize the "batas iterasi" fallback yet. While the
+			// budget still has room, nudge the model to write a real final
+			// answer instead of bailing out after a couple of tool calls.
 			if content == "" {
-				content = synthesizeFallbackSummary(thoughts, toolsExecuted)
+				if budget.ShouldContinue(iteration + 1) {
+					messages = append(messages, llm.Message{
+						Role:    llm.RoleSystem,
+						Content: "Jawaban final kamu kosong (tidak ada teks di luar blok reasoning). Tuliskan JAWABAN FINAL untuk user dalam teks biasa berdasarkan hasil tool yang sudah ada. Jangan keluarkan tool_calls atau tag <think>.",
+					})
+					continue
+				}
+				if len(observedToolOutputs) > 0 {
+					return synthesizeToolOutputSummary(thoughts, toolsExecuted, observedToolOutputs, nil), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
+				}
+				return synthesizeFallbackSummary(thoughts, toolsExecuted), strings.Join(allThinking, "\n\n"), thoughts, toolsExecuted, nil
 			}
 			if shouldRejectFinalAnswer(userPrompt, content, toolsExecuted, observedToolOutputs) {
 				if budget.ShouldContinue(iteration + 1) {

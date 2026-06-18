@@ -76,7 +76,7 @@ const navItems = [
   { id: 'config', label: 'Config', icon: Settings, group: 'Core' },
   { id: 'workflow', label: 'Workflow', icon: GitBranch, group: 'Build' },
   { id: 'custom-workflow', label: 'Custom Workflow', icon: GitBranch, group: 'Build' },
-  { id: 'parallel-tasks', label: 'Parallel Tasks', icon: Zap, group: 'Build' },
+  { id: 'parallel-tasks', label: 'Parallel Agent', icon: Zap, group: 'Build' },
   { id: 'skilltree', label: 'Skill Tree', icon: TreePine, group: 'Build' },
   { id: 'skilldash', label: 'Analytics', icon: LineChart, group: 'Build' },
   { id: 'graphify', label: 'Graphify', icon: Network, group: 'Build' },
@@ -245,17 +245,29 @@ export default function App() {
   useEffect(() => {
     loadSmaraConfig().catch(err => console.warn('[smara] failed to auto-load config:', err))
 
+    const applyTab = (next?: string | null) => {
+      if (next && navItems.find(n => n.id === next)) setActiveRaw(next)
+    }
     const storageHandler = (e: StorageEvent) => {
-      if (e.key === TAB_KEY && e.newValue && navItems.find(n => n.id === e.newValue)) setActiveRaw(e.newValue)
+      if (e.key === TAB_KEY) applyTab(e.newValue)
+    }
+    const tabEventHandler = (e: Event) => {
+      applyTab((e as CustomEvent<string>).detail)
     }
 
     window.addEventListener('storage', storageHandler)
-    return () => window.removeEventListener('storage', storageHandler)
+    window.addEventListener('smara:set-active-tab', tabEventHandler)
+    return () => {
+      window.removeEventListener('storage', storageHandler)
+      window.removeEventListener('smara:set-active-tab', tabEventHandler)
+    }
   }, [])
+
+  const chatPage = <PageErrorBoundary label="Chat"><Chat ref={chatRef} health={backendHealth} /></PageErrorBoundary>
 
   const activePage = (() => {
     switch (active) {
-      case 'chat': return <PageErrorBoundary label="Chat"><Chat ref={chatRef} health={backendHealth} /></PageErrorBoundary>
+      case 'chat': return null
       case 'image-flow': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><ImageFlow /></Suspense>
       case 'workflow': return <Workflow />
       case 'magic-pointer': return <MagicPointer />
@@ -271,7 +283,7 @@ export default function App() {
       case 'workspace': return <Workspace />
       case 'config': return <Config />
       case 'dashboard': return <Dashboard />
-      default: return <PageErrorBoundary label="Chat"><Chat ref={chatRef} health={backendHealth} /></PageErrorBoundary>
+      default: return null
     }
   })()
 
@@ -352,7 +364,8 @@ export default function App() {
 
       <main className="relative z-10 flex-1 overflow-hidden p-4">
         <div className="h-full overflow-hidden rounded-[1.65rem] bg-[#151d10]/96 shadow-2xl shadow-black/22 backdrop-blur-xl ring-1 ring-black/35">
-          <div className="h-full">{activePage}</div>
+          <div className={`h-full ${active === 'chat' ? 'block' : 'hidden'}`}>{chatPage}</div>
+          <div className={`h-full ${active === 'chat' ? 'hidden' : 'block'}`}>{activePage}</div>
         </div>
       </main>
     </div>

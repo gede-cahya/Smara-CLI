@@ -66,3 +66,68 @@ func TestRecommendSkillsLowConfidenceClarify(t *testing.T) {
 		t.Fatalf("expected low confidence clarify, got %#v", recs)
 	}
 }
+
+func TestRecommendSkillsExactNameBeatsBroadDescription(t *testing.T) {
+	skills := []*Skill{
+		{Name: "general-deploy-helper", Description: "deploy deploy deploy node aplikasi vps production", Steps: []Step{{Tool: "shell"}}},
+		{Name: "deploy-node", Description: "Release app", Steps: []Step{{Tool: "shell"}}},
+	}
+	recs := RecommendSkills("deploy-node", skills, RecommendationOptions{Limit: 2})
+	if len(recs) < 2 || recs[0].SkillName != "deploy-node" {
+		t.Fatalf("expected exact name match first, got %#v", recs)
+	}
+}
+
+func TestRecommendSkillsUsesTriggerAndCategory(t *testing.T) {
+	skills := []*Skill{
+		{Name: "generic-test", Description: "test helper", Steps: []Step{{Tool: "shell"}}},
+		{Name: "planning-risk-review", Description: "review risiko", Trigger: "analisis risiko implementasi", CategoryPath: []string{"planning", "risk"}, Steps: []Step{{Tool: "planning_template"}}},
+	}
+	recs := RecommendSkills("tolong analisis risiko planning fitur baru", skills, RecommendationOptions{Limit: 2})
+	if len(recs) == 0 || recs[0].SkillName != "planning-risk-review" {
+		t.Fatalf("expected trigger/category skill first, got %#v", recs)
+	}
+}
+
+func TestRecommendSkillsPenalizesLowSuccessRate(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker, err := NewExecutionTracker(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i < 4; i++ {
+		_ = tracker.LogExecution(SkillExecution{SkillName: "deploy-flaky", RunID: string(rune('a' + i)), StartedAt: now, Success: false, DurationMs: 10})
+	}
+	_ = tracker.LogExecution(SkillExecution{SkillName: "deploy-solid", RunID: "z", StartedAt: now, Success: true, DurationMs: 10})
+	skills := []*Skill{
+		{Name: "deploy-flaky", Description: "deploy app", Steps: []Step{{Tool: "shell"}}},
+		{Name: "deploy-solid", Description: "deploy app", Steps: []Step{{Tool: "shell"}}},
+	}
+	recs := RecommendSkills("deploy app", skills, RecommendationOptions{StatsProvider: tracker, Limit: 2})
+	if len(recs) < 2 || recs[0].SkillName != "deploy-solid" {
+		t.Fatalf("expected low success rate penalty, got %#v", recs)
+	}
+}
+
+func TestRecommendSkillsMarksRecentlyUsed(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker, err := NewExecutionTracker(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tracker.LogExecution(SkillExecution{SkillName: "daily-report", RunID: "1", StartedAt: time.Now(), Success: true, DurationMs: 10})
+	skills := []*Skill{{Name: "daily-report", Description: "buat laporan harian", Steps: []Step{{Tool: "shell"}}}}
+	recs := RecommendSkills("laporan harian", skills, RecommendationOptions{StatsProvider: tracker})
+	if len(recs) == 0 || !recs[0].RecentlyUsed {
+		t.Fatalf("expected recently used recommendation, got %#v", recs)
+	}
+}

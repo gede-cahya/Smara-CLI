@@ -24,16 +24,22 @@ type Orchestrator struct {
 	OnBlueprintReady func(Blueprint, [][]string)
 	OnRoleStart      func(role string)
 	OnTaskComplete   func(role, taskID string, result agent.TaskResult)
+	OnRepairAttempt  func(role, taskID string, attempt int, prevError string)
+
+	// MaxRepairAttempts controls LLM self-correction retries per failed task.
+	// -1 leaves the Runner default; 0 disables repair; >0 sets the cap.
+	MaxRepairAttempts int
 }
 
 // NewOrchestrator creates a workflow orchestrator.
 func NewOrchestrator(supervisor *agent.Supervisor, provider llm.Provider, projectDir string) *Orchestrator {
 	return &Orchestrator{
-		Supervisor:  supervisor,
-		Provider:    provider,
-		MCPInfo:     supervisor.GetMCPInfo(),
-		ProjectDir:  projectDir,
-		SharedState: NewSharedState(projectDir),
+		Supervisor:        supervisor,
+		Provider:          provider,
+		MCPInfo:           supervisor.GetMCPInfo(),
+		ProjectDir:        projectDir,
+		SharedState:       NewSharedState(projectDir),
+		MaxRepairAttempts: -1, // keep Runner default unless overridden via setup hook
 	}
 }
 
@@ -79,6 +85,10 @@ func (o *Orchestrator) Run(ctx context.Context, prompt string) (*WorkflowResult,
 	}
 
 	runner := NewRunner(bp, workerMap, o.SharedState)
+	if o.MaxRepairAttempts >= 0 {
+		runner.MaxRepairAttempts = o.MaxRepairAttempts
+	}
+	runner.OnRepairAttempt = o.OnRepairAttempt
 	if o.Supervisor == nil || o.Supervisor.GetMode() != agent.ModeParallel {
 		// Only ModeParallel may execute dependency-safe roles in parallel.
 		// Workflow, Ask, Plan, Rush, Test, and Image stay serial.

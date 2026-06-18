@@ -21,21 +21,36 @@ type Runner struct {
 	// spawning multiple worker roles at once.
 	Serial bool
 
+	// MaxRepairAttempts is how many times a failed task is re-attempted via
+	// LLM self-correction before the role gives up. 0 disables repair (the
+	// historical behavior: a failed task immediately ends the role).
+	MaxRepairAttempts int
+
+	// RepairFunc produces a corrected task from a failed task and its result.
+	// It is the seam used to self-correct: the default implementation asks the
+	// worker's LLM to fix the task given the error. Tests override this to run
+	// deterministically without a provider. Returning ok=false means "cannot
+	// repair" and the role stops.
+	RepairFunc func(ctx context.Context, worker *agent.Worker, role string, failed agent.Task, result agent.TaskResult, attempt int) (agent.Task, bool)
+
 	// Callbacks for TUI progress
 	OnWaveStart    func(wave int, roles []string)
 	OnWaveComplete func(wave int, results map[string][]agent.TaskResult)
 	OnTaskStart    func(role string, task agent.Task)
 	OnTaskStream   func(role, taskID, chunk string, isThinking bool)
 	OnTaskComplete func(role, taskID string, result agent.TaskResult)
+	// OnRepairAttempt fires before each repair retry for observability.
+	OnRepairAttempt func(role, taskID string, attempt int, prevError string)
 }
 
 // NewRunner creates a DAG runner for a blueprint.
 func NewRunner(bp Blueprint, workers map[string]*agent.Worker, state *SharedState) *Runner {
 	return &Runner{
-		Blueprint:      bp,
-		Workers:        workers,
-		SharedState:    state,
-		MaxConcurrency: 4,
+		Blueprint:         bp,
+		Workers:           workers,
+		SharedState:       state,
+		MaxConcurrency:    4,
+		MaxRepairAttempts: 2,
 	}
 }
 
@@ -271,6 +286,13 @@ func (r *Runner) runRole(ctx context.Context, role string, completed map[string]
 			},
 		})
 
+		// Self-correction: when a task fails, ask the worker to repair it and
+		// retry, up to MaxRepairAttempts. The corrected task and its result
+		// replace the failed attempt so downstream roles see the fixed output.
+		if result.Status == agent.TaskFailed {
+			task, result = r.repairAndRetry(ctx, role, worker, task, result)
+		}
+
 		roleResults = append(roleResults, result)
 
 		if r.OnTaskComplete != nil {
@@ -283,6 +305,83 @@ func (r *Runner) runRole(ctx context.Context, role string, completed map[string]
 	}
 
 	return roleResults
+}
+
+// repairAndRetry attempts LLM-driven self-correction for a failed task. It
+// returns the last task/result pair — successful as soon as a retry passes,
+// otherwise the final failed result after exhausting attempts.
+func (r *Runner) repairAndRetry(ctx context.Context, role string, worker *agent.Worker, task agent.Task, result agent.TaskResult) (agent.Task, agent.TaskResult) {
+	if r.MaxRepairAttempts <= 0 {
+		return task, result
+	}
+	repair := r.RepairFunc
+	if repair == nil {
+		repair = defaultRepair
+	}
+
+	for attempt := 1; attempt <= r.MaxRepairAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return task, result
+		}
+		if r.OnRepairAttempt != nil {
+			r.OnRepairAttempt(role, task.ID, attempt, result.Error)
+		}
+
+		repaired, ok := repair(ctx, worker, role, task, result, attempt)
+		if !ok {
+			return task, result
+		}
+
+		retryResult := worker.ExecuteWithCallback(ctx, repaired, &agent.WorkerCallback{
+			OnStream: func(chunk string, isThinking bool) {
+				if r.OnTaskStream != nil {
+					r.OnTaskStream(role, repaired.ID, chunk, isThinking)
+				}
+			},
+		})
+
+		task, result = repaired, retryResult
+		if retryResult.Status != agent.TaskFailed {
+			return task, result
+		}
+	}
+
+	return task, result
+}
+
+// defaultRepair asks the worker's LLM to correct a failed task given the error
+// and previous output, returning a new task that re-runs the corrected work.
+func defaultRepair(ctx context.Context, worker *agent.Worker, role string, failed agent.Task, result agent.TaskResult, attempt int) (agent.Task, bool) {
+	// Tool/MCP tasks fail deterministically (missing server, bad tool name);
+	// re-prompting an LLM cannot fix the wiring, so skip repair for them.
+	if failed.MCPServer != "" || failed.ToolName != "" {
+		return agent.Task{}, false
+	}
+
+	repaired := failed
+	repaired.Description = buildRepairPrompt(failed, result, attempt)
+	return repaired, true
+}
+
+func buildRepairPrompt(failed agent.Task, result agent.TaskResult, attempt int) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Percobaan sebelumnya untuk task ini GAGAL (attempt repair ke-%d).\n\n", attempt))
+	sb.WriteString("## Error\n")
+	sb.WriteString(strings.TrimSpace(result.Error))
+	sb.WriteString("\n")
+	if out := strings.TrimSpace(result.Output); out != "" {
+		if len(out) > 2000 {
+			out = out[:2000] + "\n[... output dipotong ...]"
+		}
+		sb.WriteString("\n## Output parsial sebelumnya\n")
+		sb.WriteString(out)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n## Task asli\n")
+	sb.WriteString(failed.Description)
+	sb.WriteString("\n\nPerbaiki penyebab error di atas lalu selesaikan task ini dengan benar. ")
+	sb.WriteString("Jangan ulangi kesalahan yang sama. Berikan hasil akhir yang konkret.")
+	return sb.String()
 }
 
 // RunQA spawns the QA agent after all waves complete.

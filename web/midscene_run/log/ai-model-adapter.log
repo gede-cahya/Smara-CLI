@@ -1,0 +1,5 @@
+[2026-06-12T13:00:09.494+08:00] model adapter "gpt-5" unsupportedUserConfig: ["reasoningBudget"]
+[2026-06-12T13:01:25.553+08:00] model adapter "gpt-5" unsupportedUserConfig: ["reasoningBudget"]
+[2026-06-12T13:45:53.358+08:00] model adapter "gpt-5" unsupportedUserConfig: ["reasoningBudget"]
+[2026-06-12T13:53:54.390+08:00] model adapter "gpt-5" unsupportedUserConfig: ["reasoningBudget"]
+[2026-06-12T13:58:06.458+08:00] model adapter "gpt-5" unsupportedUserConfig: ["reasoningBudget"]

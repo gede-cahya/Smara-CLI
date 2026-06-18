@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Wrench, Play, Trash2, Download, FileJson, FileText, Plus, X, Box, Settings } from 'lucide-react'
-import { fetchJSON, installBundledSkill, type SkillItem, type SkillParam, type BundledSkillItem } from '../api'
+import { Wrench, Play, Trash2, Download, FileJson, FileText, Plus, X, Box, Settings, Search, TrendingUp, AlertCircle, Zap } from 'lucide-react'
+import { fetchJSON, installBundledSkill, type SkillItem, type SkillParam, type BundledSkillItem, type SkillRecommendation } from '../api'
 
 function defaultParamValue(p: SkillParam): string {
   if (p.default !== undefined) return String(p.default)

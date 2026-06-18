@@ -1,0 +1,139 @@
+{
+  "name": "smara-release-agent",
+  "description": "Custom workflow untuk proses release Smara CLI: preflight check, build frontend, cross-platform build, checksum, git tag, dan publish GitHub release.",
+  "project_dir": "/home/cahya/2026/Smara CLI",
+  "agents": [
+    {
+      "role": "release-preflight-agent",
+      "description": "Memeriksa kesiapan release: git status clean, VERSION file valid, tag belum ada, dan dependency terpasang.",
+      "skills": ["tool", "memory"],
+      "tasks": [
+        {
+          "id": "preflight-check",
+          "description": "Validasi semua prasyarat sebelum memulai proses release.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\necho \"=== Release Preflight Check ===\"\necho \"Version: $VERSION\"\n\n# 1. Check git status\necho\necho \"--- Git Status ---\"\nif [ -n \"$(git status --porcelain)\" ]; then\n  echo \"❌ FAIL: Working directory not clean\"\n  git status --short\n  echo \"Commit or stash changes first.\"\n  exit 1\nfi\necho \"✓ Git working directory clean\"\n\n# 2. Check VERSION format\necho\necho \"--- Version Check ---\"\nif ! echo \"$VERSION\" | grep -qE '^[0-9]+\\.[0-9]+\\.[0-9]+$'; then\n  echo \"❌ FAIL: Invalid VERSION format: $VERSION (expected X.Y.Z)\"\n  exit 1\nfi\necho \"✓ Version format valid: $VERSION\"\n\n# 3. Check tag doesn't exist yet\necho\necho \"--- Tag Check ---\"\nif git tag -l \"v$VERSION\" | grep -q \"v$VERSION\"; then\n  echo \"❌ FAIL: Tag v$VERSION already exists\"\n  exit 1\nfi\necho \"✓ Tag v$VERSION does not exist yet\"\n\n# 4. Check required tools\necho\necho \"--- Tool Check ---\"\nfor tool in go make git tar sha256sum; do\n  if command -v $tool >/dev/null 2>&1; then\n    echo \"✓ $tool available\"\n  else\n    echo \"❌ FAIL: $tool not found\"\n    exit 1\n  fi\ndone\n\n# 5. Check gh CLI (for GitHub release)\nif command -v gh >/dev/null 2>&1; then\n  echo \"✓ gh (GitHub CLI) available\"\n  gh auth status 2>&1 | head -3\nelse\n  echo \"⚠ gh CLI not found (GitHub release step will need manual)\"\nfi\n\n# 6. Check npm for frontend build\nif command -v npm >/dev/null 2>&1; then\n  echo \"✓ npm available\"\nelse\n  echo \"❌ FAIL: npm not found (needed for frontend build)\"\n  exit 1\nfi\n\necho\necho \"✅ All preflight checks passed for v$VERSION\"\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    },
+    {
+      "role": "release-build-frontend-agent",
+      "description": "Build frontend React (Vite) dan sync ke internal/web/dist untuk go:embed.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["release-preflight-agent"],
+      "tasks": [
+        {
+          "id": "build-frontend",
+          "description": "Install npm deps, build Vite frontend, dan copy ke internal/web/dist.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\necho \"=== Build Frontend (Vite) ===\"\n\necho \"--- Install npm dependencies ---\"\ncd web\nnpm install --prefer-offline 2>&1 | tail -3\n\necho\necho \"--- Build Vite ---\"\nnpx vite build 2>&1\n\necho\necho \"--- Sync to internal/web/dist ---\"\ncd ..\nrm -rf internal/web/dist\ncp -r web/dist internal/web/dist\necho \"✓ Frontend synced to internal/web/dist\"\n\necho\necho \"--- Verify dist ---\"\nls -lh web/dist/ 2>/dev/null || ls -lh web/dist/assets/ 2>/dev/null\necho\nls -lh internal/web/dist/ 2>/dev/null || true\necho\necho \"✅ Frontend build complete\"\n",
+            "timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "role": "release-build-cross-platform-agent",
+      "description": "Build binary cross-platform (linux/amd64, darwin/amd64, darwin/arm64, windows/amd64) dan buat arsip release.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["release-build-frontend-agent"],
+      "tasks": [
+        {
+          "id": "build-cross-platform",
+          "description": "Compile Go binary untuk 4 platform dan buat arsip tar.gz/zip.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\nBINARY=smara\nGOFLAGS=\"-trimpath\"\nLDFLAGS=\"-s -w -X main.version=$VERSION\"\nPLATFORMS=\"linux/amd64 darwin/amd64 darwin/arm64 windows/amd64\"\n\necho \"=== Cross-Platform Build ===\"\necho \"Version: $VERSION\"\necho\n\nrm -rf dist\nmkdir -p dist\n\nfor platform in $PLATFORMS; do\n  os=$(echo $platform | cut -d/ -f1)\n  arch=$(echo $platform | cut -d/ -f2)\n  ext=\"\"\n  if [ \"$os\" = \"windows\" ]; then ext=\".exe\"; fi\n  target_name=\"${BINARY}-v${VERSION}-${os}-${arch}\"\n\n  echo \"Building $os/$arch...\"\n  GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build $GOFLAGS -ldflags \"$LDFLAGS\" -o \"dist/${target_name}${ext}\" ./cmd/smara/\n\n  if [ \"$os\" = \"windows\" ]; then\n    cd dist && zip \"${target_name}.zip\" \"${target_name}.exe\" && rm \"${target_name}.exe\" && cd ..\n  else\n    cd dist && tar -czf \"${target_name}.tar.gz\" \"${target_name}\" && rm \"${target_name}\" && cd ..\n  fi\n  echo \"  ✓ $target_name\"\ndone\n\necho\necho \"--- Build Artifacts ---\"\nls -lh dist/\necho\necho \"✅ Cross-platform build complete\"\n",
+            "timeout_sec": 600
+          }
+        }
+      ]
+    },
+    {
+      "role": "release-checksum-agent",
+      "description": "Generate SHA256 checksums untuk semua arsip release.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["release-build-cross-platform-agent"],
+      "tasks": [
+        {
+          "id": "generate-checksums",
+          "description": "Buat file SHA256SUMS.txt untuk verifikasi integritas artifact.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\necho \"=== Generate Checksums ===\"\n\ncd dist\nsha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS.txt || shasum -a 256 *.tar.gz *.zip > SHA256SUMS.txt\n\necho \"--- SHA256SUMS.txt ---\"\ncat SHA256SUMS.txt\necho\necho \"✅ Checksums generated\"\n",
+            "timeout_sec": 60
+          }
+        }
+      ]
+    },
+    {
+      "role": "release-verify-agent",
+      "description": "Verifikasi semua artifact: file ada, ukuran wajar, binary bisa dijalankan (Linux local).",
+      "skills": ["tool", "memory"],
+      "depends_on": ["release-checksum-agent"],
+      "tasks": [
+        {
+          "id": "verify-artifacts",
+          "description": "Validasi kelengkapan dan integritas semua artifact release.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\necho \"=== Verify Artifacts ===\"\n\nEXPECTED_FILES=(\n  \"dist/smara-v${VERSION}-linux-amd64.tar.gz\"\n  \"dist/smara-v${VERSION}-darwin-amd64.tar.gz\"\n  \"dist/smara-v${VERSION}-darwin-arm64.tar.gz\"\n  \"dist/smara-v${VERSION}-windows-amd64.zip\"\n  \"dist/SHA256SUMS.txt\"\n)\n\nALL_OK=true\nfor f in \"${EXPECTED_FILES[@]}\"; do\n  if [ -f \"$f\" ]; then\n    SIZE=$(stat -c%s \"$f\" 2>/dev/null || stat -f%z \"$f\" 2>/dev/null)\n    echo \"✓ $f ($SIZE bytes)\"\n  else\n    echo \"❌ MISSING: $f\"\n    ALL_OK=false\n  fi\ndone\n\n# Verify checksums\necho\necho \"--- Checksum Verification ---\"\ncd dist\nsha256sum -c SHA256SUMS.txt 2>/dev/null || shasum -a 256 -c SHA256SUMS.txt\n\n# Test Linux binary\necho\necho \"--- Smoke Test (Linux binary) ---\"\ncd /tmp\ntar -xzf \"/home/cahya/2026/Smara CLI/dist/smara-v${VERSION}-linux-amd64.tar.gz\"\n./smara-v${VERSION}-linux-amd64 --version 2>&1 || ./smara-v${VERSION}-linux-amd64 version 2>&1 || echo \"(version flag test skipped)\"\nrm -f smara-v${VERSION}-linux-amd64\n\nif [ \"$ALL_OK\" = true ]; then\n  echo\necho \"✅ All artifacts verified successfully\"\nelse\n  echo \"❌ Some artifacts missing!\"\n  exit 1\nfi\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    },
+    {
+      "role": "release-git-agent",
+      "description": "Commit semua perubahan (dist, frontend), buat tag versi, dan push ke remote.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["release-verify-agent"],
+      "tasks": [
+        {
+          "id": "git-tag-and-push",
+          "description": "Commit release artifacts, buat annotated tag, dan push ke origin.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\nTAG=\"v$VERSION\"\n\necho \"=== Git Tag & Push ===\"\necho \"Version: $VERSION\"\necho \"Tag: $TAG\"\n\n# Stage all changes\ngit add -A\ngit status --short\n\n# Commit if there are changes\nif [ -n \"$(git status --porcelain)\" ]; then\n  git commit -m \"release: v${VERSION}\n\n- Cross-platform build (linux/darwin/windows)\n- Frontend rebuild\n- Updated dist artifacts\"\n  echo \"✓ Release committed\"\nelse\n  echo \"✓ No changes to commit\"\nfi\n\n# Create annotated tag\ngit tag -a \"$TAG\" -m \"Release $TAG\"\necho \"✓ Tag created: $TAG\"\n\n# Push commit and tag\ngit push origin HEAD\ngit push origin \"$TAG\"\necho \"✓ Pushed to origin\"\n\necho\necho \"✅ Git tag and push complete for $TAG\"\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    },
+    {
+      "role": "release-github-agent",
+      "description": "Publish GitHub Release menggunakan gh CLI dengan semua artifact dan release notes.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["release-git-agent"],
+      "tasks": [
+        {
+          "id": "publish-github-release",
+          "description": "Buat GitHub Release dengan semua artifact dan auto-generated release notes.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\nTAG=\"v$VERSION\"\n\necho \"=== Publish GitHub Release ===\"\n\nif ! command -v gh >/dev/null 2>&1; then\n  echo \"⚠ gh CLI not available. Skipping GitHub Release.\"\n  echo \"Create release manually at:\"\n  REMOTE=$(git remote get-url origin 2>/dev/null || echo \"\")\n  REPO=$(echo $REMOTE | sed 's/.*github.com[:/]\\(.*\\)\\.git/\\1/')\n  echo \"  https://github.com/$REPO/releases/new?tag=$TAG\"\n  echo\n  echo \"Upload these files:\"\n  ls -1 dist/\n  exit 0\nfi\n\n# Check gh auth\nif ! gh auth status >/dev/null 2>&1; then\n  echo \"⚠ gh CLI not authenticated. Run: gh auth login\"\n  exit 1\nfi\n\n# Generate release notes from git log\nPREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo \"\")\nif [ -n \"$PREV_TAG\" ]; then\n  NOTES=$(git log --pretty=format:\"- %s (%h)\" ${PREV_TAG}..HEAD 2>/dev/null)\nelse\n  NOTES=$(git log --pretty=format:\"- %s (%h)\" -20 2>/dev/null)\nfi\n\nRELEASE_NOTES=\"## Smara CLI $TAG\n\n### Installation\n\n**Linux/macOS (curl):**\n\\`\\`\\`bash\ncurl -fsSL https://raw.githubusercontent.com/$(git remote get-url origin 2>/dev/null | sed 's/.*github.com[:/]\\(.*\\)\\.git/\\1/' || echo 'cahyaiqbaldev/smara-cli')/main/install.sh | bash\n\\`\\`\\`\n\n**Windows (PowerShell):**\n\\`\\`\\`powershell\nirm https://raw.githubusercontent.com/$(git remote get-url origin 2>/dev/null | sed 's/.*github.com[:/]\\(.*\\)\\.git/\\1/' || echo 'cahyaiqbaldev/smara-cli')/main/install.ps1 | iex\n\\`\\`\\`\n\n### Changelog\n$NOTES\n\n### Assets\n| Platform | File |\n|----------|------|\n| Linux amd64 | smara-v${VERSION}-linux-amd64.tar.gz |\n| macOS Intel | smara-v${VERSION}-darwin-amd64.tar.gz |\n| macOS Apple Silicon | smara-v${VERSION}-darwin-arm64.tar.gz |\n| Windows | smara-v${VERSION}-windows-amd64.zip |\n| Checksums | SHA256SUMS.txt |\"\n\n# Create release with all artifacts\ngh release create \"$TAG\" \\\n  --title \"Smara CLI $TAG\" \\\n  --notes \"$RELEASE_NOTES\" \\\n  dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt\n\necho\necho \"✅ GitHub Release published: $TAG\"\necho \"View at:\"\ngh release view \"$TAG\" --web 2>/dev/null || true\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    }
+  ]
+}

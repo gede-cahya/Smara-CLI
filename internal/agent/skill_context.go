@@ -13,6 +13,12 @@ import (
 // about the skill builtin tools (skill_list, skill_create, skill_run,
 // skill_delete) and lists any existing skills so the model can reuse them.
 const orchestrationRuleSkillName = "parallel-orchestration-rules"
+const autoSkillResultMarker = "[SMARA_AUTO_SKILL_RESULT]"
+
+type autoSkillSelection struct {
+	Skill          *skill.Skill
+	Recommendation skill.Recommendation
+}
 
 func buildSkillContext() string {
 	return buildSkillContextForMode(ModeAsk)
@@ -65,6 +71,9 @@ func buildSkillRecommendationContext(query string, mode Mode) string {
 	if mode == ModeWorkflow || strings.TrimSpace(query) == "" {
 		return ""
 	}
+	if strings.Contains(query, autoSkillResultMarker) {
+		return "\n\nAuto skill routing: skill rekomendasi sudah dijalankan otomatis untuk prompt ini. Gunakan hasilnya dan jangan panggil `skill_run` yang sama lagi.\n"
+	}
 	q := strings.ToLower(strings.TrimSpace(query))
 	shortChats := map[string]bool{"halo": true, "hallo": true, "hai": true, "hi": true, "hello": true, "ok": true, "oke": true, "mantap": true, "thanks": true, "terima kasih": true}
 	if shortChats[q] || (len(strings.Fields(q)) <= 1 && len(q) <= 8) {
@@ -103,6 +112,88 @@ func buildSkillRecommendationContext(query string, mode Mode) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// selectAutoRunnableSkill returns a single unambiguous recommendation that is
+// safe to execute before the model responds. Risky, parameterized, and closely
+// competing recommendations remain prompt-driven so the model can clarify.
+func selectAutoRunnableSkill(query string, mode Mode) *autoSkillSelection {
+	if !autoSkillModeAllowed(mode) || strings.TrimSpace(query) == "" || isSkillManagementPrompt(query) {
+		return nil
+	}
+
+	names, err := skill.List()
+	if err != nil || len(names) == 0 {
+		return nil
+	}
+	skills := make([]*skill.Skill, 0, len(names))
+	byName := make(map[string]*skill.Skill, len(names))
+	for _, name := range names {
+		sk, err := skill.Load(name)
+		if err != nil || sk == nil {
+			continue
+		}
+		skills = append(skills, sk)
+		byName[sk.Name] = sk
+	}
+
+	recs := skill.RecommendSkills(query, skills, skill.RecommendationOptions{Limit: 2, LowConfidence: 25})
+	if len(recs) == 0 || recs[0].Confidence != "high" || recs[0].Clarify {
+		return nil
+	}
+	if len(recs) > 1 && recs[0].Score-recs[1].Score < 15 {
+		return nil
+	}
+
+	sk := byName[recs[0].SkillName]
+	if sk == nil || hasUnresolvedRequiredParams(sk) || hasNestedSkillSteps(sk) {
+		return nil
+	}
+	if skill.AssessRisk(sk).RequiresApproval {
+		return nil
+	}
+	return &autoSkillSelection{Skill: sk, Recommendation: recs[0]}
+}
+
+func autoSkillModeAllowed(mode Mode) bool {
+	switch mode {
+	case ModeAsk, ModeRush, ModePlan, ModeTest:
+		return true
+	default:
+		return false
+	}
+}
+
+func hasUnresolvedRequiredParams(sk *skill.Skill) bool {
+	for _, param := range sk.Params {
+		if param.Required && param.Default == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNestedSkillSteps(sk *skill.Skill) bool {
+	for _, step := range sk.Steps {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(step.Tool)), "skill:") {
+			return true
+		}
+	}
+	return false
+}
+
+func isSkillManagementPrompt(query string) bool {
+	q := strings.ToLower(query)
+	for _, phrase := range []string{
+		"list skill", "skill list", "daftar skill", "ngelist skill", "lihat skill",
+		"skill yang tersedia", "skill apa", "buat skill", "bikin skill", "hapus skill",
+		"delete skill", "install skill", "import skill", "recommend skill", "rekomendasi skill",
+	} {
+		if strings.Contains(q, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildOrchestrationRuleSkillContext() string {

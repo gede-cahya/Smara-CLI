@@ -2219,7 +2219,24 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 				_ = tracker.LogRun(name, fmt.Sprintf("builtin-%d", start.UnixNano()), "builtin", "", "skill-run", res, start)
 			}
 		}
-		return fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary), nil
+		var runSummary strings.Builder
+		runSummary.WriteString(fmt.Sprintf("Skill '%s' dijalankan. Sukses=%v. %s", name, res.Success, res.Summary))
+		if len(res.StepResults) > 0 {
+			runSummary.WriteString("\nSteps:")
+			for i, sr := range res.StepResults {
+				status := "ok"
+				detail := sr.Output
+				if sr.Error != nil {
+					status = "failed"
+					detail = sr.Error.Error()
+				}
+				if len(detail) > 140 {
+					detail = detail[:140] + "..."
+				}
+				runSummary.WriteString(fmt.Sprintf("\n  %d. %s [%s] %s", i+1, sr.Tool, status, strings.ReplaceAll(detail, "\n", " ")))
+			}
+		}
+		return runSummary.String(), nil
 
 	case "skill_instructions":
 		name := getStr(args, "skill_name")
@@ -2253,6 +2270,10 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 		if len(names) == 0 {
 			return "Belum ada skill tersimpan di ~/.smara/skills/.", nil
 		}
+		var tracker *skill.ExecutionTracker
+		if BuiltinDB != nil {
+			tracker, _ = skill.NewExecutionTracker(BuiltinDB)
+		}
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("Skill tersimpan (%d):\n", len(names)))
 		for _, n := range names {
@@ -2265,7 +2286,18 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 			if len(desc) > 80 {
 				desc = desc[:80] + "…"
 			}
-			sb.WriteString(fmt.Sprintf("  • %s — %s (v%d, %d steps)\n", sk.Name, desc, sk.Version, len(sk.Steps)))
+			stats := ""
+			if tracker != nil {
+				if total, success, _, lastRun, err := tracker.GetStats(sk.Name); err == nil && total > 0 {
+					rate := float64(success) / float64(total) * 100
+					last := ""
+					if lastRun != nil {
+						last = ", last=" + lastRun.Format("2006-01-02")
+					}
+					stats = fmt.Sprintf(", runs=%d, success=%.0f%%%s", total, rate, last)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("  • %s — %s (v%d, %d steps%s)\n", sk.Name, desc, sk.Version, len(sk.Steps), stats))
 		}
 		return sb.String(), nil
 

@@ -1,17 +1,56 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
 
 // Planner converts a top-level orchestration task into a validated execution plan.
-type Planner struct{}
+//
+// Decomposition follows "LLM proposes, rules validate": when a provider is set,
+// an LLM drafts context-aware subtasks; the deterministic rules then validate
+// the DAG and clamp risk (escalate-only). Without a provider — or when the LLM
+// output is unusable — it falls back to the rule-based decompose().
+type Planner struct {
+	provider llm.Provider
+}
 
 // NewPlanner creates a lightweight deterministic orchestration planner.
 func NewPlanner() *Planner {
 	return &Planner{}
+}
+
+// NewLLMPlanner creates a planner that drafts subtasks via the LLM and validates
+// them with the deterministic rules. A nil provider degrades to rule-based.
+func NewLLMPlanner(provider llm.Provider) *Planner {
+	return &Planner{provider: provider}
+}
+
+// riskRank orders risk levels so they can be compared for escalate-only policy.
+func riskRank(r RiskLevel) int {
+	switch r {
+	case RiskCritical:
+		return 3
+	case RiskHigh:
+		return 2
+	case RiskMedium:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// maxRisk returns the higher of two risk levels. Used for escalate-only: an
+// LLM suggestion may raise risk above the rule baseline but never lower it.
+func maxRisk(a, b RiskLevel) RiskLevel {
+	if riskRank(b) > riskRank(a) {
+		return b
+	}
+	return a
 }
 
 // Plan decomposes a top-level task into safe, conventional subtasks and validates the resulting DAG.
@@ -32,7 +71,13 @@ func (p *Planner) Plan(task OrchestrationTask) (ExecutionPlan, error) {
 		task.RiskLevel = riskForKind(task.Kind)
 	}
 
-	subtasks := p.decompose(task)
+	// LLM proposes, rules validate. Fall back to rule-based decompose() when
+	// no provider is set or the LLM output is unusable, so a workflow never
+	// blanks out on a bad plan.
+	subtasks, ok := p.decomposeLLM(task)
+	if !ok {
+		subtasks = p.decompose(task)
+	}
 	deps := dependenciesFromSubtasks(subtasks)
 	plan := ExecutionPlan{
 		ID:           "plan-" + task.ID,
@@ -100,6 +145,166 @@ func (p *Planner) decompose(task OrchestrationTask) []Subtask {
 	}
 
 	return subtasks
+}
+
+// llmSubtask is the JSON shape the planner LLM emits per subtask. Risk/kind are
+// advisory: the rules clamp them (escalate-only) after parsing.
+type llmSubtask struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Kind        string   `json:"kind"`
+	RiskLevel   string   `json:"risk_level"`
+	DependsOn   []string `json:"depends_on"`
+	CanParallel bool     `json:"can_parallel"`
+}
+
+type llmPlanResponse struct {
+	Subtasks []llmSubtask `json:"subtasks"`
+}
+
+const plannerSubtaskSchema = `{
+  "subtasks": [
+    {
+      "id": "string (kebab-case, unik)",
+      "title": "string (singkat)",
+      "description": "string (apa yang dikerjakan, konkret)",
+      "kind": "read_only|mutating|destructive|remote|production_impacting",
+      "risk_level": "low|medium|high|critical",
+      "depends_on": ["id subtask lain yang harus selesai dulu"],
+      "can_parallel": true
+    }
+  ]
+}`
+
+const plannerSystemPrompt = `Kamu adalah perencana eksekusi (execution planner) untuk agen Smara.
+Pecah permintaan user menjadi subtask yang spesifik dan kontekstual — JUMLAH dan ISI subtask harus menyesuaikan tugas nyata, BUKAN template tetap.
+
+ATURAN:
+- Setiap subtask punya id unik (kebab-case) dan deskripsi konkret.
+- depends_on hanya boleh merujuk id subtask lain yang ADA di output. Jangan buat siklus.
+- Subtask read-only yang independen boleh can_parallel=true; subtask yang mengubah file/remote state harus can_parallel=false.
+- Jika tugas mengubah kode/file/remote atau berisiko, sertakan langkah verifikasi setelahnya.
+- Tandai kind & risk_level sejujurnya. Sistem akan menaikkan risk bila perlu (kamu tak bisa menurunkannya), jadi jangan meremehkan.
+
+Output HANYA JSON valid sesuai schema. Tidak ada teks di luar JSON.`
+
+// decomposeLLM asks the LLM to draft subtasks, then maps them into validated
+// Subtasks with escalate-only risk. Returns ok=false when the provider is unset
+// or the output cannot be used, so the caller can fall back to rule-based.
+func (p *Planner) decomposeLLM(task OrchestrationTask) ([]Subtask, bool) {
+	if p.provider == nil {
+		return nil, false
+	}
+
+	baselineKind := task.Kind
+	if baselineKind == "" {
+		baselineKind = classifyTaskKind(task.Description + " " + task.Title)
+	}
+	baselineRisk := riskForKind(baselineKind)
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: plannerSystemPrompt},
+		{Role: llm.RoleSystem, Content: "Schema JSON wajib:\n" + plannerSubtaskSchema},
+		{Role: llm.RoleUser, Content: fmt.Sprintf("Judul: %s\n\nDeskripsi tugas:\n%s", task.Title, task.Description)},
+	}
+
+	resp, err := p.provider.Chat(messages)
+	if err != nil || resp == nil {
+		return nil, false
+	}
+
+	var parsed llmPlanResponse
+	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &parsed); err != nil {
+		return nil, false
+	}
+	if len(parsed.Subtasks) == 0 {
+		return nil, false
+	}
+
+	subtasks := make([]Subtask, 0, len(parsed.Subtasks))
+	seen := map[string]bool{}
+	for _, ls := range parsed.Subtasks {
+		id := strings.TrimSpace(ls.ID)
+		if id == "" || seen[id] {
+			return nil, false // malformed: missing/duplicate id → fall back
+		}
+		seen[id] = true
+
+		st := NewSubtask(id, strings.TrimSpace(ls.Title), strings.TrimSpace(ls.Description))
+		if st.Title == "" {
+			st.Title = id
+		}
+		if st.Description == "" {
+			return nil, false
+		}
+		st.DependsOn = sanitizeDeps(ls.DependsOn, id)
+		st.CanParallel = ls.CanParallel
+
+		// Escalate-only: rule baseline is the floor; the LLM may raise it.
+		st.Kind = escalateKind(baselineKind, parseTaskKind(ls.Kind))
+		st.RiskLevel = maxRisk(baselineRisk, parseRiskLevel(ls.RiskLevel))
+		st.RiskLevel = maxRisk(st.RiskLevel, riskForKind(st.Kind))
+		if st.RiskLevel == RiskHigh || st.RiskLevel == RiskCritical {
+			st.CanParallel = false
+		}
+		subtasks = append(subtasks, st)
+	}
+
+	// Validate dependency references now so we can fall back cleanly instead of
+	// surfacing a hard error from Plan().
+	if err := ValidateExecutionPlan(ExecutionPlan{Subtasks: subtasks}); err != nil {
+		return nil, false
+	}
+	return subtasks, true
+}
+
+func sanitizeDeps(deps []string, selfID string) []string {
+	out := make([]string, 0, len(deps))
+	for _, d := range deps {
+		d = strings.TrimSpace(d)
+		if d == "" || d == selfID {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func parseTaskKind(s string) TaskKind {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "mutating":
+		return TaskKindMutating
+	case "destructive":
+		return TaskKindDestructive
+	case "remote":
+		return TaskKindRemote
+	case "production_impacting":
+		return TaskKindProductionImpacting
+	default:
+		return TaskKindReadOnly
+	}
+}
+
+func parseRiskLevel(s string) RiskLevel {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "critical":
+		return RiskCritical
+	case "high":
+		return RiskHigh
+	case "medium":
+		return RiskMedium
+	default:
+		return RiskLow
+	}
+}
+
+// escalateKind returns the higher-impact of two task kinds using risk ordering.
+func escalateKind(a, b TaskKind) TaskKind {
+	if riskRank(riskForKind(b)) > riskRank(riskForKind(a)) {
+		return b
+	}
+	return a
 }
 
 // ValidateExecutionPlan validates subtask IDs, dependency references, and DAG acyclicity.

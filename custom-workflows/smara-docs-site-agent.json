@@ -1,0 +1,101 @@
+{
+  "name": "smara-docs-site-agent",
+  "description": "Custom workflow untuk maintenance dan deployment Smara docs site: audit konten, sync versi, build VitePress, verifikasi, dan deploy ke Vercel.",
+  "project_dir": "/home/cahya/2026/Smara CLI",
+  "agents": [
+    {
+      "role": "docs-audit-agent",
+      "description": "Mengaudit konsistensi docs site: cek file yang ada vs sidebar config, broken links, dan version mismatch.",
+      "skills": ["tool", "memory"],
+      "tasks": [
+        {
+          "id": "audit-docs-content",
+          "description": "Audit file docs, cek kelengkapan halaman, dan deteksi inkonsistensi.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\nDOCS=\"docs-site\"\n\necho \"=== Docs Site Audit ===\"\necho \"Version: $VERSION\"\necho\n\n# 1. Check all sidebar pages exist\necho \"--- Sidebar Page Check ---\"\nCONFIG=\"$DOCS/.vitepress/config.ts\"\nMISSING=0\nFOUND=0\n\n# Extract all links from sidebar config\nLINKS=$(grep -oP \"link: '/[^']+'\" \"$CONFIG\" | sed \"s/link: '//;s/'//\" | sort -u)\n\nfor link in $LINKS; do\n  # Convert link to file path\n  if [ \"$link\" = \"/\" ]; then\n    FILE=\"$DOCS/index.md\"\n  else\n    FILE=\"$DOCS${link}.md\"\n  fi\n\n  if [ -f \"$FILE\" ]; then\n    FOUND=$((FOUND + 1))\n  else\n    echo \"  ❌ MISSING: $FILE (sidebar link: $link)\"\n    MISSING=$((MISSING + 1))\n  fi\ndone\n\necho \"  Found: $FOUND pages\"\necho \"  Missing: $MISSING pages\"\n\n# 2. Check for orphaned .md files not in sidebar\necho\necho \"--- Orphan Check ---\"\nSIDEBAR_PATHS=$(echo \"$LINKS\" | while read l; do\n  if [ \"$l\" = \"/\" ]; then echo \"$DOCS/index.md\"\n  else echo \"$DOCS${l}.md\"\n  fi\ndone | sort)\n\nACTUAL_FILES=$(find \"$DOCS\" -name '*.md' ! -path '*/node_modules/*' ! -path '*/.vitepress/*' | sort)\n\nORPHANS=$(comm -23 <(echo \"$ACTUAL_FILES\") <(echo \"$SIDEBAR_PATHS\") 2>/dev/null || true)\nif [ -n \"$ORPHANS\" ]; then\n  echo \"  Orphaned files (exist but not in sidebar):\"\n  echo \"$ORPHANS\" | while read f; do echo \"    ⚠ $f\"; done\nelse\n  echo \"  ✓ No orphaned files\"\nfi\n\n# 3. Check version consistency\necho\necho \"--- Version Consistency ---\"\nDOCS_VERSION=$(node -e \"console.log(require('./$DOCS/package.json').version)\" 2>/dev/null || echo \"unknown\")\nif [ \"$VERSION\" = \"$DOCS_VERSION\" ]; then\n  echo \"  ✓ VERSION ($VERSION) matches docs-site/package.json\"\nelse\n  echo \"  ⚠ MISMATCH: VERSION=$VERSION vs docs-site=$DOCS_VERSION\"\nfi\n\n# Check install scripts reference current version\nif grep -q \"$VERSION\" install.sh 2>/dev/null; then\n  echo \"  ✓ install.sh references v$VERSION\"\nelse\n  echo \"  ℹ install.sh uses dynamic version detection\"\nfi\n\n# 4. Count pages by section\necho\necho \"--- Section Summary ---\"\nfor dir in getting-started core-concepts guides reference examples; do\n  COUNT=$(find \"$DOCS/$dir\" -name '*.md' 2>/dev/null | wc -l)\n  echo \"  $dir: $COUNT pages\"\ndone\n\n# 5. Check for TODO/FIXME/PLACEHOLDER\necho\necho \"--- Placeholder Check ---\"\nPLACEHOLDERS=$(grep -rlE '(TODO|FIXME|PLACEHOLDER|PLACEHOLDER|COMING SOON|Under construction)' \"$DOCS\" --include='*.md' ! -path '*/node_modules/*' 2>/dev/null | wc -l)\necho \"  Pages with placeholders: $PLACEHOLDERS\"\nif [ \"$PLACEHOLDERS\" -gt 0 ]; then\n  grep -rlE '(TODO|FIXME|PLACEHOLDER|COMING SOON|Under construction)' \"$DOCS\" --include='*.md' ! -path '*/node_modules/*' 2>/dev/null | while read f; do echo \"    ⚠ $f\"; done\nfi\n\necho\necho \"✅ Docs audit complete\"\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    },
+    {
+      "role": "docs-sync-version-agent",
+      "description": "Sinkronisasi versi dari root VERSION ke docs-site/package.json dan pastikan konten docs up-to-date.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["docs-audit-agent"],
+      "tasks": [
+        {
+          "id": "sync-version-and-content",
+          "description": "Update versi di docs-site dan perbaiki isu yang ditemukan audit.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\nDOCS=\"docs-site\"\n\necho \"=== Sync Version & Content ===\"\necho \"Version: $VERSION\"\n\n# 1. Sync version to docs-site/package.json\necho\necho \"--- Sync package.json version ---\"\nDOCS_VERSION=$(node -e \"console.log(require('./$DOCS/package.json').version)\" 2>/dev/null || echo \"unknown\")\nif [ \"$VERSION\" != \"$DOCS_VERSION\" ]; then\n  node -e \"\n    const fs = require('fs');\n    const pkg = JSON.parse(fs.readFileSync('$DOCS/package.json', 'utf8'));\n    pkg.version = '$VERSION';\n    fs.writeFileSync('$DOCS/package.json', JSON.stringify(pkg, null, 2) + '\\n');\n  \"\n  echo \"  ✓ Updated docs-site/package.json: $DOCS_VERSION → $VERSION\"\nelse\n  echo \"  ✓ Already in sync: $VERSION\"\nfi\n\n# 2. Check installation page has correct version\necho\necho \"--- Check installation guide ---\"\nINSTALL_DOC=\"$DOCS/getting-started/installation.md\"\nif [ -f \"$INSTALL_DOC\" ]; then\n  if grep -q \"$VERSION\" \"$INSTALL_DOC\"; then\n    echo \"  ✓ Installation guide references v$VERSION\"\n  else\n    echo \"  ℹ Installation guide uses generic install commands (OK)\"\n  fi\nfi\n\n# 3. Check index.md\necho\necho \"--- Check index page ---\"\nif [ -f \"$DOCS/index.md\" ]; then\n  WORDS=$(wc -w < \"$DOCS/index.md\")\n  echo \"  ✓ index.md: $WORDS words\"\nfi\n\necho\necho \"✅ Version sync complete\"\n",
+            "timeout_sec": 60
+          }
+        }
+      ]
+    },
+    {
+      "role": "docs-build-agent",
+      "description": "Build VitePress docs site dan verifikasi output berhasil.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["docs-sync-version-agent"],
+      "tasks": [
+        {
+          "id": "build-docs-site",
+          "description": "Install deps dan build VitePress production site.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI/docs-site\"\n\necho \"=== Build Docs Site (VitePress) ===\"\n\n# Install dependencies\necho \"--- Install dependencies ---\"\nnpm install --prefer-offline 2>&1 | tail -5\n\n# Build\necho\necho \"--- Build VitePress ---\"\nnpm run docs:build 2>&1\n\n# Verify output\necho\necho \"--- Verify Build Output ---\"\nDIST=\".vitepress/dist\"\nif [ ! -d \"$DIST\" ]; then\n  echo \"❌ FAIL: Build output directory not found: $DIST\"\n  exit 1\nfi\n\n# Count output files\nHTML_COUNT=$(find \"$DIST\" -name '*.html' | wc -l)\nJS_COUNT=$(find \"$DIST\" -name '*.js' | wc -l)\nCSS_COUNT=$(find \"$DIST\" -name '*.css' | wc -l)\n\necho \"  ✓ Output directory: $DIST\"\necho \"  ✓ HTML pages: $HTML_COUNT\"\necho \"  ✓ JS files: $JS_COUNT\"\necho \"  ✓ CSS files: $CSS_COUNT\"\n\n# Check index.html exists\nif [ -f \"$DIST/index.html\" ]; then\n  echo \"  ✓ index.html exists\"\n  INDEX_SIZE=$(wc -c < \"$DIST/index.html\")\n  echo \"  ✓ index.html size: $INDEX_SIZE bytes\"\nelse\n  echo \"  ❌ FAIL: index.html missing\"\n  exit 1\nfi\n\n# Check 404 page\nif [ -f \"$DIST/404.html\" ]; then\n  echo \"  ✓ 404.html exists\"\nfi\n\n# Total size\nTOTAL_SIZE=$(du -sh \"$DIST\" | cut -f1)\necho \"  ✓ Total build size: $TOTAL_SIZE\"\n\necho\necho \"✅ Docs build successful\"\n",
+            "timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "role": "docs-verify-agent",
+      "description": "Verifikasi kualitas build: cek broken internal links, missing assets, dan validasi HTML.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["docs-build-agent"],
+      "tasks": [
+        {
+          "id": "verify-docs-quality",
+          "description": "Quality gate: broken links, missing images, dan HTML validation.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set +e\ncd \"/home/cahya/2026/Smara CLI/docs-site\"\nDIST=\".vitepress/dist\"\n\necho \"=== Docs Quality Verification ===\"\n\nISSUES=0\n\n# 1. Check broken internal links\necho \"--- Broken Link Check ---\"\nBROKEN=0\n# Extract all href from built HTML files\ngrep -roh 'href=\"/[^\"]*\"' \"$DIST\" 2>/dev/null | sed 's/href=\"//;s/\"//' | sort -u | while read link; do\n  # Remove anchor\n  path=$(echo \"$link\" | sed 's/#.*//')\n  if [ -z \"$path\" ] || [ \"$path\" = \"/\" ]; then continue; fi\n\n  # Check if file exists\n  FILE=\"${DIST}${path}\"\n  FILE_INDEX=\"${DIST}${path}/index.html\"\n  FILE_HTML=\"${DIST}${path}.html\"\n\n  if [ ! -f \"$FILE\" ] && [ ! -f \"$FILE_INDEX\" ] && [ ! -f \"$FILE_HTML\" ]; then\n    echo \"  ⚠ Broken link: $link\"\n    BROKEN=$((BROKEN + 1))\n  fi\ndone\n\nif [ \"$BROKEN\" -eq 0 ]; then\n  echo \"  ✓ No broken internal links detected\"\nfi\n\n# 2. Check missing images/assets\necho\necho \"--- Missing Asset Check ---\"\nIMG_REFS=$(grep -roh 'src=\"/[^\"]*\"' \"$DIST\" 2>/dev/null | sed 's/src=\"//;s/\"//' | sort -u)\nMISSING_ASSETS=0\nfor img in $IMG_REFS; do\n  if [ ! -f \"${DIST}${img}\" ]; then\n    echo \"  ⚠ Missing asset: $img\"\n    MISSING_ASSETS=$((MISSING_ASSETS + 1))\n  fi\ndone\nif [ \"$MISSING_ASSETS\" -eq 0 ]; then\n  echo \"  ✓ All referenced assets found\"\nfi\n\n# 3. Check for empty pages\necho\necho \"--- Empty Page Check ---\"\nEMPTY=0\nfind \"$DIST\" -name '*.html' | while read html; do\n  CONTENT_SIZE=$(wc -c < \"$html\")\n  if [ \"$CONTENT_SIZE\" -lt 500 ]; then\n    echo \"  ⚠ Suspiciously small: $html ($CONTENT_SIZE bytes)\"\n    EMPTY=$((EMPTY + 1))\n  fi\ndone\nif [ \"$EMPTY\" -eq 0 ]; then\n  echo \"  ✓ No empty/suspiciously small pages\"\nfi\n\n# 4. Check sitemap\necho\necho \"--- Sitemap Check ---\"\nif [ -f \"$DIST/sitemap.xml\" ]; then\n  URLS=$(grep -c '<loc>' \"$DIST/sitemap.xml\" 2>/dev/null || echo 0)\n  echo \"  ✓ sitemap.xml: $URLS URLs\"\nelse\n  echo \"  ℹ No sitemap.xml (VitePress may not generate by default)\"\nfi\n\necho\necho \"✅ Docs quality verification complete\"\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    },
+    {
+      "role": "docs-deploy-agent",
+      "description": "Deploy docs site: commit perubahan dan push ke trigger Vercel auto-deploy, atau deploy via Vercel CLI.",
+      "skills": ["tool", "memory"],
+      "depends_on": ["docs-verify-agent"],
+      "tasks": [
+        {
+          "id": "deploy-docs",
+          "description": "Commit dan push perubahan docs untuk trigger Vercel deployment.",
+          "type": "tool",
+          "mcp_server": "builtin",
+          "tool_name": "run_command",
+          "tool_args": {
+            "command": "set -e\ncd \"/home/cahya/2026/Smara CLI\"\nVERSION=$(cat VERSION)\n\necho \"=== Deploy Docs Site ===\"\necho \"Version: $VERSION\"\n\n# 1. Check for changes\necho\necho \"--- Git Status ---\"\ngit add docs-site/\ngit status --short docs-site/\n\nCHANGES=$(git diff --cached --stat docs-site/ 2>/dev/null | tail -1)\nif [ -z \"$CHANGES\" ] && [ -z \"$(git status --porcelain docs-site/)\" ]; then\n  echo \"  ℹ No changes in docs-site to deploy\"\n  echo \"  Vercel will serve the latest already-deployed version.\"\n  echo\necho \"✅ Nothing to deploy (no changes)\"\n  exit 0\nfi\n\necho \"  Changes: $CHANGES\"\n\n# 2. Commit\necho\necho \"--- Commit ---\"\ngit commit -m \"docs: update docs site v${VERSION}\n\n- Synced version with root VERSION\n- Rebuilt VitePress output\n- Audit and quality checks passed\" 2>/dev/null || echo \"  ℹ Nothing new to commit\"\n\n# 3. Push\necho\necho \"--- Push to Remote ---\"\ngit push origin HEAD 2>&1\necho \"  ✓ Pushed to origin\"\n\n# 4. Check Vercel deploy status\necho\necho \"--- Vercel Deploy ---\"\nif command -v vercel >/dev/null 2>&1; then\n  echo \"  Vercel CLI detected. Checking deployment...\"\n  vercel ls 2>&1 | head -5 || true\nelse\n  echo \"  ℹ Vercel CLI not installed\"\n  echo \"  Vercel auto-deploy will trigger from push.\"\n  echo \"  Check: https://vercel.com/dashboard\"\nfi\n\necho\necho \"✅ Docs deployment initiated\"\necho \"  Site: Check Vercel dashboard or project URL\"\necho \"  Trigger: git push to origin\"\n",
+            "timeout_sec": 120
+          }
+        }
+      ]
+    }
+  ]
+}

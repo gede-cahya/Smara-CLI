@@ -1,12 +1,16 @@
 {
   "name": "smara-web",
   "private": true,
-  "version": "1.20.9",
+  "version": "1.20.32",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "midscene:demo": "tsx midscene/demo.ts",
+    "midscene:web": "tsx midscene/smara-web.ts",
+    "midscene:playwright": "playwright test -c playwright.config.ts",
+    "midscene:playwright:ui": "playwright test -c playwright.config.ts --ui"
   },
   "dependencies": {
     "@react-three/drei": "^9.122.0",
@@ -23,13 +27,18 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@midscene/web": "^1.9.5",
+    "@playwright/test": "^1.60.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.4.2",
+    "playwright": "^1.60.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
+    "tsx": "^4.22.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.0"
   }

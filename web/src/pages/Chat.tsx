@@ -275,6 +275,14 @@ function describeToolCall(msg: ChatMessage): { title: string; subtitle?: string 
       const q = String(args.query ?? '')
       return { title: 'search_path', subtitle: q }
     }
+    case 'skill_run': {
+      const name = String(args.skill_name ?? '')
+      const automatic = args.automatic === true
+      return {
+        title: name ? `Skill: ${name}` : 'Skill',
+        subtitle: automatic ? 'Dipilih dan dijalankan otomatis' : 'Dijalankan oleh agent',
+      }
+    }
     default: {
       // Fall back to first short string arg
       const first = Object.values(args).find(v => typeof v === 'string' && v.length < 200)
@@ -2128,18 +2136,30 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
   const openConfigTab = () => {
     try {
       localStorage.setItem('smara_active_tab', 'config')
+      window.dispatchEvent(new CustomEvent('smara:set-active-tab', { detail: 'config' }))
       window.dispatchEvent(new StorageEvent('storage', { key: 'smara_active_tab', newValue: 'config' }))
     } catch {
       showToast('Buka tab Config dari sidebar untuk mengubah provider.')
     }
   }
 
+  const openParallelAgentPanel = useCallback(() => {
+    try {
+      localStorage.setItem('smara_active_tab', 'parallel-tasks')
+      window.dispatchEvent(new CustomEvent('smara:set-active-tab', { detail: 'parallel-tasks' }))
+      window.dispatchEvent(new StorageEvent('storage', { key: 'smara_active_tab', newValue: 'parallel-tasks' }))
+    } catch {
+      // User can still open the Parallel Agent tab manually from sidebar.
+    }
+  }, [])
+
   const setModeAndNotify = useCallback((nextMode: string) => {
     setMode(nextMode)
+    if (nextMode === 'parallel') openParallelAgentPanel()
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'mode_change', mode: nextMode }))
     }
-  }, [])
+  }, [openParallelAgentPanel])
 
   const connectWs = useCallback(() => {
     if (
@@ -2400,6 +2420,9 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
           break
         }
         case 'tool_call':
+          if (msg.tool === 'parallel_orchestration' || msg.tool === 'agent_swarm_workflow') {
+            openParallelAgentPanel()
+          }
           markAutoScrollIfNearBottom()
           setRunStatus(prev => prev ? {
             ...prev,
@@ -2634,9 +2657,12 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
             }
           }
           break
-        case 'mode':
-          setMode(msg.mode || 'ask')
+        case 'mode': {
+          const nextMode = msg.mode || 'ask'
+          setMode(nextMode)
+          if (nextMode === 'parallel') openParallelAgentPanel()
           break
+        }
         case 'stats':
           if (msg.stats) {
             setStatusStats({
@@ -2651,7 +2677,7 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
           break
       }
     }
-  }, [appendThinkingAnalysis, completeAnalysisEvent, flushPendingChat, interruptLocalRun, markAutoScrollIfNearBottom, mode, pushAnalysisEvent, refreshBackendSessions])
+  }, [appendThinkingAnalysis, completeAnalysisEvent, flushPendingChat, interruptLocalRun, markAutoScrollIfNearBottom, mode, openParallelAgentPanel, pushAnalysisEvent, refreshBackendSessions])
 
   useEffect(() => {
     connectWs()
@@ -2756,6 +2782,8 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
   const send = useCallback(() => {
     const messageText = input.trim()
     if (!messageText && attachments.length === 0) return
+    const activeRun = runStatusRef.current
+    if (thinkingRef.current || (activeRun && !isTerminalRunState(activeRun.state))) return
     const agentPayload = buildPromptWithAttachments(messageText, attachments)
     const wantsRoadmapProgress = isRoadmapProgressPrompt(messageText)
     const userMessage: ChatMessage = {
@@ -2765,6 +2793,7 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
       attachments: attachments.map(a => ({ path: a.path, size: a.size, kind: a.kind, name: a.name, preview: a.preview })),
     }
 
+    if (mode === 'parallel') openParallelAgentPanel()
     shouldAutoScrollRef.current = true
     setMessages(prev => capRuntimeMessages([...prev, userMessage]))
     setInput('')
@@ -2801,7 +2830,7 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
 
     wsRef.current.send(JSON.stringify({ type: 'chat', payload: agentPayload, mode, session_id: sessionIdRef.current, run_id: runID }))
     setThinking(true)
-  }, [input, attachments, connectWs, mode, queuePendingChat])
+  }, [input, attachments, connectWs, mode, openParallelAgentPanel, queuePendingChat])
 
   const sendPlanQuestAnswer = useCallback((answer: string) => {
     const text = `Saya pilih: ${answer}`

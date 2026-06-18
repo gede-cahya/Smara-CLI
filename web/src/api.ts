@@ -370,6 +370,22 @@ export interface SkillItem {
   dependencies?: string[]
   params?: SkillParam[]
   lineage?: SkillLineageEntry[]
+  run_count?: number
+  success_rate?: number
+  avg_duration_ms?: number
+  last_run?: string
+  needs_attention?: boolean
+}
+
+export interface SkillRecommendation {
+  skill_name: string
+  score: number
+  confidence: 'high' | 'medium' | 'low'
+  reasons: string[]
+  clarify?: boolean
+  success_rate?: number
+  recently_used?: boolean
+  skill?: SkillItem
 }
 
 export interface SkillRefineResponse {

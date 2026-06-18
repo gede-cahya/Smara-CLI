@@ -10,6 +10,12 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/skill"
 )
 
+// maxAutoRefineAttempts caps how many times a single skill may be auto-refined
+// while still below the success threshold. Past this, repeated failures share
+// the same root cause and the LLM is guessing rather than fixing, so the skill
+// is frozen for manual review instead of churning out more broken versions.
+const maxAutoRefineAttempts = 2
+
 var autoRefineRuntime = struct {
 	sync.Mutex
 	inFlight map[string]bool
@@ -94,8 +100,22 @@ func (s *Supervisor) maybeAutoRefineSkill(name string) {
 	if err != nil || !should {
 		return
 	}
-	improvements, _ := tracker.GetImprovements(name, 1)
+	improvements, _ := tracker.GetImprovements(name, maxAutoRefineAttempts)
 	if len(improvements) > 0 && time.Since(improvements[0].TriggeredAt) < 24*time.Hour {
+		return
+	}
+	// Stop-gate: if we've already auto-refined this skill maxAutoRefineAttempts
+	// times and the success rate is still below threshold, stop regenerating
+	// proposals. Repeated failures with the same root cause mean the LLM is
+	// guessing, not fixing; freeze and surface it for human review instead.
+	autoCount := 0
+	for _, imp := range improvements {
+		if imp.Trigger == "auto-refine" {
+			autoCount++
+		}
+	}
+	if autoCount >= maxAutoRefineAttempts {
+		log.Printf("[auto-refine] skill %s frozen after %d attempts (rate %.0f%%); needs manual review", name, autoCount, rate*100)
 		return
 	}
 	proposal, current, err := skill.RefineSkill(name, tracker, BuiltinDB, s.provider)

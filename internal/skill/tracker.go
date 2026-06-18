@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -146,8 +147,26 @@ func (t *ExecutionTracker) GetStats(skillName string) (total int, success int, a
 		return 0, 0, 0, nil, err
 	}
 	if lastStr.Valid {
-		for _, f := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999Z07:00", "2006-01-02 15:04:05"} {
-			if parsed, e := time.Parse(f, lastStr.String); e == nil {
+		// SQLite stores time.Time as RFC3339Nano on direct INSERT, but aggregate
+		// functions like MAX() can surface Go's Time.String() layout instead
+		// ("2006-01-02 15:04:05.999999999 -0700 MST" plus an "m=+..." monotonic
+		// suffix). Strip the monotonic part and try both families of layouts.
+		raw := lastStr.String
+		if i := strings.Index(raw, " m=+"); i != -1 {
+			raw = raw[:i]
+		} else if i := strings.Index(raw, " m=-"); i != -1 {
+			raw = raw[:i]
+		}
+		raw = strings.TrimSpace(raw)
+		for _, f := range []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05.999999999 -0700 MST",
+			"2006-01-02 15:04:05 -0700 MST",
+			"2006-01-02 15:04:05.999999999Z07:00",
+			"2006-01-02 15:04:05",
+		} {
+			if parsed, e := time.Parse(f, raw); e == nil {
 				lastRun = &parsed
 				break
 			}
@@ -286,16 +305,53 @@ func (t *ExecutionTracker) GetImprovements(skillName string, limit int) ([]Skill
 }
 
 func (t *ExecutionTracker) GlobalAnalytics() (map[string]interface{}, error) {
-	var totalRuns, successfulRuns int
+	var totalRuns, successfulRuns, failedRuns, last24hRuns int
+	var avgDuration float64
 	_ = t.db.QueryRow(`SELECT COUNT(*) FROM skill_executions`).Scan(&totalRuns)
 	_ = t.db.QueryRow(`SELECT COUNT(*) FROM skill_executions WHERE success = 1`).Scan(&successfulRuns)
+	_ = t.db.QueryRow(`SELECT COUNT(*) FROM skill_executions WHERE success = 0`).Scan(&failedRuns)
+	_ = t.db.QueryRow(`SELECT COALESCE(AVG(duration_ms),0) FROM skill_executions`).Scan(&avgDuration)
+	_ = t.db.QueryRow(`SELECT COUNT(*) FROM skill_executions WHERE started_at >= datetime('now', '-1 day')`).Scan(&last24hRuns)
 	top, _ := t.GetTopSkills(5)
 	struggling, _ := t.GetSkillsNeedingAttention()
+	recent, _ := t.GetTimeline("", 50)
+	recentFailures := make([]SkillExecution, 0, 5)
+	for _, item := range recent {
+		if !item.Success {
+			recentFailures = append(recentFailures, item)
+			if len(recentFailures) >= 5 {
+				break
+			}
+		}
+	}
+	triggeredBy := map[string]int{}
+	rows, err := t.db.Query(`SELECT COALESCE(NULLIF(triggered_by,''),'unknown'), COUNT(*) FROM skill_executions GROUP BY COALESCE(NULLIF(triggered_by,''),'unknown')`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var count int
+			if rows.Scan(&name, &count) == nil {
+				triggeredBy[name] = count
+			}
+		}
+	}
 	rate := 0.0
 	if totalRuns > 0 {
 		rate = float64(successfulRuns) / float64(totalRuns) * 100
 	}
-	return map[string]interface{}{"total_runs": totalRuns, "successful_runs": successfulRuns, "overall_rate": rate, "top_skills": top, "struggling": struggling}, nil
+	return map[string]interface{}{
+		"total_runs":          totalRuns,
+		"successful_runs":     successfulRuns,
+		"failed_runs":         failedRuns,
+		"overall_rate":        rate,
+		"avg_duration_ms":     avgDuration,
+		"last_24h_runs":       last24hRuns,
+		"triggered_by":        triggeredBy,
+		"top_skills":          top,
+		"struggling":          struggling,
+		"recent_failures":     recentFailures,
+	}, nil
 }
 
 // LogRun records a skill execution from a RunResult and timing.

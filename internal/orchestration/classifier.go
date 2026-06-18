@@ -29,14 +29,16 @@ func ShouldAutoParallelOrchestrate(prompt string, mode agent.Mode) bool {
 		// custom-workflow requests or feature wishes into the generic planner.
 		return false
 	}
-	return hasParallelSignal(lower) && hasExplicitWorkIntent(lower)
+	// Selecting the Chat UI "Parallel" mode is already an explicit user signal.
+	// Previously we also required the prompt text to contain "parallel agent" /
+	// "pakai parallel", so prompts like "cek kesehatan vps" in Parallel mode ran
+	// as normal chat and the Parallel Agent panel stayed unchanged.
+	return hasExplicitWorkIntent(lower)
 }
-
 func hasParallelOptOut(lower string) bool {
 	optOuts := []string{
-		"jangan parallel", "jangan paralel", "tanpa parallel", "tanpa paralel", "non-parallel", "serial", "sequential",
-		"berurutan", "satu per satu", "jangan masuk parallel task", "hilangkan parallel task",
-		"tanpa orchestration", "tanpa orkestrasi", "jawab singkat",
+		"berurutan", "satu per satu", "jangan parallel", "jangan paralel", "no parallel", "sequential",
+		"jangan masuk parallel task", "hilangkan parallel task", "tanpa orchestration", "tanpa orkestrasi", "jawab singkat",
 	}
 	for _, optOut := range optOuts {
 		if strings.Contains(lower, optOut) {
@@ -65,7 +67,12 @@ func isSimpleChat(lower string, wordCount int) bool {
 }
 
 func hasParallelSignal(lower string) bool {
-	terms := []string{"parallel orchestration", "parallel orchestrasion", "paralel orchestration", "orkestrasi paralel", "secara parallel", "secara paralel", " in parallel"}
+	terms := []string{
+		"parallel orchestration", "parallel orchestrasion", "paralel orchestration", "orkestrasi paralel",
+		"secara parallel", "secara paralel", " in parallel",
+		"parallel agent", "parallel agen", "agent parallel", "agen parallel", "agent paralel", "agen paralel",
+		"mode parallel", "mode paralel", "pakai parallel", "pakai paralel",
+	}
 	for _, term := range terms {
 		if strings.Contains(lower, term) {
 			return true
@@ -91,7 +98,8 @@ func hasExplicitWorkIntent(lower string) bool {
 	actions := []string{
 		"jalankan", "run", "execute", "mulai", "start", "kerjakan", "implementasikan", "buat", "buatkan", "bikin",
 		"tambah", "tambahkan", "ubah", "perbaiki", "fix", "debug", "test", "build", "deploy", "release", "audit", "refactor",
-		"update", "install", "setup", "cek", "verifikasi", "sinkronkan", "generate",
+		"update", "install", "setup", "cek", "check", "verifikasi", "sinkronkan", "generate",
+		"status", "diagnosa", "diagnose", "inspeksi", "inspect", "review", "analisis", "analyze", "audit", "list", "daftar", "tampilkan", "lihat",
 	}
 	for _, action := range actions {
 		if strings.Contains(lower, action) {

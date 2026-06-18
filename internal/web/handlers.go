@@ -119,6 +119,13 @@ func allowsWorkflowModeAction(requestMode string, fallback agent.Mode) bool {
 	return fallback == agent.ModeWorkflow
 }
 
+func effectiveRequestMode(requestMode string, fallback agent.Mode) agent.Mode {
+	if agent.ValidMode(requestMode) {
+		return agent.Mode(requestMode)
+	}
+	return fallback
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
@@ -149,17 +156,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.Supervisor.GetMode() == agent.ModeParallel && orchestration.IsAgentSwarmWorkflowPrompt(req.Message) {
+	requestMode := effectiveRequestMode(req.Mode, s.Supervisor.GetMode())
+	if requestMode == agent.ModeParallel && orchestration.IsAgentSwarmWorkflowPrompt(req.Message) {
 		log.Printf("[web] Routing chat prompt to Agent Swarm Workflow")
+		runID := fmt.Sprintf("web-planning-%d", time.Now().UnixNano())
+		s.OrchestrationStore.StartPlanning(runID, "Agent Swarm Workflow", req.Message)
 		result, err := s.runWorkflowWithLiveStatus(ctx, req.Message)
 		if err != nil {
-			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Agent Swarm Workflow gagal: %v", err))
+			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("agent swarm workflow gagal: %v", err))
 			return
 		}
 		jsonResponse(w, http.StatusOK, chatResponse{Response: formatAgentSwarmCompletion(result, 0)})
 		return
 	}
-	if orchestration.ShouldAutoParallelOrchestrate(req.Message, s.Supervisor.GetMode()) {
+	if orchestration.ShouldAutoParallelOrchestrate(req.Message, requestMode) {
 		log.Printf("[web] Auto-routing complex chat prompt to parallel orchestration")
 		result, err := s.runWorkflowWithLiveStatus(ctx, req.Message)
 		if err != nil {
@@ -637,7 +647,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			return
 		}
 	}
-	if orchestration.ShouldAutoParallelOrchestrate(msg.Payload, s.Supervisor.GetMode()) {
+	if orchestration.ShouldAutoParallelOrchestrate(msg.Payload, agent.Mode(activeMode)) {
 		log.Printf("[web] Auto-routing complex websocket prompt to parallel orchestration")
 		result, err := s.runWorkflowWithLiveStatus(ctx, msg.Payload)
 		_ = session.WriteJSON(wsMessage{Type: "thinking", Payload: "false"})
@@ -2152,6 +2162,60 @@ func (s *Server) handleBlueprintExecute(w http.ResponseWriter, r *http.Request) 
 
 // --- Skills ---
 
+type skillWebItem struct {
+	Name          string           `json:"name"`
+	Description   string           `json:"description"`
+	Version       int              `json:"version"`
+	Tags          []string         `json:"tags"`
+	Params        []skill.ParamDef `json:"params,omitempty"`
+	ParentID      string           `json:"parent_id,omitempty"`
+	CategoryPath  []string         `json:"category_path,omitempty"`
+	Dependencies  []string         `json:"dependencies,omitempty"`
+	Lineage       []lineageWebEntry `json:"lineage,omitempty"`
+	RunCount      int              `json:"run_count,omitempty"`
+	SuccessRate   float64          `json:"success_rate,omitempty"`
+	AvgDurationMS int64            `json:"avg_duration_ms,omitempty"`
+	LastRun       *time.Time       `json:"last_run,omitempty"`
+	NeedsAttention bool            `json:"needs_attention,omitempty"`
+}
+
+type lineageWebEntry struct {
+	Version     int      `json:"version"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	StepCount   int      `json:"step_count"`
+	RefinedAt   string   `json:"refined_at,omitempty"`
+	RefinedFrom string   `json:"refined_from,omitempty"`
+}
+
+func (s *Server) skillItemForWeb(sk *skill.Skill) skillWebItem {
+	item := skillWebItem{
+		Name:         sk.Name,
+		Description:  sk.Description,
+		Version:      sk.Version,
+		Tags:         sk.Tags,
+		Params:       sk.Params,
+		ParentID:     sk.ParentID,
+		CategoryPath: sk.CategoryPath,
+		Dependencies: sk.Dependencies,
+	}
+	for _, l := range sk.Lineage {
+		item.Lineage = append(item.Lineage, lineageWebEntry{Version: l.Version, Description: l.Description, Tags: l.Tags, StepCount: l.StepCount, RefinedAt: l.RefinedAt.Format("2006-01-02 15:04"), RefinedFrom: l.RefinedFrom})
+	}
+	if s.SkillTracker != nil {
+		if total, success, avgMs, lastRun, err := s.SkillTracker.GetStats(sk.Name); err == nil {
+			item.RunCount = total
+			item.AvgDurationMS = avgMs
+			item.LastRun = lastRun
+			if total > 0 {
+				item.SuccessRate = float64(success) / float64(total) * 100
+			}
+			item.NeedsAttention = total >= 3 && item.SuccessRate < 70
+		}
+	}
+	return item
+}
+
 func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -2160,53 +2224,13 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		type lineageEntry struct {
-			Version     int      `json:"version"`
-			Description string   `json:"description,omitempty"`
-			Tags        []string `json:"tags,omitempty"`
-			StepCount   int      `json:"step_count"`
-			RefinedAt   string   `json:"refined_at,omitempty"`
-			RefinedFrom string   `json:"refined_from,omitempty"`
-		}
-		type skillItem struct {
-			Name         string           `json:"name"`
-			Description  string           `json:"description"`
-			Version      int              `json:"version"`
-			Tags         []string         `json:"tags"`
-			Params       []skill.ParamDef `json:"params,omitempty"`
-			ParentID     string           `json:"parent_id,omitempty"`
-			CategoryPath []string         `json:"category_path,omitempty"`
-			Dependencies []string         `json:"dependencies,omitempty"`
-			Lineage      []lineageEntry   `json:"lineage,omitempty"`
-		}
-		var items []skillItem
+		var items []skillWebItem
 		for _, n := range names {
 			sk, err := skill.Load(n)
 			if err != nil {
 				continue
 			}
-			var lin []lineageEntry
-			for _, l := range sk.Lineage {
-				lin = append(lin, lineageEntry{
-					Version:     l.Version,
-					Description: l.Description,
-					Tags:        l.Tags,
-					StepCount:   l.StepCount,
-					RefinedAt:   l.RefinedAt.Format("2006-01-02 15:04"),
-					RefinedFrom: l.RefinedFrom,
-				})
-			}
-			items = append(items, skillItem{
-				Name:         sk.Name,
-				Description:  sk.Description,
-				Version:      sk.Version,
-				Tags:         sk.Tags,
-				Params:       sk.Params,
-				ParentID:     sk.ParentID,
-				CategoryPath: sk.CategoryPath,
-				Dependencies: sk.Dependencies,
-				Lineage:      lin,
-			})
+			items = append(items, s.skillItemForWeb(sk))
 		}
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"skills": items})
 	case http.MethodDelete:
@@ -2257,6 +2281,56 @@ func (s *Server) handleSkillRun(w http.ResponseWriter, r *http.Request) {
 		_ = s.SkillTracker.LogRun(sk.Name, fmt.Sprintf("web-%d", time.Now().UnixNano()), "manual", s.Cfg.ActiveWorkspace, string(s.Supervisor.GetMode()), result, start)
 	}
 	jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *Server) handleSkillRecommend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"recommendations": []interface{}{}})
+		return
+	}
+	limit := 5
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	names, err := skill.List()
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	skills := make([]*skill.Skill, 0, len(names))
+	byName := make(map[string]*skill.Skill, len(names))
+	for _, name := range names {
+		sk, err := skill.Load(name)
+		if err != nil || sk == nil {
+			continue
+		}
+		skills = append(skills, sk)
+		byName[sk.Name] = sk
+	}
+	recs := skill.RecommendSkills(query, skills, skill.RecommendationOptions{Limit: limit, LowConfidence: 25, StatsProvider: s.SkillTracker})
+	items := make([]map[string]interface{}, 0, len(recs))
+	for _, rec := range recs {
+		item := map[string]interface{}{
+			"skill_name":    rec.SkillName,
+			"score":         rec.Score,
+			"confidence":    rec.Confidence,
+			"reasons":       rec.Reasons,
+			"clarify":       rec.Clarify,
+			"success_rate":  rec.SuccessRate,
+			"recently_used": rec.RecentlyUsed,
+		}
+		if sk := byName[rec.SkillName]; sk != nil {
+			webItem := s.skillItemForWeb(sk)
+			item["skill"] = webItem
+		}
+		items = append(items, item)
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"query": query, "recommendations": items})
 }
 
 func (s *Server) handleSkillImport(w http.ResponseWriter, r *http.Request) {
@@ -2387,10 +2461,6 @@ func (s *Server) handleSkillTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.URL.Query().Get("name")
-	if name == "" {
-		errorResponse(w, http.StatusBadRequest, "name required")
-		return
-	}
 	limitStr := r.URL.Query().Get("limit")
 	limit := 20
 	if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {

@@ -155,3 +155,68 @@ func TestDSMLStreamFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestThinkStreamFilter_SingleChunk(t *testing.T) {
+	var f ThinkStreamFilter
+	content, thinking := f.Write("<think>reasoning here</think>jawaban akhir")
+	tailC, tailT := f.Close()
+	assert.Equal(t, "jawaban akhir", content+tailC)
+	assert.Equal(t, "reasoning here", thinking+tailT)
+}
+
+func TestThinkStreamFilter_TagSplitAcrossChunks(t *testing.T) {
+	var f ThinkStreamFilter
+	var content, thinking strings.Builder
+	// "<think>" split as "<thi" + "nk>"; "</think>" split as "</thin" + "k>".
+	chunks := []string{"<thi", "nk>be", "rpikir", "</thin", "k>", "Halo dunia"}
+	for _, c := range chunks {
+		ct, th := f.Write(c)
+		content.WriteString(ct)
+		thinking.WriteString(th)
+	}
+	tailC, tailT := f.Close()
+	content.WriteString(tailC)
+	thinking.WriteString(tailT)
+	assert.Equal(t, "Halo dunia", content.String())
+	assert.Equal(t, "berpikir", thinking.String())
+}
+
+func TestThinkStreamFilter_EmptyThinkBlock(t *testing.T) {
+	var f ThinkStreamFilter
+	// The exact shard that previously leaked into the live stream.
+	content, thinking := f.Write("<think></think>")
+	tailC, tailT := f.Close()
+	assert.Equal(t, "", content+tailC)
+	assert.Equal(t, "", thinking+tailT)
+}
+
+func TestThinkStreamFilter_NoThinkTags(t *testing.T) {
+	var f ThinkStreamFilter
+	content, thinking := f.Write("teks biasa tanpa tag")
+	tailC, tailT := f.Close()
+	assert.Equal(t, "teks biasa tanpa tag", content+tailC)
+	assert.Equal(t, "", thinking+tailT)
+}
+
+func TestThinkStreamFilter_ContentBeforeAndAfterThink(t *testing.T) {
+	var f ThinkStreamFilter
+	var content, thinking strings.Builder
+	for _, c := range []string{"awal ", "<think>mid</think>", " akhir"} {
+		ct, th := f.Write(c)
+		content.WriteString(ct)
+		thinking.WriteString(th)
+	}
+	tailC, tailT := f.Close()
+	content.WriteString(tailC)
+	thinking.WriteString(tailT)
+	assert.Equal(t, "awal  akhir", content.String())
+	assert.Equal(t, "mid", thinking.String())
+}
+
+func TestThinkStreamFilter_UnclosedThinkAtEnd(t *testing.T) {
+	var f ThinkStreamFilter
+	content, thinking := f.Write("visible <think>dangling reasoning")
+	tailC, tailT := f.Close()
+	assert.Equal(t, "visible ", content+tailC)
+	assert.Equal(t, "dangling reasoning", thinking+tailT)
+}

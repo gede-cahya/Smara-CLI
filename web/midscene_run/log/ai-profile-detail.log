@@ -1,0 +1,10 @@
+[2026-06-12T13:00:16.066+08:00] model usage detail: {"prompt_tokens":1815,"completion_tokens":275,"total_tokens":2090}
+[2026-06-12T13:00:20.859+08:00] model usage detail: {"prompt_tokens":1857,"completion_tokens":80,"total_tokens":1937}
+[2026-06-12T13:01:32.607+08:00] model usage detail: {"prompt_tokens":1815,"completion_tokens":259,"total_tokens":2074}
+[2026-06-12T13:01:42.231+08:00] model usage detail: {"prompt_tokens":1857,"completion_tokens":77,"total_tokens":1934}
+[2026-06-12T13:45:59.466+08:00] model usage detail: {"prompt_tokens":1815,"completion_tokens":242,"total_tokens":2057}
+[2026-06-12T13:46:03.129+08:00] model usage detail: {"prompt_tokens":1857,"completion_tokens":73,"total_tokens":1930}
+[2026-06-12T13:54:00.285+08:00] model usage detail: {"prompt_tokens":1826,"completion_tokens":205,"total_tokens":2031}
+[2026-06-12T13:54:06.099+08:00] model usage detail: {"prompt_tokens":1861,"completion_tokens":113,"total_tokens":1974}
+[2026-06-12T13:58:11.334+08:00] model usage detail: {"prompt_tokens":1826,"completion_tokens":158,"total_tokens":1984}
+[2026-06-12T13:58:16.300+08:00] model usage detail: {"prompt_tokens":1861,"completion_tokens":137,"total_tokens":1998}

@@ -24,6 +24,12 @@ type ExecutorConfig struct {
 	ParallelOrchestration *bool
 	// Logger receives lightweight observability events. Nil disables logging.
 	Logger func(event string, fields map[string]interface{})
+	// ApprovalFunc gates a subtask whose Status is StatusWaitingApproval. It
+	// blocks until the user approves (true) or denies/times out (false). When
+	// nil, gated subtasks are auto-denied (skipped) to stay safe by default.
+	// Only invoked for subtasks the safety guardrail marked as waiting; the
+	// non-gated execution path is untouched.
+	ApprovalFunc func(ctx context.Context, subtask Subtask) bool
 }
 
 // PlanExecutionResult captures the result of executing an orchestration plan.
@@ -164,6 +170,27 @@ func (e *Executor) executeBatch(ctx context.Context, batch ExecutionBatch, subta
 }
 
 func (e *Executor) executeOne(ctx context.Context, st Subtask) ExecutionResult {
+	// Approval gate: a subtask the guardrail marked as waiting must be approved
+	// before it runs. Blocks via ApprovalFunc; denied/timeout → skipped so its
+	// dependents are also skipped by the normal dependency check.
+	if st.Status == StatusWaitingApproval {
+		e.log("approval_required", map[string]interface{}{"subtask": st.ID, "risk": string(st.RiskLevel)})
+		approved := false
+		if e.config.ApprovalFunc != nil {
+			approved = e.config.ApprovalFunc(ctx, st)
+		}
+		if !approved {
+			e.log("approval_denied", map[string]interface{}{"subtask": st.ID})
+			return ExecutionResult{
+				SubtaskID: st.ID,
+				Status:    StatusSkipped,
+				Error:     "subtask requires approval but was denied or timed out",
+				Metadata:  map[string]interface{}{"approval": "denied"},
+			}
+		}
+		e.log("approval_granted", map[string]interface{}{"subtask": st.ID})
+	}
+
 	attempts := st.RetryPolicy.MaxAttempts
 	if attempts < 1 {
 		attempts = 1

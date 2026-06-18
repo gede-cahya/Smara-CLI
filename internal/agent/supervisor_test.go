@@ -973,3 +973,81 @@ func TestSessionRegistry_Create_SetsWorkspaceID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), sess.WorkspaceID)
 }
+
+// thinkOnlyThenAnswerProvider reproduces the bug where a non-Ollama provider
+// emits an empty "<think></think>" reasoning shard as its final content after a
+// tool call. Turn 1: tool call. Turn 2: empty <think></think> content (should
+// NOT be treated as a final answer nor trigger the "batas iterasi" fallback).
+// Turn 3: a real final answer once nudged.
+type thinkOnlyThenAnswerProvider struct {
+	mu    sync.Mutex
+	calls int
+	path  string
+}
+
+func (p *thinkOnlyThenAnswerProvider) Name() string { return "think-only" }
+
+func (p *thinkOnlyThenAnswerProvider) Chat(messages []llm.Message) (*llm.ChatResponse, error) {
+	return &llm.ChatResponse{Content: "jawaban final dari Chat fallback"}, nil
+}
+
+func (p *thinkOnlyThenAnswerProvider) ChatWithTools(messages []llm.Message, tools []llm.ToolFunction) (*llm.ChatResponse, []llm.ToolCall, error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+
+	switch call {
+	case 1:
+		return &llm.ChatResponse{Content: "Membaca file."}, []llm.ToolCall{{
+			ID:       "call_view",
+			Function: "view_file",
+			Args:     map[string]interface{}{"path": p.path},
+		}}, nil
+	case 2:
+		// Empty reasoning-only content — the exact shard that leaked before.
+		return &llm.ChatResponse{Content: "<think></think>"}, nil, nil
+	default:
+		return &llm.ChatResponse{Content: "Isi file adalah hello. Tugas selesai."}, nil, nil
+	}
+}
+
+func (p *thinkOnlyThenAnswerProvider) GenerateEmbedding(text string) ([]float32, error) {
+	return nil, nil
+}
+
+func TestSupervisor_EmptyThinkAnswerDoesNotTriggerIterationFallback(t *testing.T) {
+	oldTimeout := postToolLLMTimeout
+	oldQuickTimeout := postToolQuickFinishTimeout
+	postToolLLMTimeout = 0
+	postToolQuickFinishTimeout = 0
+	defer func() {
+		postToolLLMTimeout = oldTimeout
+		postToolQuickFinishTimeout = oldQuickTimeout
+	}()
+
+	path := t.TempDir() + "/target.txt"
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0644))
+
+	provider := &thinkOnlyThenAnswerProvider{path: path}
+	s := NewSupervisor(provider, nil)
+	s.SetMode(ModeAsk) // small budget, but well above the 3 turns we need
+	s.callback = AgenticCallback{
+		OnToolResult:  func(output string) {},
+		OnPhaseChange: func(phase, description string) {},
+		OnLog:         func(role, content string) {},
+	}
+
+	result, err := s.ProcessPrompt(context.Background(), "lihat isi file target")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// The empty <think></think> turn must be retried, yielding the real answer.
+	assert.Contains(t, result.Response, "hello")
+	// It must NOT be mislabeled as iteration-budget exhaustion.
+	assert.NotContains(t, result.Response, "batas iterasi")
+	// And the stripped reasoning shard must not leak into the response.
+	assert.NotContains(t, result.Response, "<think>")
+	// Confirms we reached the 3rd ChatWithTools turn (tool, empty, answer).
+	assert.Equal(t, 3, provider.calls)
+}

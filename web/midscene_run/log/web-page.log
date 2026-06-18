@@ -1,0 +1,50 @@
+[2026-06-12T13:00:09.510+08:00] evaluate function begin
+[2026-06-12T13:00:09.513+08:00] evaluate function end
+[2026-06-12T13:00:09.513+08:00] screenshotBase64 begin
+[2026-06-12T13:00:09.587+08:00] screenshotBase64 end, cost: 74ms
+[2026-06-12T13:00:16.067+08:00] screenshotBase64 begin
+[2026-06-12T13:00:16.140+08:00] screenshotBase64 end, cost: 73ms
+[2026-06-12T13:00:16.166+08:00] screenshotBase64 begin
+[2026-06-12T13:00:16.280+08:00] screenshotBase64 end, cost: 114ms
+[2026-06-12T13:00:20.859+08:00] screenshotBase64 begin
+[2026-06-12T13:00:20.989+08:00] screenshotBase64 end, cost: 130ms
+[2026-06-12T13:01:25.573+08:00] evaluate function begin
+[2026-06-12T13:01:25.578+08:00] evaluate function end
+[2026-06-12T13:01:25.578+08:00] screenshotBase64 begin
+[2026-06-12T13:01:25.706+08:00] screenshotBase64 end, cost: 128ms
+[2026-06-12T13:01:32.608+08:00] screenshotBase64 begin
+[2026-06-12T13:01:32.741+08:00] screenshotBase64 end, cost: 133ms
+[2026-06-12T13:01:32.771+08:00] screenshotBase64 begin
+[2026-06-12T13:01:32.880+08:00] screenshotBase64 end, cost: 109ms
+[2026-06-12T13:01:42.232+08:00] screenshotBase64 begin
+[2026-06-12T13:01:42.355+08:00] screenshotBase64 end, cost: 123ms
+[2026-06-12T13:45:53.374+08:00] evaluate function begin
+[2026-06-12T13:45:53.376+08:00] evaluate function end
+[2026-06-12T13:45:53.377+08:00] screenshotBase64 begin
+[2026-06-12T13:45:53.501+08:00] screenshotBase64 end, cost: 125ms
+[2026-06-12T13:45:59.466+08:00] screenshotBase64 begin
+[2026-06-12T13:45:59.615+08:00] screenshotBase64 end, cost: 149ms
+[2026-06-12T13:45:59.646+08:00] screenshotBase64 begin
+[2026-06-12T13:45:59.765+08:00] screenshotBase64 end, cost: 119ms
+[2026-06-12T13:46:03.129+08:00] screenshotBase64 begin
+[2026-06-12T13:46:03.272+08:00] screenshotBase64 end, cost: 143ms
+[2026-06-12T13:53:54.410+08:00] evaluate function begin
+[2026-06-12T13:53:54.443+08:00] evaluate function end
+[2026-06-12T13:53:54.443+08:00] screenshotBase64 begin
+[2026-06-12T13:53:54.629+08:00] screenshotBase64 end, cost: 186ms
+[2026-06-12T13:54:00.286+08:00] screenshotBase64 begin
+[2026-06-12T13:54:00.339+08:00] screenshotBase64 end, cost: 53ms
+[2026-06-12T13:54:00.365+08:00] screenshotBase64 begin
+[2026-06-12T13:54:00.433+08:00] screenshotBase64 end, cost: 68ms
+[2026-06-12T13:54:06.099+08:00] screenshotBase64 begin
+[2026-06-12T13:54:06.155+08:00] screenshotBase64 end, cost: 56ms
+[2026-06-12T13:58:06.476+08:00] evaluate function begin
+[2026-06-12T13:58:06.480+08:00] evaluate function end
+[2026-06-12T13:58:06.480+08:00] screenshotBase64 begin
+[2026-06-12T13:58:06.661+08:00] screenshotBase64 end, cost: 181ms
+[2026-06-12T13:58:11.335+08:00] screenshotBase64 begin
+[2026-06-12T13:58:11.398+08:00] screenshotBase64 end, cost: 63ms
+[2026-06-12T13:58:11.422+08:00] screenshotBase64 begin
+[2026-06-12T13:58:11.487+08:00] screenshotBase64 end, cost: 65ms
+[2026-06-12T13:58:16.300+08:00] screenshotBase64 begin
+[2026-06-12T13:58:16.369+08:00] screenshotBase64 end, cost: 69ms

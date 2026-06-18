@@ -308,11 +308,15 @@ func (a *AnthropicProvider) buildChatRequest(messages []Message, tools []anthrop
 					blocks = append(blocks, anthropicTextBlock{Type: "text", Text: m.Content})
 				}
 				for _, tc := range m.ToolCalls {
+					input := tc.Args
+					if input == nil {
+						input = map[string]interface{}{}
+					}
 					blocks = append(blocks, anthropicToolUseBlock{
 						Type:  "tool_use",
 						ID:    tc.ID,
 						Name:  tc.Function,
-						Input: tc.Args,
+						Input: input,
 					})
 				}
 				apiMessages = append(apiMessages, anthropicMessage{

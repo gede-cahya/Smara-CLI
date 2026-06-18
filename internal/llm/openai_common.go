@@ -193,7 +193,17 @@ func convertMessagesToOpenAI(messages []Message) []openAIMessage {
 			ReasoningContent: m.ReasoningContent,
 		}
 		for _, tc := range m.ToolCalls {
-			argsJSON, _ := json.Marshal(tc.Args)
+			args := tc.Args
+			// Workaround for OpenAI-to-Anthropic proxies (e.g. 9Router) that
+			// mishandle empty JSON objects in tool_call arguments (treating {}
+			// as falsy and converting to null). Adding a sentinel key ensures
+			// the arguments payload is never an empty object, preventing the
+			// "tool_use.input: Input should be an object" 400 error from
+			// Anthropic when the proxy converts OpenAI → Anthropic format.
+			if args == nil || len(args) == 0 {
+				args = map[string]interface{}{"_noop": true}
+			}
+			argsJSON, _ := json.Marshal(args)
 			msg.ToolCalls = append(msg.ToolCalls, openAIToolCall{
 				ID:   tc.ID,
 				Type: "function",
@@ -206,11 +216,6 @@ func convertMessagesToOpenAI(messages []Message) []openAIMessage {
 		om[i] = msg
 	}
 	return om
-}
-
-// streamOpenAI is a shared helper for OpenAI-compatible streaming (OpenAI, OpenRouter, Custom).
-func streamOpenAI(client *http.Client, host, apiKey string, req openAIChatRequest, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
-	return streamOpenAIWithContext(context.Background(), client, host, apiKey, req, callback)
 }
 
 func streamOpenAIWithContext(ctx context.Context, client *http.Client, host, apiKey string, req openAIChatRequest, callback StreamCallback) (*ChatResponse, []ToolCall, error) {
@@ -248,6 +253,7 @@ func streamOpenAIWithContext(ctx context.Context, client *http.Client, host, api
 	var toolCallsMap = make(map[int]*ToolCall)
 	var toolCallsRawArgs = make(map[int]*strings.Builder)
 	var dsmlFilter DSMLStreamFilter
+	var thinkFilter ThinkStreamFilter
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -278,10 +284,24 @@ func streamOpenAIWithContext(ctx context.Context, client *http.Client, host, api
 			delta := choice.Delta
 
 			if delta.Content != "" {
-				fullContent.WriteString(delta.Content)
-				safeChunk := dsmlFilter.Write(delta.Content)
-				if safeChunk != "" && callback != nil {
-					callback(safeChunk, false, PhaseGenerating)
+				// Split inline <think>...</think> reasoning out of the content
+				// stream first so it is routed to the thinking channel instead
+				// of leaking into the live answer. Providers that already use
+				// the separate `reasoning` field below are unaffected (their
+				// content carries no think tags).
+				visible, inlineThink := thinkFilter.Write(delta.Content)
+				if inlineThink != "" {
+					fullThinking.WriteString(inlineThink)
+					if callback != nil {
+						callback(inlineThink, true, PhaseThinking)
+					}
+				}
+				if visible != "" {
+					fullContent.WriteString(visible)
+					safeChunk := dsmlFilter.Write(visible)
+					if safeChunk != "" && callback != nil {
+						callback(safeChunk, false, PhaseGenerating)
+					}
 				}
 			}
 
@@ -316,6 +336,23 @@ func streamOpenAIWithContext(ctx context.Context, client *http.Client, host, api
 
 	if err := scanner.Err(); err != nil {
 		return nil, nil, fmt.Errorf("error saat membaca stream: %w", err)
+	}
+
+	// Flush any buffered tail from the think filter first, routing leftover
+	// reasoning to the thinking channel and leftover content through DSML.
+	tailContent, tailThink := thinkFilter.Close()
+	if tailThink != "" {
+		fullThinking.WriteString(tailThink)
+		if callback != nil {
+			callback(tailThink, true, PhaseThinking)
+		}
+	}
+	if tailContent != "" {
+		fullContent.WriteString(tailContent)
+		safe := dsmlFilter.Write(tailContent)
+		if safe != "" && callback != nil {
+			callback(safe, false, PhaseGenerating)
+		}
 	}
 
 	// Flush any remaining buffered text from DSML filter

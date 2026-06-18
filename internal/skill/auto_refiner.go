@@ -3,6 +3,7 @@ package skill
 import (
 	"database/sql"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/llm"
@@ -90,6 +91,18 @@ func RefineSkill(name string, tracker *ExecutionTracker, db *sql.DB, provider ll
 	return resp.Content, sk, nil
 }
 
+// StepSemanticValidator, when set, validates that step arguments are coherent
+// (e.g. enum-constrained args point at known values). The agent package wires
+// this up at init so the refiner can reject proposals that would fail at run
+// time. It stays nil-safe for callers that don't need semantic checks.
+var StepSemanticValidator func(steps []Step) error
+
+// stepsEqual reports whether two step slices are semantically identical so the
+// refiner can skip proposals that don't actually change behaviour.
+func stepsEqual(a, b []Step) bool {
+	return reflect.DeepEqual(a, b)
+}
+
 // AutoApplyRefinement checks predicted improvement and applies if over threshold or manual.
 func AutoApplyRefinement(proposedJSON string, sk *Skill, tracker *ExecutionTracker, cfg RefinerConfig) (*Skill, error) {
 	newSkill, err := FromJSON([]byte(proposedJSON))
@@ -100,6 +113,14 @@ func AutoApplyRefinement(proposedJSON string, sk *Skill, tracker *ExecutionTrack
 	newSkill.Version = sk.Version + 1
 	if err := newSkill.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid refined skill: %w", err)
+	}
+	if StepSemanticValidator != nil {
+		if err := StepSemanticValidator(newSkill.Steps); err != nil {
+			return nil, fmt.Errorf("refined skill rejected: %w", err)
+		}
+	}
+	if stepsEqual(sk.Steps, newSkill.Steps) {
+		return nil, fmt.Errorf("refined skill identical to v%d, skipping", sk.Version)
 	}
 	// Preserve ancestry so the Hierarchy view can render the refine chain.
 	AttachLineage(newSkill, sk, "auto")

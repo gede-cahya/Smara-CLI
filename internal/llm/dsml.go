@@ -102,6 +102,105 @@ func (f *DSMLStreamFilter) Close() string {
 
 // ExtractToolCallsFromContent parses DSML-style tool calls from raw LLM content.
 // Returns extracted ToolCalls and cleaned content.
+// ThinkStreamFilter splits a streamed token sequence into visible content and
+// inline <think>...</think> reasoning. Some providers (notably the custom /
+// OpenAI-compatible ones) emit reasoning inline in the content delta instead of
+// a separate `reasoning` field. Without splitting, "<think>" markup leaks into
+// the live answer stream. This filter buffers partial tags across chunks so a
+// "<thi" split across two deltas is never shown.
+type ThinkStreamFilter struct {
+	buf     strings.Builder // holds a possibly-incomplete tag prefix at the tail
+	inThink bool            // currently inside a <think> block
+}
+
+// thinkOpen/thinkClose are the literal tags we route on.
+const (
+	thinkOpen  = "<think>"
+	thinkClose = "</think>"
+)
+
+// Write consumes a streamed chunk and returns the text that is safe to display
+// (content) and the reasoning text (thinking) extracted from <think> blocks.
+// Trailing bytes that could be the start of a tag are retained internally and
+// emitted on a later Write or on Close.
+func (f *ThinkStreamFilter) Write(chunk string) (content string, thinking string) {
+	f.buf.WriteString(chunk)
+	work := f.buf.String()
+	f.buf.Reset()
+
+	var out, think strings.Builder
+	for {
+		if f.inThink {
+			idx := strings.Index(work, thinkClose)
+			if idx == -1 {
+				// Still inside think. Emit all but a possible partial close tag.
+				keep := partialTagSuffix(work, thinkClose)
+				think.WriteString(work[:len(work)-keep])
+				f.buf.WriteString(work[len(work)-keep:])
+				break
+			}
+			think.WriteString(work[:idx])
+			work = work[idx+len(thinkClose):]
+			f.inThink = false
+			continue
+		}
+
+		idx := strings.Index(work, thinkOpen)
+		if idx == -1 {
+			// No open tag. Emit all but a possible partial open tag.
+			keep := partialTagSuffix(work, thinkOpen)
+			out.WriteString(work[:len(work)-keep])
+			f.buf.WriteString(work[len(work)-keep:])
+			break
+		}
+		out.WriteString(work[:idx])
+		work = work[idx+len(thinkOpen):]
+		f.inThink = true
+	}
+
+	return out.String(), think.String()
+}
+
+// Close flushes any buffered tail at end of stream. Any leftover is treated as
+// content if we're outside a think block, otherwise as thinking.
+func (f *ThinkStreamFilter) Close() (content string, thinking string) {
+	rem := f.buf.String()
+	f.buf.Reset()
+	if rem == "" {
+		return "", ""
+	}
+	if f.inThink {
+		return "", rem
+	}
+	return rem, ""
+}
+
+// partialTagSuffix returns the length of the trailing portion of s that is a
+// proper prefix of tag (e.g. "<thi" for "<think>"). It lets the filter hold
+// back bytes that might complete into a tag on the next chunk. Returns 0 when
+// no suffix of s is a non-empty prefix of tag.
+func partialTagSuffix(s, tag string) int {
+	max := len(tag) - 1
+	if max > len(s) {
+		max = len(s)
+	}
+	for n := max; n > 0; n-- {
+		if strings.HasPrefix(tag, s[len(s)-n:]) {
+			return n
+		}
+	}
+	return 0
+}
+
+// StripThinkTags removes <think>...</think> reasoning blocks from content and
+// returns the cleaned prose plus the extracted reasoning. Providers other than
+// Ollama (e.g. the OpenAI-compatible "custom" provider) do not strip these
+// inline reasoning tags, so the supervisor calls this centrally to avoid empty
+// `<think></think>` shards leaking into final answers and thought summaries.
+func StripThinkTags(content string) (cleaned string, thinking string) {
+	return stripThinkingTags(content)
+}
+
 func ExtractToolCallsFromContent(content string) ([]ToolCall, string) {
 	// Normalize messy tag formats from models like deepseek-v4-flash
 	normalized := normalizeDSMLTags(content)

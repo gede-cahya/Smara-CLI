@@ -108,10 +108,72 @@ type OrchestrationStatusStore struct {
 	mu          sync.RWMutex
 	snapshot    OrchestrationRunSnapshot
 	subscribers map[chan OrchestrationRunSnapshot]struct{}
+	// pendingApprovals maps a waiting subtask ID to the channel its WaitApproval
+	// call is blocked on. A decision (true/false) is delivered once, then the
+	// entry is removed.
+	pendingApprovals map[string]chan bool
 }
 
 func NewOrchestrationStatusStore() *OrchestrationStatusStore {
-	return &OrchestrationStatusStore{snapshot: OrchestrationRunSnapshot{Status: workflow.StatusPending, Batches: []workflow.ExecutionBatch{}, Subtasks: []workflow.Subtask{}, Results: map[string]workflow.ExecutionResult{}, UpdatedAt: time.Now()}, subscribers: map[chan OrchestrationRunSnapshot]struct{}{}}
+	return &OrchestrationStatusStore{snapshot: OrchestrationRunSnapshot{Status: workflow.StatusPending, Batches: []workflow.ExecutionBatch{}, Subtasks: []workflow.Subtask{}, Results: map[string]workflow.ExecutionResult{}, UpdatedAt: time.Now()}, subscribers: map[chan OrchestrationRunSnapshot]struct{}{}, pendingApprovals: map[string]chan bool{}}
+}
+
+// WaitApproval blocks until the user approves/denies subtask id, the timeout
+// elapses, or ctx is cancelled. Returns true only on explicit approval.
+func (s *OrchestrationStatusStore) WaitApproval(ctx context.Context, id string, timeout time.Duration) bool {
+	if s == nil {
+		return false
+	}
+	ch := make(chan bool, 1)
+	s.mu.Lock()
+	if s.pendingApprovals == nil {
+		s.pendingApprovals = map[string]chan bool{}
+	}
+	s.pendingApprovals[id] = ch
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.pendingApprovals, id)
+		s.mu.Unlock()
+	}()
+
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case decision := <-ch:
+		return decision
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Decide delivers an approval decision for a waiting subtask. Returns false if
+// no subtask with that id is currently awaiting approval.
+func (s *OrchestrationStatusStore) Decide(id string, approved bool) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	ch, ok := s.pendingApprovals[id]
+	if ok {
+		delete(s.pendingApprovals, id)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- approved:
+	default:
+	}
+	return true
 }
 
 func cloneOrchestrationSnapshot(src OrchestrationRunSnapshot) OrchestrationRunSnapshot {
@@ -179,8 +241,24 @@ func (s *OrchestrationStatusStore) Start(runID string, plan workflow.ExecutionPl
 	s.broadcastLocked()
 }
 
-func (s *OrchestrationStatusStore) UpdateResult(result workflow.ExecutionResult) {
+func (s *OrchestrationStatusStore) StartPlanning(runID, title, prompt string) {
 	if s == nil {
+		return
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "Parallel Agent planning"
+	}
+	now := time.Now()
+	planningTask := workflow.Subtask{ID: "coordinator-planning", Title: "Coordinator Agent is planning", Description: firstNonEmpty(prompt, "Membaca prompt, memilih specialist agent, dan menyiapkan parallel waves."), Kind: workflow.TaskKindReadOnly, CanParallel: false, RiskLevel: workflow.RiskLow, Status: workflow.StatusRunning}
+	plan := workflow.ExecutionPlan{ID: "plan-" + runID, Task: workflow.OrchestrationTask{ID: runID, Title: title, Description: prompt, Kind: workflow.TaskKindReadOnly, RiskLevel: workflow.RiskLow}, Subtasks: []workflow.Subtask{planningTask}, Batches: []workflow.ExecutionBatch{{ID: "planning", Name: "Coordinator planning", Mode: workflow.BatchModeSerial, SubtaskIDs: []string{planningTask.ID}, MaxConcurrency: 1}}, Metadata: map[string]interface{}{"source": "web_planning_placeholder"}}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshot = OrchestrationRunSnapshot{RunID: runID, PlanID: plan.ID, TaskTitle: plan.Task.Title, Status: workflow.StatusRunning, StartedAt: now, Batches: plan.Batches, Subtasks: plan.Subtasks, Results: map[string]workflow.ExecutionResult{planningTask.ID: {SubtaskID: planningTask.ID, Status: workflow.StatusRunning, Stdout: "Coordinator sedang membuat blueprint parallel agent..."}}, UpdatedAt: now}
+	s.broadcastLocked()
+}
+
+func (s *OrchestrationStatusStore) UpdateResult(result workflow.ExecutionResult) {
+	if s == nil || strings.TrimSpace(result.SubtaskID) == "" {
 		return
 	}
 	s.mu.Lock()
@@ -191,7 +269,9 @@ func (s *OrchestrationStatusStore) UpdateResult(result workflow.ExecutionResult)
 	s.snapshot.Results[result.SubtaskID] = result
 	for i := range s.snapshot.Subtasks {
 		if s.snapshot.Subtasks[i].ID == result.SubtaskID {
-			s.snapshot.Subtasks[i].Status = result.Status
+			if result.Status != "" {
+				s.snapshot.Subtasks[i].Status = result.Status
+			}
 			break
 		}
 	}
@@ -199,7 +279,10 @@ func (s *OrchestrationStatusStore) UpdateResult(result workflow.ExecutionResult)
 	s.broadcastLocked()
 }
 
-func (s *OrchestrationStatusStore) UpdateSubtaskStatus(id string, status workflow.SubtaskStatus, output, errText string, duration time.Duration) {
+func (s *OrchestrationStatusStore) UpdateSubtaskStatus(id string, status workflow.SubtaskStatus, output string, errText string, duration time.Duration) {
+	if s == nil || strings.TrimSpace(id) == "" {
+		return
+	}
 	s.UpdateResult(workflow.ExecutionResult{SubtaskID: id, Status: status, Stdout: output, Error: errText, Duration: duration})
 }
 
@@ -305,13 +388,95 @@ func (s *Server) runWorkflowWithLiveStatus(ctx context.Context, prompt string) (
 func (s *Server) runWorkflowWithLiveStatusAndProgress(ctx context.Context, prompt string, onProgress func(step, status string)) (*workflow.WorkflowResult, error) {
 	runID := fmt.Sprintf("web-%d", time.Now().UnixNano())
 	projectDir := filepath.Join(os.TempDir(), fmt.Sprintf("smara-workflow-%s", runID))
+	s.OrchestrationStore.StartPlanning(runID, "Parallel Agent Orchestration", prompt)
+
+	// Production engine: subtask path (LLM planner → safety → scheduler →
+	// Worker-backed executor). On a fatal pipeline error we fall back to the
+	// legacy blueprint engine so a run never hard-fails on planning issues.
+	result, err := s.runOrchestrationEngine(ctx, runID, projectDir, prompt, onProgress)
+	if err != nil {
+		if onProgress != nil {
+			onProgress("fallback", fmt.Sprintf("subtask engine gagal (%s), beralih ke blueprint", strings.TrimSpace(err.Error())))
+		}
+		return s.runBlueprintEngine(ctx, runID, projectDir, prompt, onProgress)
+	}
+	report := "Workflow selesai tanpa ringkasan tambahan."
+	if result != nil && strings.TrimSpace(result.FinalSummary) != "" {
+		report = result.FinalSummary
+	}
+	s.OrchestrationStore.Complete(workflow.StatusSuccess, report, "")
+	return result, nil
+}
+
+// runOrchestrationEngine drives the subtask pipeline and maps its live
+// callbacks onto the orchestration store for the Parallel Agent UI.
+func (s *Server) runOrchestrationEngine(ctx context.Context, runID, projectDir, prompt string, onProgress func(step, status string)) (*workflow.WorkflowResult, error) {
+	cfgPO := config.Get().ParallelOrchestration
+	started := map[string]time.Time{}
+	var progressMu sync.Mutex
+
+	run, result, err := workflow.RunOrchestration(ctx, s.Supervisor, projectDir, prompt, workflow.OrchestrationConfig{
+		MaxConcurrency:                 cfgPO.MaxConcurrency,
+		MaxRepairAttempts:              2,
+		RequireApprovalForHighRisk:     cfgPO.RequireApprovalHigh,
+		RequireApprovalForCriticalRisk: cfgPO.RequireApprovalHigh,
+		DryRun:                         cfgPO.DryRun,
+		OnPlanReady: func(plan workflow.ExecutionPlan, _ workflow.SafetyReport) {
+			plan.ID = "plan-" + runID
+			s.OrchestrationStore.Start(runID, plan)
+		},
+		OnSubtaskStart: func(st workflow.Subtask) {
+			progressMu.Lock()
+			started[st.ID] = time.Now()
+			progressMu.Unlock()
+			s.OrchestrationStore.UpdateSubtaskStatus(st.ID, workflow.StatusRunning, "", "", 0)
+		},
+		OnSubtaskResult: func(res workflow.ExecutionResult) {
+			progressMu.Lock()
+			duration := time.Duration(0)
+			if start := started[res.SubtaskID]; !start.IsZero() {
+				duration = time.Since(start)
+			}
+			progressMu.Unlock()
+			s.OrchestrationStore.UpdateSubtaskStatus(res.SubtaskID, res.Status, strings.TrimSpace(res.Stdout), res.Error, duration)
+		},
+		OnRepairAttempt: func(subtaskID string, attempt int, prevError string) {
+			if onProgress != nil {
+				onProgress("repair", fmt.Sprintf("%s: self-correction attempt %d (%s)", subtaskID, attempt, strings.TrimSpace(prevError)))
+			}
+			s.OrchestrationStore.UpdateSubtaskStatus(subtaskID, workflow.StatusRunning, "", fmt.Sprintf("self-correction attempt %d: %s", attempt, strings.TrimSpace(prevError)), 0)
+		},
+		ApprovalFunc: func(ctx context.Context, st workflow.Subtask) bool {
+			// Surface the gated subtask to the UI, then block until the user
+			// decides via /api/orchestration/approve or the timeout elapses.
+			s.OrchestrationStore.UpdateSubtaskStatus(st.ID, workflow.StatusWaitingApproval, "", fmt.Sprintf("menunggu approval (%s risk)", st.RiskLevel), 0)
+			if onProgress != nil {
+				onProgress("approval", fmt.Sprintf("%s: menunggu approval (%s risk)", st.ID, st.RiskLevel))
+			}
+			approved := s.OrchestrationStore.WaitApproval(ctx, st.ID, approvalTimeout())
+			if !approved && onProgress != nil {
+				onProgress("approval", fmt.Sprintf("%s: ditolak / timeout, dilewati", st.ID))
+			}
+			return approved
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run.Execution.Status == workflow.StatusFailed {
+		// Soft failure: execution ran but some subtask failed. Surface it
+		// without falling back (the blueprint would likely fail the same way).
+		s.OrchestrationStore.Complete(workflow.StatusFailed, run.Report.Markdown(), "sebagian subtask gagal")
+	}
+	return result, nil
+}
+
+// runBlueprintEngine is the legacy fallback engine.
+func (s *Server) runBlueprintEngine(ctx context.Context, runID, projectDir, prompt string, onProgress func(step, status string)) (*workflow.WorkflowResult, error) {
 	started := map[string]time.Time{}
 	var progressMu sync.Mutex
 	result, err := workflow.RunWorkflowWithDirAndSetupContext(ctx, s.Supervisor, s.Supervisor.GetProvider(), prompt, projectDir, func(orch *workflow.Orchestrator) {
-		orch.OnProgress = onProgress
 		orch.OnBlueprintReady = func(bp workflow.Blueprint, waves [][]string) {
-			progressMu.Lock()
-			defer progressMu.Unlock()
 			s.OrchestrationStore.Start(runID, workflowBlueprintExecutionPlan(runID, prompt, bp, waves))
 		}
 		orch.OnRoleStart = func(role string) {
@@ -328,6 +493,12 @@ func (s *Server) runWorkflowWithLiveStatusAndProgress(ctx context.Context, promp
 			}
 			progressMu.Unlock()
 			s.OrchestrationStore.UpdateSubtaskStatus(role, taskResultStatus(taskResult), strings.TrimSpace(taskResult.Output), taskResult.Error, duration)
+		}
+		orch.OnRepairAttempt = func(role, taskID string, attempt int, prevError string) {
+			if onProgress != nil {
+				onProgress("repair", fmt.Sprintf("%s: self-correction attempt %d (%s)", role, attempt, strings.TrimSpace(prevError)))
+			}
+			s.OrchestrationStore.UpdateSubtaskStatus(role, workflow.StatusRunning, "", fmt.Sprintf("self-correction attempt %d: %s", attempt, strings.TrimSpace(prevError)), 0)
 		}
 	})
 	if err != nil {
@@ -349,6 +520,38 @@ func (srv *Server) handleOrchestrationStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	jsonResponse(w, http.StatusOK, buildOrchestrationUIStatus(srv.OrchestrationStore.Snapshot(), srv.Cfg.ParallelOrchestration))
+}
+
+// approvalTimeout is how long a gated subtask waits for a user decision before
+// being skipped. Fixed default keeps the synchronous request bounded.
+func approvalTimeout() time.Duration {
+	return 5 * time.Minute
+}
+
+// handleOrchestrationApprove receives an approve/deny decision for a subtask
+// currently blocked on the approval gate.
+func (srv *Server) handleOrchestrationApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, "only POST")
+		return
+	}
+	var req struct {
+		SubtaskID string `json:"subtask_id"`
+		Approved  bool   `json:"approved"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(req.SubtaskID) == "" {
+		errorResponse(w, http.StatusBadRequest, "subtask_id wajib diisi")
+		return
+	}
+	if !srv.OrchestrationStore.Decide(req.SubtaskID, req.Approved) {
+		errorResponse(w, http.StatusNotFound, "tidak ada subtask yang menunggu approval dengan id tersebut")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"subtask_id": req.SubtaskID, "approved": req.Approved})
 }
 
 func (srv *Server) handleOrchestrationEvents(w http.ResponseWriter, r *http.Request) {
