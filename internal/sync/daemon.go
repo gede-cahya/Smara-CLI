@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/autonomy"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
+	"github.com/gede-cahya/Smara-CLI/internal/ninedrive"
 )
 
 // Daemon is the background sync process that runs an autonomy loop
@@ -57,6 +59,21 @@ func (d *Daemon) Start(ctx context.Context) {
 		Enabled:     true,
 	})
 
+	if d.config.NineDriveEnabled {
+		d.engine.AddTimeframe(autonomy.Timeframe{
+			Name:        "ninedrive_push",
+			Interval:    interval,
+			Description: "Push exported deltas to 9Drive",
+			Enabled:     true,
+		})
+		d.engine.AddTimeframe(autonomy.Timeframe{
+			Name:        "ninedrive_pull",
+			Interval:    interval,
+			Description: "Pull new deltas from 9Drive",
+			Enabled:     true,
+		})
+	}
+
 	// Register checkers (Observe → Think)
 	d.engine.RegisterChecker("memory_export", func() (bool, map[string]interface{}) {
 		memories, err := d.memStore.GetUnsyncedMemories()
@@ -87,6 +104,29 @@ func (d *Daemon) Start(ctx context.Context) {
 		}
 	})
 
+	if d.config.NineDriveEnabled {
+		d.engine.RegisterChecker("ninedrive_push", func() (bool, map[string]interface{}) {
+			outDir := filepath.Join(d.config.SyncDir, "outbox")
+			entries, err := os.ReadDir(outDir)
+			if err != nil {
+				return false, nil
+			}
+			count := 0
+			for _, e := range entries {
+				if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
+					count++
+				}
+			}
+			if count == 0 {
+				return false, nil
+			}
+			return true, map[string]interface{}{"count": count}
+		})
+		d.engine.RegisterChecker("ninedrive_pull", func() (bool, map[string]interface{}) {
+			return true, nil
+		})
+	}
+
 	// Register executors (Act)
 	d.engine.RegisterExecutor("memory_export", func(ctx context.Context, context map[string]interface{}) error {
 		return d.exportDeltas()
@@ -94,6 +134,15 @@ func (d *Daemon) Start(ctx context.Context) {
 	d.engine.RegisterExecutor("memory_import", func(ctx context.Context, context map[string]interface{}) error {
 		return d.importDeltas()
 	})
+
+	if d.config.NineDriveEnabled {
+		d.engine.RegisterExecutor("ninedrive_push", func(ctx context.Context, context map[string]interface{}) error {
+			return d.ninedrivePushDeltas(ctx)
+		})
+		d.engine.RegisterExecutor("ninedrive_pull", func(ctx context.Context, context map[string]interface{}) error {
+			return d.ninedrivePullDeltas(ctx)
+		})
+	}
 
 	go func() {
 		defer close(d.done)
@@ -218,3 +267,95 @@ func hashContent(content string) string {
 	h := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(h[:8])
 }
+
+// ninedrivePushDeltas uploads exported JSON delta files from outbox to 9Drive.
+func (d *Daemon) ninedrivePushDeltas(ctx context.Context) error {
+	if !d.config.NineDriveEnabled || d.config.NineDriveAPIKey == "" {
+		return nil
+	}
+
+	outDir := filepath.Join(d.config.SyncDir, "outbox")
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	client := ninedrive.NewClient(d.config.NineDriveBaseURL, d.config.NineDriveAPIKey)
+	doneDir := filepath.Join(d.config.SyncDir, "done")
+	os.MkdirAll(doneDir, 0o755)
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		filePath := filepath.Join(outDir, entry.Name())
+		_, err := client.UploadFile(ctx, filePath, "application/json")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[9DRIVE-SYNC] Gagal upload %s: %v\n", entry.Name(), err)
+			continue
+		}
+
+		destPath := filepath.Join(doneDir, entry.Name())
+		os.Remove(destPath)
+		if err := os.Rename(filePath, destPath); err != nil {
+			data, err2 := os.ReadFile(filePath)
+			if err2 == nil {
+				if err3 := os.WriteFile(destPath, data, 0o644); err3 == nil {
+					os.Remove(filePath)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ninedrivePullDeltas downloads new delta files from 9Drive to the local inbox.
+func (d *Daemon) ninedrivePullDeltas(ctx context.Context) error {
+	if !d.config.NineDriveEnabled || d.config.NineDriveAPIKey == "" {
+		return nil
+	}
+
+	client := ninedrive.NewClient(d.config.NineDriveBaseURL, d.config.NineDriveAPIKey)
+	files, err := client.ListFiles(ctx, "", "")
+	if err != nil {
+		return err
+	}
+
+	inboxDir := filepath.Join(d.config.SyncDir, "inbox")
+	outDir := filepath.Join(d.config.SyncDir, "outbox")
+	doneDir := filepath.Join(d.config.SyncDir, "done")
+	os.MkdirAll(inboxDir, 0o755)
+	os.MkdirAll(outDir, 0o755)
+	os.MkdirAll(doneDir, 0o755)
+
+	for _, f := range files {
+		if !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
+			continue
+		}
+
+		inboxPath := filepath.Join(inboxDir, f.Name)
+		outboxPath := filepath.Join(outDir, f.Name)
+		donePath := filepath.Join(doneDir, f.Name)
+
+		if fileExists(inboxPath) || fileExists(outboxPath) || fileExists(donePath) {
+			continue
+		}
+
+		err := client.DownloadFile(ctx, f.ID, inboxPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[9DRIVE-SYNC] Gagal download %s: %v\n", f.Name, err)
+			continue
+		}
+	}
+	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return !os.IsNotExist(err)
+}
+

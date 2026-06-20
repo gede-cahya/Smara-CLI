@@ -1,0 +1,50 @@
+{
+  "name": "9drive-manage",
+  "description": "Kelola file di 9drive (drive.komida.site) lewat REST API: list, upload, download, dan delete. Kredensial (api_key + base_url) dibaca otomatis dari ~/.smara/config.yaml, jadi tidak perlu hardcode. Pakai ini untuk cek isi 9drive, ambil/hapus file, atau upload tanpa harus build CLI.",
+  "steps": [
+    {
+      "tool": "run_command",
+      "args": {
+        "command": "set -e\nACTION=\"__PARAM__action\"\nTARGET=\"__PARAM__target\"\nDEST=\"__PARAM__dest\"\nMIME=\"__PARAM__mime_type\"\nCFG=\"$HOME/.smara/config.yaml\"\n\nif [ ! -f \"$CFG\" ]; then echo \"config tidak ditemukan: $CFG\" >&2; exit 1; fi\nAPI_KEY=\"$(grep -E '^ninedrive_api_key:' \"$CFG\" | head -1 | sed -E 's/^ninedrive_api_key:[[:space:]]*//' | tr -d '\\\"'\"'\"' ')\"\nBASE_URL=\"$(grep -E '^ninedrive_base_url:' \"$CFG\" | head -1 | sed -E 's/^ninedrive_base_url:[[:space:]]*//' | tr -d '\\\"'\"'\"' ')\"\n[ -z \"$BASE_URL\" ] && BASE_URL=\"http://localhost:4000\"\nBASE_URL=\"${BASE_URL%/}\"; BASE_URL=\"${BASE_URL%/v1}\"; BASE_URL=\"${BASE_URL%/api}\"\nif [ -z \"$API_KEY\" ]; then echo \"ninedrive_api_key kosong di $CFG\" >&2; exit 1; fi\nAUTH=\"Authorization: Bearer $API_KEY\"\n\ncase \"$ACTION\" in\n  list)\n    URL=\"$BASE_URL/api/v1/files\"\n    [ -n \"$TARGET\" ] && URL=\"$URL?q=$TARGET\"\n    RESP=\"$(curl -fsS -H \"$AUTH\" \"$URL\")\"\n    if command -v jq >/dev/null 2>&1; then\n      echo \"$RESP\" | jq -r '.files | \"Total: \\(length) file\", (.[] | \"  \\(.id)  \\(.sizeBytes)B  \\(.status)  \\(.name)\")'\n    else\n      echo \"$RESP\"\n    fi\n    ;;\n  upload)\n    [ -z \"$TARGET\" ] && { echo \"action=upload butuh target (path file)\" >&2; exit 1; }\n    [ -f \"$TARGET\" ] || { echo \"file tidak ada: $TARGET\" >&2; exit 1; }\n    [ -z \"$MIME\" ] && MIME=\"application/octet-stream\"\n    SIZE=\"$(wc -c < \"$TARGET\" | tr -d ' ')\"\n    NAME=\"$(basename \"$TARGET\")\"\n    META=\"[{\\\"fieldName\\\":\\\"file-0\\\",\\\"fileName\\\":\\\"$NAME\\\",\\\"mimeType\\\":\\\"$MIME\\\",\\\"sizeBytes\\\":\\\"$SIZE\\\"}]\"\n    # filesMeta WAJIB sebelum file — server stream berdasarkan sizeBytes\n    curl -fsS -H \"$AUTH\" -F \"filesMeta=$META\" -F \"file-0=@$TARGET;type=$MIME\" \"$BASE_URL/api/v1/uploads\"\n    echo\n    echo \"\\u2713 uploaded $NAME ($SIZE bytes)\"\n    ;;\n  download)\n    [ -z \"$TARGET\" ] && { echo \"action=download butuh target (file id)\" >&2; exit 1; }\n    [ -z \"$DEST\" ] && DEST=\"./$TARGET\"\n    mkdir -p \"$(dirname \"$DEST\")\"\n    curl -fsS -H \"$AUTH\" -o \"$DEST\" \"$BASE_URL/api/v1/files/$TARGET/download\"\n    echo \"\\u2713 downloaded -> $DEST\"\n    ;;\n  delete)\n    [ -z \"$TARGET\" ] && { echo \"action=delete butuh target (file id)\" >&2; exit 1; }\n    curl -fsS -X DELETE -H \"$AUTH\" \"$BASE_URL/api/v1/files/$TARGET\"\n    echo\n    echo \"\\u2713 deleted $TARGET\"\n    ;;\n  *)\n    echo \"action tidak dikenal: '$ACTION' (pakai: list|upload|download|delete)\" >&2\n    exit 1\n    ;;\nesac"
+      }
+    }
+  ],
+  "version": 1,
+  "tags": [
+    "9drive",
+    "ninedrive",
+    "storage",
+    "cloud",
+    "api"
+  ],
+  "params": [
+    {
+      "name": "action",
+      "type": "string",
+      "description": "Operasi yang dijalankan: list | upload | download | delete",
+      "required": true
+    },
+    {
+      "name": "target",
+      "type": "string",
+      "description": "Untuk upload: path file lokal. Untuk download/delete: file id. Untuk list: query nama (opsional).",
+      "required": false
+    },
+    {
+      "name": "dest",
+      "type": "string",
+      "description": "Path tujuan saat download (default: ./<file-id>)",
+      "required": false
+    },
+    {
+      "name": "mime_type",
+      "type": "string",
+      "description": "MIME type saat upload (default: application/octet-stream)",
+      "required": false
+    }
+  ],
+  "category_path": [
+    "storage",
+    "9drive"
+  ]
+}

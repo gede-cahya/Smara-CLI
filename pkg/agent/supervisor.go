@@ -1184,16 +1184,17 @@ func truncate(s string, maxLen int) string {
 
 // isCriticalCall returns true if the tool call requires user confirmation.
 func (s *Supervisor) isCriticalCall(mode Mode, name string, args map[string]interface{}) bool {
-	// Sensitive paths check (regardless of tool or mode)
+	// Mode RUSH bypasses ALL permission checks for maximum speed,
+	// including sensitive path access (.env, .pem, .key, credentials, etc.)
+	if mode == ModeRush {
+		return false
+	}
+
+	// Sensitive paths check (regardless of tool)
 	if path, ok := args["path"].(string); ok {
 		if isSensitivePath(path) {
 			return true
 		}
-	}
-
-	// Mode RUSH bypasses non-sensitive critical tools for speed
-	if mode == ModeRush {
-		return false
 	}
 
 	// Standard critical tools list

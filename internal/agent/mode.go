@@ -1,5 +1,9 @@
 package agent
 
+// AgentVersion is set by the main package at startup so the LLM knows
+// which version of Smara it is running.  Injected into every system prompt.
+var AgentVersion = "dev"
+
 // Mode represents the agent's operating mode.
 type Mode string
 

@@ -128,9 +128,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	if !offline {
 		syncCfg := sync.SyncConfig{
-			SyncDir:     cfg.SyncDir,
-			IntervalMin: cfg.SyncInterval,
-			Enabled:     true,
+			SyncDir:          cfg.SyncDir,
+			IntervalMin:      cfg.SyncInterval,
+			Enabled:          true,
+			NineDriveEnabled: cfg.NineDriveEnabled,
+			NineDriveBaseURL: cfg.NineDriveBaseURL,
+			NineDriveAPIKey:  cfg.NineDriveAPIKey,
 		}
 		daemon := sync.NewDaemon(syncCfg, memStore)
 		daemon.Start(ctx)

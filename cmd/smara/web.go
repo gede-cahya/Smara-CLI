@@ -18,6 +18,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/mcp"
 	"github.com/gede-cahya/Smara-CLI/internal/memory"
 	"github.com/gede-cahya/Smara-CLI/internal/metrics"
+	internalSync "github.com/gede-cahya/Smara-CLI/internal/sync"
 	"github.com/gede-cahya/Smara-CLI/internal/ui"
 	"github.com/gede-cahya/Smara-CLI/internal/web"
 )
@@ -245,6 +246,20 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	if webToken != "" {
 		server.AuthToken = webToken
 	}
+
+	// 5.5 Start Background Sync Daemon
+	syncCfg := internalSync.SyncConfig{
+		SyncDir:          cfg.SyncDir,
+		IntervalMin:      cfg.SyncInterval,
+		Enabled:          true,
+		NineDriveEnabled: cfg.NineDriveEnabled,
+		NineDriveBaseURL: cfg.NineDriveBaseURL,
+		NineDriveAPIKey:  cfg.NineDriveAPIKey,
+	}
+	daemon := internalSync.NewDaemon(syncCfg, memStore)
+	daemon.Start(ctx)
+	defer daemon.Stop()
+	ui.PrintSuccess("Sync daemon aktif (interval: %d menit)", cfg.SyncInterval)
 
 	go func() {
 		if err := server.Start(ctx); err != nil {

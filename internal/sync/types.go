@@ -21,7 +21,10 @@ type DeltaEntry struct {
 
 // SyncConfig configures the sync daemon.
 type SyncConfig struct {
-	SyncDir     string `json:"sync_dir"`
-	IntervalMin int    `json:"interval_min"`
-	Enabled     bool   `json:"enabled"`
+	SyncDir          string `json:"sync_dir"`
+	IntervalMin      int    `json:"interval_min"`
+	Enabled          bool   `json:"enabled"`
+	NineDriveEnabled bool   `json:"ninedrive_enabled"`
+	NineDriveBaseURL string `json:"ninedrive_base_url"`
+	NineDriveAPIKey  string `json:"ninedrive_api_key"`
 }

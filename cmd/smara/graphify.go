@@ -32,6 +32,7 @@ var graphifyCmd = &cobra.Command{
 
 Subcommands:
   init      Parse codebase and store graph
+  update    Re-parse codebase and refresh stored graph (alias of init)
   query     Search graph with natural language
   path      Find shortest path between two nodes
   explain   Show node neighborhood
@@ -43,6 +44,13 @@ Subcommands:
 var graphifyInitCmd = &cobra.Command{
 	Use:   "init [path]",
 	Short: "Parse codebase into knowledge graph",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runGraphifyInit,
+}
+
+var graphifyUpdateCmd = &cobra.Command{
+	Use:   "update [path]",
+	Short: "Re-parse codebase and refresh stored graph (alias of init)",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGraphifyInit,
 }
@@ -91,6 +99,9 @@ func init() {
 	graphifyInitCmd.Flags().StringVar(&graphifyName, "name", "", "graph name (default: directory name)")
 	graphifyInitCmd.Flags().StringVar(&graphifyPath, "path", ".", "codebase path")
 
+	graphifyUpdateCmd.Flags().StringVar(&graphifyName, "name", "", "graph name (default: directory name)")
+	graphifyUpdateCmd.Flags().StringVar(&graphifyPath, "path", ".", "codebase path")
+
 	graphifyQueryCmd.Flags().StringVar(&graphifyName, "name", "", "graph name")
 	graphifyQueryCmd.Flags().IntVar(&graphifyDepth, "depth", 2, "neighborhood depth")
 	graphifyQueryCmd.Flags().IntVar(&graphifyBudget, "budget", 0, "max tokens for compact output")
@@ -107,6 +118,7 @@ func init() {
 	graphifyDeleteCmd.Flags().StringVar(&graphifyName, "name", "", "graph name")
 
 	graphifyCmd.AddCommand(graphifyInitCmd)
+	graphifyCmd.AddCommand(graphifyUpdateCmd)
 	graphifyCmd.AddCommand(graphifyQueryCmd)
 	graphifyCmd.AddCommand(graphifyPathCmd)
 	graphifyCmd.AddCommand(graphifyExplainCmd)

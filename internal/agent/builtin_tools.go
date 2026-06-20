@@ -127,6 +127,7 @@ var toolGroup = map[string]string{
 	"search_memories": "memory",
 	// misc
 	"serve_project":     "core",
+	"upload_to_9drive":  "core",
 	"connect_mcp":       "core",
 	"disconnect_mcp":    "core",
 	"schedule_reminder": "core",
@@ -268,6 +269,24 @@ func allBuiltinTools() []llm.ToolFunction {
 					},
 				},
 				"required": []string{"path"},
+			},
+		},
+		{
+			Name:        "upload_to_9drive",
+			Description: "Upload file ke 9drive cloud storage. Gunakan untuk backup atau sharing file ke cloud.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path absolut atau relatif ke file yang akan diupload",
+					},
+					"mime_type": map[string]interface{}{
+						"type":        "string",
+						"description": "MIME type opsional (default: application/octet-stream)",
+					},
+				},
+				"required": []string{"file_path"},
 			},
 		},
 		{
@@ -1406,6 +1425,8 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 	}()
 
 	switch toolName {
+	case "upload_to_9drive":
+		return executeUploadTo9DriveTool(ctx, args, logCallback)
 	case "generate_image":
 		return executeGenerateImageTool(ctx, args, logCallback)
 	case "edit_image":

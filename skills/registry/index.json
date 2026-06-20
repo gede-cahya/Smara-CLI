@@ -294,6 +294,30 @@
         "golang release"
       ],
       "skill_file": "github-release-upload-crosscompiled-assets.json"
+    },
+    {
+      "name": "9drive-manage",
+      "description": "Kelola file di 9drive (drive.komida.site): list, upload, download, delete via REST API. Kredensial dibaca otomatis dari ~/.smara/config.yaml.",
+      "tags": [
+        "9drive",
+        "ninedrive",
+        "storage",
+        "cloud",
+        "api"
+      ],
+      "keywords": [
+        "9drive",
+        "ninedrive",
+        "cek 9drive",
+        "list 9drive",
+        "isi 9drive",
+        "upload 9drive",
+        "download 9drive",
+        "hapus file 9drive",
+        "drive.komida.site",
+        "smara memories"
+      ],
+      "skill_file": "9drive-manage.json"
     }
   ]
 }

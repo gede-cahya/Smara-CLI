@@ -166,6 +166,9 @@ type SmaraConfig struct {
 	ImageBaseURL          string                      `mapstructure:"image_base_url" yaml:"image_base_url"`
 	ImageAPIKey           string                      `mapstructure:"image_api_key" yaml:"image_api_key"`
 	ImageOutputDir        string                      `mapstructure:"image_output_dir" yaml:"image_output_dir"`
+	NineDriveEnabled      bool                        `mapstructure:"ninedrive_enabled" yaml:"ninedrive_enabled"`
+	NineDriveBaseURL      string                      `mapstructure:"ninedrive_base_url" yaml:"ninedrive_base_url"`
+	NineDriveAPIKey       string                      `mapstructure:"ninedrive_api_key" yaml:"ninedrive_api_key"`
 	VoiceProvider         string                      `mapstructure:"voice_provider" yaml:"voice_provider"`
 	VoiceAPIKey           string                      `mapstructure:"voice_api_key" yaml:"voice_api_key"`
 	VoiceBaseURL          string                      `mapstructure:"voice_base_url" yaml:"voice_base_url"`
@@ -267,6 +270,9 @@ func DefaultConfig() *SmaraConfig {
 		ImageBaseURL:        "", // empty = use custom_base_url
 		ImageAPIKey:         "", // empty = use custom_api_key
 		ImageOutputDir:      filepath.Join(smaraDir, "images"),
+		NineDriveEnabled:    false,
+		NineDriveBaseURL:    "http://localhost:4000",
+		NineDriveAPIKey:     "",
 		VoiceProvider:       "browser",
 		VoiceAPIKey:         "", // empty = use ELEVENLABS_API_KEY env
 		VoiceBaseURL:        "https://api.elevenlabs.io",
@@ -392,6 +398,9 @@ func Init(configPath string) error {
 	viper.SetDefault("image_base_url", defaults.ImageBaseURL)
 	viper.SetDefault("image_api_key", defaults.ImageAPIKey)
 	viper.SetDefault("image_output_dir", defaults.ImageOutputDir)
+	viper.SetDefault("ninedrive_enabled", defaults.NineDriveEnabled)
+	viper.SetDefault("ninedrive_base_url", defaults.NineDriveBaseURL)
+	viper.SetDefault("ninedrive_api_key", defaults.NineDriveAPIKey)
 	viper.SetDefault("voice_provider", defaults.VoiceProvider)
 	viper.SetDefault("voice_api_key", defaults.VoiceAPIKey)
 	viper.SetDefault("voice_base_url", defaults.VoiceBaseURL)
@@ -553,6 +562,9 @@ func allSettingsFromStruct(c *SmaraConfig) map[string]interface{} {
 		"image_base_url":                                 c.ImageBaseURL,
 		"image_api_key":                                  c.ImageAPIKey,
 		"image_output_dir":                               c.ImageOutputDir,
+		"ninedrive_enabled":                              c.NineDriveEnabled,
+		"ninedrive_base_url":                             c.NineDriveBaseURL,
+		"ninedrive_api_key":                              c.NineDriveAPIKey,
 		"voice_provider":                                 c.VoiceProvider,
 		"voice_api_key":                                  c.VoiceAPIKey,
 		"voice_base_url":                                 c.VoiceBaseURL,

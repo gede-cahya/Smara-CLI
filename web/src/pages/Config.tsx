@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AlertCircle, CheckCircle2, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Mic, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Cloud, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Mic, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
 import { fetchJSON } from '../api'
 import { getCachedSmaraConfig, loadSmaraConfig, SMARA_CONFIG_LOADED_EVENT } from '../configStore'
 
@@ -60,6 +60,12 @@ const smaraMCPFields: Field[] = [
   { key: 'smara_mcp_api_key', label: 'Smara MCP API Key', type: 'password' },
 ]
 
+const ninedriveFields: Field[] = [
+  { key: 'ninedrive_enabled', label: 'Enable 9drive', type: 'boolean' },
+  { key: 'ninedrive_base_url', label: '9drive Base URL', placeholder: 'http://localhost:4000' },
+  { key: 'ninedrive_api_key', label: '9drive API Key', type: 'password' },
+]
+
 const cloudFields: Field[] = [
   { key: 'cloud_memory.enabled', label: 'Cloud Memory Enabled', type: 'boolean' },
   { key: 'cloud_memory.provider', label: 'Cloud Memory Provider', type: 'select', options: ['turso', 'libsql', 'custom'] },
@@ -101,6 +107,7 @@ const allFields: Field[] = [
   ...generalFields,
   ...cloudFields,
   ...smaraMCPFields,
+  ...ninedriveFields,
 ]
 function getValue(obj: any, path: string) {
   return path.split('.').reduce((acc, key) => acc?.[key], obj)
@@ -262,6 +269,7 @@ export default function Config() {
       <Section icon={Database} title="General Config & Storage"><div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{generalFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div></Section>
       <Section icon={Globe} title="Cloud Memory"><div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{cloudFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div></Section>
       <Section icon={KeyRound} title="Built-in Smara MCP"><div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{smaraMCPFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div></Section>
+      <Section icon={Cloud} title="9drive Cloud Storage"><div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{ninedriveFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div></Section>
 
       <Section icon={Settings} title="Advanced Raw Config" desc="Untuk key lain yang belum dibuatkan field khusus. Akan ikut tersimpan saat klik tombol Save di atas.">
         <div className="flex gap-2"><input value={rawKey} onChange={e => setRawKey(e.target.value)} placeholder="config key" className="w-56 bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"/><input value={rawValue} onChange={e => setRawValue(e.target.value)} placeholder="value" className="flex-1 bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"/></div>

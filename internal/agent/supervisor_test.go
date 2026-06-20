@@ -796,6 +796,97 @@ func TestSupervisor_SetSafetyEngine_PlanModeSyncs(t *testing.T) {
 	assert.Equal(t, safety.ModePlan, se.GetMode())
 }
 
+// ── isCriticalCall tests ─────────────────────────────────────────────────────
+
+func TestIsCriticalCall_Rush_BypassesAllIncludingSensitive(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+
+	// Rush should bypass ALL critical tools
+	criticalTools := []string{
+		"run_command", "write_file", "delete_file",
+		"edit_file", "ssh_exec", "skill_run", "skill_delete",
+	}
+	for _, tool := range criticalTools {
+		assert.False(t, s.isCriticalCall(ModeRush, tool, nil),
+			"Rush should bypass critical tool: %s", tool)
+	}
+
+	// Rush should also bypass sensitive path checks
+	sensitiveArgs := map[string]interface{}{
+		"path": "/home/user/.env",
+	}
+	assert.False(t, s.isCriticalCall(ModeRush, "write_file", sensitiveArgs),
+		"Rush should bypass sensitive path: .env")
+
+	sensitiveArgs = map[string]interface{}{
+		"path": "/etc/shadow",
+	}
+	assert.False(t, s.isCriticalCall(ModeRush, "run_command", sensitiveArgs),
+		"Rush should bypass sensitive path: shadow")
+
+	sensitiveArgs = map[string]interface{}{
+		"path": "/home/user/.ssh/id_rsa",
+	}
+	assert.False(t, s.isCriticalCall(ModeRush, "edit_file", sensitiveArgs),
+		"Rush should bypass sensitive path: id_rsa")
+}
+
+func TestIsCriticalCall_NonRush_BlocksCriticalTools(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+
+	modes := []Mode{ModeAsk, ModePlan, ModeTest, ModeImage, ModeWorkflow, ModeParallel}
+	criticalTools := []string{
+		"run_command", "write_file", "delete_file",
+		"edit_file", "ssh_exec", "skill_run", "skill_delete",
+	}
+	for _, mode := range modes {
+		for _, tool := range criticalTools {
+			assert.True(t, s.isCriticalCall(mode, tool, nil),
+				"Mode %s should block critical tool: %s", mode, tool)
+		}
+	}
+}
+
+func TestIsCriticalCall_NonRush_BlocksSensitivePaths(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+
+	sensitivePaths := []string{
+		"/home/user/.env",
+		"/etc/shadow",
+		"/etc/passwd",
+		"/home/user/.ssh/id_rsa",
+		"/home/user/.ssh/id_ed25519",
+		"/opt/app/credentials.json",
+		"/opt/app/secret.txt",
+		"/var/lib/token_cache",
+		"/home/user/.pem/server.pem",
+		"/home/user/.key/private.key",
+	}
+	for _, path := range sensitivePaths {
+		args := map[string]interface{}{"path": path}
+		assert.True(t, s.isCriticalCall(ModeAsk, "view_file", args),
+			"Should block sensitive path: %s", path)
+		assert.True(t, s.isCriticalCall(ModePlan, "view_file", args),
+			"Should block sensitive path in plan mode: %s", path)
+	}
+}
+
+func TestIsCriticalCall_NonRush_AllowsNonCritical(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+
+	nonCriticalTools := []string{
+		"view_file", "list_dir", "search", "read_file",
+	}
+	for _, tool := range nonCriticalTools {
+		assert.False(t, s.isCriticalCall(ModeAsk, tool, nil),
+			"Non-critical tool should pass: %s", tool)
+		assert.False(t, s.isCriticalCall(ModePlan, tool, nil),
+			"Non-critical tool should pass in plan mode: %s", tool)
+	}
+}
+
+// ── end isCriticalCall tests ─────────────────────────────────────────────────
+
 func TestSupervisor_SetCognitiveValidator(t *testing.T) {
 	s := NewSupervisor(nil, nil)
 	v := cognitive.NewValidator()
