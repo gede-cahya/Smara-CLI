@@ -67,3 +67,6 @@ build/
 smara-desktop-rust/
 docs-site-react-backup-*
 tmp/
+
+# Backup files
+smara-backup-*
