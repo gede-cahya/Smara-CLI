@@ -75,18 +75,25 @@ func (a *Adapter) Listen(ctx context.Context, handler platform.MessageHandler) e
 				continue
 			}
 
-			log.Printf("[telegram] Received update: chatID=%d from=%s text=%q", update.Message.Chat.ID, update.Message.From.UserName, update.Message.Text)
+			fromUsername := ""
+			if update.Message.From != nil {
+				fromUsername = update.Message.From.UserName
+			}
+			log.Printf("[telegram] Received update: chatID=%d from=%s text=%q", update.Message.Chat.ID, fromUsername, update.Message.Text)
 
 			msg := a.convertMessage(update.Message)
 
-			go func() {
-				log.Printf("[telegram] Handling message from %s (chat %s): %q", msg.Username, msg.ChannelID, msg.Content)
-				if err := handler(ctx, msg); err != nil {
-					log.Printf("[telegram] Error handling message: %v", err)
-				} else {
-					log.Printf("[telegram] Message handled successfully")
-				}
-			}()
+			// Handle updates synchronously to preserve Telegram update order.
+			// The gateway serializes supervisor calls and binds a dedicated session
+			// per platform conversation. Spawning one goroutine per update can make
+			// rapid follow-up messages race and acquire the prompt lock out of order,
+			// which makes responses use stale/wrong context.
+			log.Printf("[telegram] Handling message from %s (chat %s): %q", msg.Username, msg.ChannelID, msg.Content)
+			if err := handler(ctx, msg); err != nil {
+				log.Printf("[telegram] Error handling message: %v", err)
+			} else {
+				log.Printf("[telegram] Message handled successfully")
+			}
 		}
 	}
 }

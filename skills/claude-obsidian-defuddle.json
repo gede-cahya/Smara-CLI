@@ -1,0 +1,34 @@
+{
+  "name": "claude-obsidian-defuddle",
+  "description": "Strip clutter from web pages before ingesting into the wiki. Removes ads, navigation, headers, footers, and boilerplate: leaving clean readable markdown that saves 40-60% tokens. Triggers on: defuddle, clean this page, strip this url, fetch and clean, clean web content before ingesting, strip ads, remove clutter, clean URL content, readable markdown from URL.",
+  "version": 1,
+  "tags": [
+    "claude-obsidian",
+    "obsidian",
+    "wiki",
+    "second-brain",
+    "defuddle"
+  ],
+  "params": [
+    {
+      "name": "request",
+      "type": "string",
+      "description": "Permintaan/konteks untuk menjalankan skill ini",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "tool": "respond",
+      "args": {
+        "message": "Gunakan instruksi Claude Obsidian skill `defuddle` berikut untuk membantu user. Request: __PARAM__request\n\n# defuddle: Web Page Cleaner\n\nDefuddle extracts the meaningful content from a web page and drops everything else: ads, cookie banners, nav bars, related articles, footers, social sharing buttons. What remains is the article body as clean markdown.\n\nUse this before any URL ingestion. It is optional but strongly recommended. It cuts token usage by 40-60% on typical web articles and produces cleaner wiki pages.\n\n**Substrate note (v1.7+)**: Unlike `obsidian-markdown` / `obsidian-bases` / `json-canvas` (where we defer to kepano/obsidian-skills as upstream), the `defuddle` skill is original to claude-obsidian — kepano's marketplace does not ship a defuddle skill. This is the canonical version. The underlying `defuddle-cli` is independent of either marketplace and lives at [github.com/kepano/defuddle](https://github.com/kepano/defuddle).\n\n---\n\n## Install\n\n```bash\nnpm install -g defuddle-cli\n```\n\nVerify: `defuddle --version`\n\n---\n\n## Usage\n\n### Clean a URL directly\n```bash\ndefuddle https://example.com/article\n```\nOutputs clean markdown to stdout.\n\n### Save to .raw/\n```bash\ndefuddle https://example.com/article > .raw/articles/article-slug-$(date +%Y-%m-%d).md\n```\n\n### Add frontmatter header after saving\nAfter running defuddle, prepend the source URL and fetch date:\n```bash\nSLUG=\"article-slug-$(date +%Y-%m-%d)\"\n{ echo \"---\"; echo \"source_url: https://example.com/article\"; echo \"fetched: $(date +%Y-%m-%d)\"; echo \"---\"; echo \"\"; defuddle https://example.com/article; } > .raw/articles/$SLUG.md\n```\n\n### Clean a local HTML file\n```bash\ndefuddle page.html\n```\n\n---\n\n## When to Use\n\n**Use defuddle when:**\n- Ingesting a news article, blog post, or documentation page from a URL\n- The page has a lot of surrounding content (most web pages do)\n- You want to stay within token budget on a long article\n\n**Skip defuddle when:**\n- The source is already a clean markdown or PDF file\n- The page is a dashboard, app, or structured data (defuddle expects article-style content)\n- defuddle is not installed and the article is short enough to process raw\n\n---\n\n## Fallback\n\nIf defuddle is not installed, check:\n\n```bash\nwhich defuddle 2>/dev/null || echo \"not installed\"\n```\n\nIf not installed: use WebFetch directly. The content will be less clean but still workable.\n\n---\n\n## Integration with /wiki-ingest\n\nThe `/wiki-ingest` skill checks for defuddle automatically when a URL is passed. You do not need to run defuddle manually before ingesting a URL. The ingest skill will call it if available.\n\nTo manually clean a page and save before ingesting:\n1. Run the save command above\n2. Then: `ingest .raw/articles/[slug].md`\n\n---\n\n## How to think (10-principle mapping)\n\nWhen working on this skill, apply the 10-principle loop. See [`skills/think/SKILL.md`](../think/SKILL.md) for the canonical framework.\n\n| # | Principle | Application here |\n|---|-----------|-------------------|\n| 1 | OBSERVE (ext) | Which URL? What's actually on the page? Don't assume the title matches the content. |\n| 2 | OBSERVE (int) | Am I assuming the page has the content the user expects? Verify before extracting. |\n| 3 | LISTEN | Did the user say \"the article\" (main content only) or \"the link\" (everything visible)? |\n| 4 | THINK | Strip boilerplate, preserve structure, capture metadata. Quote URLs in shell to avoid injection. |\n| 5 | CONNECT (lat) | How does this domain typically render? Some sites mangle defuddle's heuristics; track those. |\n| 6 | CONNECT (sys) | Shells out to defuddle-cli (kepano); output lands in `.raw/` for wiki-ingest pickup. |\n| 7 | FEEL | Clean markdown that reads like the original, not boilerplate residue. |\n| 8 | ACCEPT | Some pages don't extract well. Flag and move on; don't force when the heuristic loses. |\n| 9 | CREATE | Markdown to stdout, redirected to `.raw/articles/<slug>-<date>.md`. |\n| 10 | GROW | Extraction failures suggest defuddle-cli upgrade or alternative extractor — track them as backlog. |"
+      }
+    }
+  ],
+  "source": {
+    "repository": "https://github.com/AgriciDaniel/claude-obsidian",
+    "path": "skills/defuddle/SKILL.md",
+    "version": "1.9.2"
+  }
+}

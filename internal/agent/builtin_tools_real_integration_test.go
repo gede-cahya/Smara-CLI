@@ -3,6 +3,9 @@
 package agent
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,6 +143,50 @@ func TestBuiltinToolsRealCoreWorkflow(t *testing.T) {
 	if _, err := os.Stat(notePath); !os.IsNotExist(err) {
 		t.Fatalf("delete_file did not remove %s", notePath)
 	}
+}
+
+func TestBuiltinToolsRealAdditionalCoreTools(t *testing.T) {
+	root := t.TempDir()
+	dirPath := filepath.Join(root, "nested", "dir")
+	txtPath := filepath.Join(dirPath, "note.txt")
+	jsonPath := filepath.Join(root, "data", "sample.json")
+
+	requireBuiltinSuccess(t, "mkdir", map[string]interface{}{"path": dirPath}, "siap")
+	requireBuiltinSuccess(t, "append_file", map[string]interface{}{
+		"path":    txtPath,
+		"content": "alpha beta alpha\n",
+	}, "berhasil ditambahkan")
+	requireBuiltinSuccess(t, "path_exists", map[string]interface{}{"path": txtPath}, "exists=true")
+	requireBuiltinSuccess(t, "replace_in_file", map[string]interface{}{
+		"path": txtPath,
+		"old":  "alpha",
+		"new":  "gamma",
+		"all":  true,
+	}, "2 penggantian")
+	requireBuiltinSuccess(t, "read_file", map[string]interface{}{"path": txtPath}, "gamma beta gamma")
+
+	requireBuiltinSuccess(t, "write_json", map[string]interface{}{
+		"path": jsonPath,
+		"data": map[string]interface{}{"name": "smara", "enabled": true, "count": float64(2)},
+	}, "JSON berhasil ditulis")
+	requireBuiltinSuccess(t, "read_json", map[string]interface{}{"path": jsonPath}, "\"name\": \"smara\"")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "%s:%s", r.Method, r.Header.Get("X-Test-Tool"))
+	}))
+	t.Cleanup(server.Close)
+	requireBuiltinSuccess(t, "http_request", map[string]interface{}{
+		"url":         server.URL,
+		"method":      "POST",
+		"headers":     map[string]interface{}{"X-Test-Tool": "ok"},
+		"body":        "payload",
+		"timeout_sec": float64(5),
+	}, "POST:ok")
+
+	requireBuiltinSuccess(t, "which_command", map[string]interface{}{"command": "go"}, "go")
+	requireBuiltinSuccess(t, "process_list", map[string]interface{}{"limit": float64(5)}, "PID")
+	requireBuiltinSuccess(t, "path_exists", map[string]interface{}{"path": filepath.Join(root, "missing")}, "exists=false")
 }
 
 func TestBuiltinToolsRealGraphifyWorkflow(t *testing.T) {

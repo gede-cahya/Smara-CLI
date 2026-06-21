@@ -39,6 +39,20 @@ func GetBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "respond",
+			Description: "Mengirim respons teks langsung dari skill kepada pengguna. Berguna untuk skill instruksional hasil konversi plugin Claude/Obsidian.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Pesan yang akan ditampilkan kepada pengguna",
+					},
+				},
+				"required": []string{"message"},
+			},
+		},
+		{
 			Name:        "view_file",
 			Description: "Melihat isi file dengan nomor baris. Sangat berguna untuk menganalisis kode sebelum melakukan pengeditan.",
 			Parameters: map[string]interface{}{

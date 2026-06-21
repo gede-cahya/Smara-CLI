@@ -39,15 +39,15 @@ const progressHeartbeatInterval = 15 * time.Second
 type Gateway struct {
 	adapters        map[string]PlatformAdapter
 	supervisor      *agent.Supervisor
-	sessions        map[string]*PlatformSession // channelID → session
+	sessions        map[string]*PlatformSession // platform/channel/user → supervisor session binding
 	auth            *AuthManager
 	rateLimiter     *RateLimiter
 	metrics         *metrics.MetricsCollector
 	promptTimeout   time.Duration
 	sensitiveGuards map[string]SensitiveDataGuard
 	mu              sync.RWMutex
+	promptMu        sync.Mutex // supervisor has global current session/history; serialize platform prompts
 }
-
 // NewGateway creates a new Gateway with the given supervisor.
 func NewGateway(supervisor *agent.Supervisor) *Gateway {
 	return &Gateway{
@@ -194,17 +194,8 @@ func (g *Gateway) HandleIncoming(ctx context.Context, msg IncomingMessage) error
 		return g.handleCommand(ctx, msg)
 	}
 
-	// 5. Route explicit workflow prompts only while workflow mode is active.
-	if g.supervisor.GetMode() == agent.ModeWorkflow {
-		if response, handled, err := g.tryRunCustomWorkflowPrompt(msg); handled {
-			if err != nil {
-				return g.sendReply(ctx, msg, "❌ "+err.Error())
-			}
-			return g.sendReply(ctx, msg, response)
-		}
-	}
-
-	// 6. Process as prompt
+	// 5. Process as prompt. Session binding and mode-specific routing happen
+	// inside processPrompt, after the correct platform session is selected.
 	log.Printf("[gateway] Processing prompt via supervisor (mode=%s)", g.supervisor.GetMode())
 	return g.processPrompt(ctx, msg)
 }
@@ -790,10 +781,23 @@ func (g *Gateway) processPrompt(ctx context.Context, msg IncomingMessage) error 
 		}
 	}()
 
-	// 5. Process via supervisor
+	// 5. Process via supervisor. The supervisor keeps a single in-memory
+	// current session/history, so platform prompts must be serialized and the
+	// correct platform-bound session must be selected immediately before the
+	// call. Without this, Telegram chats/users can inherit unrelated CLI or
+	// platform context.
 	log.Printf("[gateway] Calling supervisor.ProcessPrompt: %q", redactSensitiveLogContent(msg.Content))
 	startTime := time.Now()
+	g.promptMu.Lock()
+	if err := g.ensurePlatformSessionLocked(msg); err != nil {
+		g.promptMu.Unlock()
+		promptCancel()
+		<-typingDone
+		<-heartbeatDone
+		return g.sendReply(ctx, msg, "❌ Error menyiapkan session: "+err.Error())
+	}
 	result, err := g.supervisor.ProcessPrompt(promptCtx, msg.Content)
+	g.promptMu.Unlock()
 	latencyMs := time.Since(startTime).Milliseconds()
 	promptErr := promptCtx.Err()
 	log.Printf("[gateway] supervisor.ProcessPrompt done in %dms, err=%v", latencyMs, err)

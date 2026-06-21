@@ -72,11 +72,31 @@ var toolGroup = map[string]string{
 	"view_file":                "core",
 	"read_file":                "core",
 	"write_file":               "core",
+	"append_file":              "core",
+	"mkdir":                    "core",
+	"path_exists":              "core",
+	"replace_in_file":          "core",
+	"read_json":                "core",
+	"write_json":               "core",
+	"http_request":             "core",
+	"which_command":            "core",
+	"process_list":             "core",
 	"delete_file":              "core",
 	"list_dir":                 "core",
 	"edit_file":                "core",
 	"grep_search":              "core",
 	"search_path":              "core",
+	"glob":                     "core",
+	"copy_file":                "core",
+	"rename_file":              "core",
+	"get_file_info":            "core",
+	"apply_diff":               "core",
+	"get_diagnostics":          "core",
+	"get_git_status":           "core",
+	"create_terminal":          "core",
+	"kill_process":             "core",
+	"git_diff":                 "core",
+	"git_commit":               "core",
 	"get_cwd":                  "core",
 	"analyze_workspace":        "core",
 	"web_search":               "core",
@@ -126,6 +146,7 @@ var toolGroup = map[string]string{
 	"remember":        "memory",
 	"search_memories": "memory",
 	// misc
+	"respond":           "core",
 	"serve_project":     "core",
 	"upload_to_9drive":  "core",
 	"connect_mcp":       "core",
@@ -242,6 +263,59 @@ func allBuiltinTools() []llm.ToolFunction {
 				},
 				"required": []string{"path", "content"},
 			},
+		},
+		{
+			Name:        "append_file",
+			Description: "Menambahkan teks ke akhir file. Membuat file dan direktori parent bila belum ada.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path":    map[string]interface{}{"type": "string", "description": "Path file target"},
+					"content": map[string]interface{}{"type": "string", "description": "Konten yang akan ditambahkan"},
+				},
+				"required": []string{"path", "content"},
+			},
+		},
+		{
+			Name:        "mkdir",
+			Description: "Membuat direktori lokal secara rekursif seperti mkdir -p.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"path": map[string]interface{}{"type": "string", "description": "Path direktori"}}, "required": []string{"path"}},
+		},
+		{
+			Name:        "path_exists",
+			Description: "Mengecek apakah path lokal ada dan mengembalikan info dasar file/direktori.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"path": map[string]interface{}{"type": "string", "description": "Path yang dicek"}}, "required": []string{"path"}},
+		},
+		{
+			Name:        "replace_in_file",
+			Description: "Mengganti teks dalam file. Bisa mengganti satu kemunculan pertama atau semua kemunculan.",
+			Parameters: map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+				"path": map[string]interface{}{"type": "string"}, "old": map[string]interface{}{"type": "string"}, "new": map[string]interface{}{"type": "string"}, "all": map[string]interface{}{"type": "boolean", "description": "Jika true, ganti semua kemunculan"}}, "required": []string{"path", "old", "new"}},
+		},
+		{
+			Name:        "read_json",
+			Description: "Membaca file JSON dan mengembalikannya dalam format JSON terindah/tervalidasi.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"path": map[string]interface{}{"type": "string"}}, "required": []string{"path"}},
+		},
+		{
+			Name:        "write_json",
+			Description: "Menulis object/array JSON ke file dengan pretty print.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"path": map[string]interface{}{"type": "string"}, "data": map[string]interface{}{"description": "Data JSON object/array/value"}}, "required": []string{"path", "data"}},
+		},
+		{
+			Name:        "http_request",
+			Description: "Melakukan HTTP request sederhana untuk API (GET/POST/PUT/PATCH/DELETE) dengan header dan body opsional.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"url": map[string]interface{}{"type": "string"}, "method": map[string]interface{}{"type": "string"}, "headers": map[string]interface{}{"type": "object"}, "body": map[string]interface{}{"type": "string"}, "timeout_sec": map[string]interface{}{"type": "integer"}}, "required": []string{"url"}},
+		},
+		{
+			Name:        "which_command",
+			Description: "Mengecek lokasi executable di PATH seperti command which.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"command": map[string]interface{}{"type": "string"}}, "required": []string{"command"}},
+		},
+		{
+			Name:        "process_list",
+			Description: "Menampilkan daftar proses lokal ringkas berdasarkan ps.",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"limit": map[string]interface{}{"type": "integer", "description": "Jumlah baris maksimal, default 30"}}},
 		},
 		{
 			Name:        "delete_file",
@@ -430,6 +504,194 @@ func allBuiltinTools() []llm.ToolFunction {
 					},
 				},
 				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "glob",
+			Description: "Mencari files berdasarkan glob pattern (seperti **/*.go, *_test.js, src/**/*.ts). Gunakan untuk menemukan files dengan pattern tertentu di workspace.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"pattern": map[string]interface{}{
+						"type":        "string",
+						"description": "Glob pattern (contoh: **/*.go, *_test.js, src/**/*.ts, **/config/*.json)",
+					},
+					"root": map[string]interface{}{
+						"type":        "string",
+						"description": "Path awal pencarian (default: current directory)",
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Jumlah maksimal hasil (default: 100)",
+					},
+				},
+				"required": []string{"pattern"},
+			},
+		},
+		{
+			Name:        "copy_file",
+			Description: "Menyalin file dari satu lokasi ke lokasi lain. Gunakan untuk duplikasi file tanpa mengubah aslinya.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"source": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file sumber yang akan disalin",
+					},
+					"destination": map[string]interface{}{
+						"type":        "string",
+						"description": "Path tujuan file hasil salinan",
+					},
+				},
+				"required": []string{"source", "destination"},
+			},
+		},
+		{
+			Name:        "rename_file",
+			Description: "Mengubah nama atau memindahkan file/direktori. Gunakan untuk refactoring atau reorganisasi file.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"old_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file/direktori lama",
+					},
+					"new_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file/direktori baru",
+					},
+				},
+				"required": []string{"old_path", "new_path"},
+			},
+		},
+		{
+			Name:        "get_file_info",
+			Description: "Mendapatkan informasi metadata file (ukuran, waktu modifikasi, tipe, permissions). Gunakan untuk quick check tanpa membaca isi file.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file atau direktori yang ingin dicek",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
+			Name:        "apply_diff",
+			Description: "Menerapkan unified diff patch ke file. Gunakan untuk perubahan multi-line yang presisi. Format: standard unified diff (@@ -start,count +start,count @@).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file yang akan di-patch",
+					},
+					"diff": map[string]interface{}{
+						"type":        "string",
+						"description": "Unified diff content (format: @@ -old_start,old_count +new_start,new_count @@\\n context\\n-removed\\n+added)",
+					},
+				},
+				"required": []string{"path", "diff"},
+			},
+		},
+		{
+			Name:        "get_diagnostics",
+			Description: "Mengambil lint errors, type errors, dan warnings dari file. Gunakan untuk validasi kode sebelum atau setelah perubahan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path file yang akan dicek (harus file kode)",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
+			Name:        "get_git_status",
+			Description: "Mengambil status git repository (modified, added, deleted, untracked files). Gunakan untuk tracking perubahan sebelum commit.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path repository (default: current directory)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "create_terminal",
+			Description: "Menjalankan command di background dan mengembalikan PID untuk tracking. Gunakan untuk long-running processes (server, watch, build).",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Command yang akan dijalankan di background",
+					},
+					"working_dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Working directory (default: current directory)",
+					},
+				},
+				"required": []string{"command"},
+			},
+		},
+		{
+			Name:        "kill_process",
+			Description: "Menghentikan proses berdasarkan PID. Gunakan untuk menghentikan background process yang dibuat dengan create_terminal.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"pid": map[string]interface{}{
+						"type":        "integer",
+						"description": "Process ID yang akan dihentikan",
+					},
+				},
+				"required": []string{"pid"},
+			},
+		},
+		{
+			Name:        "git_diff",
+			Description: "Menampilkan perubahan yang belum di-commit (staged, unstaged, atau semua). Gunakan untuk review sebelum commit.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path repository (default: current directory)",
+					},
+					"staged": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Tampilkan hanya staged changes (default: false = semua changes)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "git_commit",
+			Description: "Membuat git commit dengan message. Gunakan setelah add dan review perubahan.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Commit message",
+					},
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path repository (default: current directory)",
+					},
+					"all": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Commit semua perubahan termasuk untracked (git commit -a)",
+					},
+				},
+				"required": []string{"message"},
 			},
 		},
 		{
@@ -992,41 +1254,55 @@ func allBuiltinTools() []llm.ToolFunction {
 			},
 		},
 		{
+			Name:        "respond",
+			Description: "Mengirim/menampilkan pesan teks dari skill kepada user. Berguna untuk skill instruksional hasil import plugin.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Pesan yang akan ditampilkan",
+					},
+				},
+				"required": []string{"message"},
+			},
+		},
+		{
 			Name:        "schedule_reminder",
-			Description: "Menyimpan reminder/nudge periodik yang akan ditampilkan saat user buka Smara berikutnya.",
+			Description: "Membuat reminder/nudge terjadwal berdasarkan prompt dan waktu sederhana.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"prompt_text": map[string]interface{}{
 						"type":        "string",
-						"description": "Teks perintah yang akan diingatkan, misal 'cek wa di vps'",
+						"description": "Isi reminder atau prompt yang akan dijalankan/diingatkan",
 					},
 					"when": map[string]interface{}{
 						"type":        "string",
-						"description": "Format waktu: 'hourly', 'daily at 09:00', 'every 30 minutes'",
+						"description": "Waktu sederhana seperti tomorrow, in 1 hour, atau ekspresi yang didukung scheduler",
 					},
 				},
-				"required": []string{"prompt_text"},
+				"required": []string{"prompt_text", "when"},
 			},
 		},
 		{
 			Name:        "connect_mcp",
-			Description: "Menghubungkan MCP server secara manual (local atau remote) dan menyimpannya ke config.",
+			Description: "Menghubungkan dan menyimpan konfigurasi MCP server lokal atau remote.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"name": map[string]interface{}{
 						"type":        "string",
-						"description": "Nama identifier untuk MCP server",
+						"description": "Nama MCP server",
 					},
 					"type": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"local", "remote"},
-						"description": "Tipe koneksi: 'local' (stdio) atau 'remote' (HTTP)",
+						"description": "Jenis MCP server",
 					},
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Perintah untuk menjalankan MCP server (wajib untuk type=local)",
+						"description": "Command untuk local MCP (wajib untuk type=local)",
 					},
 					"args": map[string]interface{}{
 						"type":        "array",
@@ -1425,15 +1701,18 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 	}()
 
 	switch toolName {
-	case "upload_to_9drive":
-		return executeUploadTo9DriveTool(ctx, args, logCallback)
-	case "generate_image":
-		return executeGenerateImageTool(ctx, args, logCallback)
-	case "edit_image":
-		return executeEditImageTool(ctx, args, logCallback)
-
+	case "respond":
+		message, _ := args["message"].(string)
+		message = strings.TrimSpace(message)
+		if message == "" {
+			return "", fmt.Errorf("argumen 'message' wajib diisi")
+		}
+		if logCallback != nil {
+			logCallback("Assistant", message)
+		}
+		return message, nil
 	case "request_iteration_budget":
-		progress("tool_progress", "Memproses permintaan tambahan iterasi.", map[string]interface{}{"amount": args["amount"]})
+		progress("tool_progress", "Meminta tambahan budget iterasi.", nil)
 		ctrl := getActiveBudgetController()
 		if ctrl == nil {
 			return "", fmt.Errorf("budget controller tidak aktif (request_iteration_budget hanya valid saat ProcessPrompt sedang berjalan)")
@@ -1663,6 +1942,170 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 		progress("tool_verify", "File berhasil ditulis.", map[string]interface{}{"path": path, "bytes": len(content)})
 		return fmt.Sprintf("File %s berhasil ditulis.", path), nil
 
+	case "append_file":
+		path, _ := args["path"].(string)
+		content, _ := args["content"].(string)
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", fmt.Errorf("gagal membuat direktori: %w", err)
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return "", fmt.Errorf("gagal membuka file: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(content); err != nil {
+			return "", fmt.Errorf("gagal append file: %w", err)
+		}
+		return fmt.Sprintf("Konten berhasil ditambahkan ke %s (%d bytes).", path, len(content)), nil
+
+	case "mkdir":
+		path, _ := args["path"].(string)
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return "", fmt.Errorf("gagal membuat direktori: %w", err)
+		}
+		return fmt.Sprintf("Direktori %s siap.", path), nil
+
+	case "path_exists":
+		path, _ := args["path"].(string)
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("exists=false\npath=%s", path), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("gagal cek path: %w", err)
+		}
+		return fmt.Sprintf("exists=true\npath=%s\ntype=%s\nsize=%d\nmode=%s\nmodified=%s", path, map[bool]string{true: "directory", false: "file"}[info.IsDir()], info.Size(), info.Mode().String(), info.ModTime().Format(time.RFC3339)), nil
+
+	case "replace_in_file":
+		path, _ := args["path"].(string)
+		old, _ := args["old"].(string)
+		newVal, _ := args["new"].(string)
+		if path == "" || old == "" {
+			return "", fmt.Errorf("argumen 'path' dan 'old' wajib diisi")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("gagal membaca file: %w", err)
+		}
+		content := string(data)
+		count := strings.Count(content, old)
+		if count == 0 {
+			return "", fmt.Errorf("teks old tidak ditemukan")
+		}
+		if all, _ := args["all"].(bool); all {
+			content = strings.ReplaceAll(content, old, newVal)
+		} else {
+			content = strings.Replace(content, old, newVal, 1)
+			count = 1
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return "", fmt.Errorf("gagal menulis file: %w", err)
+		}
+		return fmt.Sprintf("File %s berhasil diperbarui (%d penggantian).", path, count), nil
+
+	case "read_json":
+		path, _ := args["path"].(string)
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("gagal membaca JSON: %w", err)
+		}
+		var v interface{}
+		if err := json.Unmarshal(data, &v); err != nil {
+			return "", fmt.Errorf("JSON tidak valid: %w", err)
+		}
+		pretty, _ := json.MarshalIndent(v, "", "  ")
+		return string(pretty), nil
+
+	case "write_json":
+		path, _ := args["path"].(string)
+		if path == "" {
+			return "", fmt.Errorf("argumen 'path' wajib diisi")
+		}
+		pretty, err := json.MarshalIndent(args["data"], "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("gagal encode JSON: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return "", fmt.Errorf("gagal membuat direktori: %w", err)
+		}
+		if err := os.WriteFile(path, append(pretty, '\n'), 0644); err != nil {
+			return "", fmt.Errorf("gagal menulis JSON: %w", err)
+		}
+		return fmt.Sprintf("JSON berhasil ditulis ke %s.", path), nil
+
+	case "http_request":
+		rawURL, _ := args["url"].(string)
+		if rawURL == "" {
+			return "", fmt.Errorf("argumen 'url' wajib diisi")
+		}
+		method, _ := args["method"].(string)
+		if method == "" {
+			method = http.MethodGet
+		}
+		method = strings.ToUpper(method)
+		body, _ := args["body"].(string)
+		timeout := 30 * time.Second
+		if f, ok := args["timeout_sec"].(float64); ok && f > 0 {
+			timeout = time.Duration(f) * time.Second
+		}
+		req, err := http.NewRequestWithContext(ctx, method, rawURL, strings.NewReader(body))
+		if err != nil {
+			return "", err
+		}
+		if hs, ok := args["headers"].(map[string]interface{}); ok {
+			for k, v := range hs {
+				req.Header.Set(k, fmt.Sprint(v))
+			}
+		}
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("request gagal: %w", err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 100000))
+		return fmt.Sprintf("Status: %s\nURL: %s\n\n%s", resp.Status, rawURL, string(b)), nil
+
+	case "which_command":
+		name, _ := args["command"].(string)
+		if name == "" {
+			return "", fmt.Errorf("argumen 'command' wajib diisi")
+		}
+		path, err := exec.LookPath(name)
+		if err != nil {
+			return fmt.Sprintf("command %q tidak ditemukan di PATH", name), nil
+		}
+		return path, nil
+
+	case "process_list":
+		limit := 30
+		if f, ok := args["limit"].(float64); ok && f > 0 {
+			limit = int(f)
+		}
+		cmd := exec.CommandContext(ctx, "ps", "-eo", "pid,ppid,pcpu,pmem,comm,args", "--sort=-pcpu")
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("gagal menjalankan ps: %w", err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) > limit+1 {
+			lines = lines[:limit+1]
+		}
+		return strings.Join(lines, "\n"), nil
+
 	case "delete_file":
 		path, ok := args["path"].(string)
 		if !ok {
@@ -1889,6 +2332,73 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 		root, _ := args["root"].(string)
 		progress("tool_progress", "Mencari path di workspace.", map[string]interface{}{"query": query, "root": root})
 		return searchPath(query, root, logCallback)
+
+	case "glob":
+		pattern, _ := args["pattern"].(string)
+		root, _ := args["root"].(string)
+		limit := 100
+		if l, ok := args["limit"].(float64); ok && l > 0 {
+			limit = int(l)
+		}
+		progress("tool_progress", "Mencari files dengan glob pattern.", map[string]interface{}{"pattern": pattern, "root": root, "limit": limit})
+		return globFiles(pattern, root, limit, logCallback)
+
+	case "copy_file":
+		source, _ := args["source"].(string)
+		destination, _ := args["destination"].(string)
+		progress("tool_progress", "Menyalin file.", map[string]interface{}{"source": source, "destination": destination})
+		return copyFile(source, destination, logCallback)
+
+	case "rename_file":
+		oldPath, _ := args["old_path"].(string)
+		newPath, _ := args["new_path"].(string)
+		progress("tool_progress", "Memindahkan/menama ulang file.", map[string]interface{}{"old_path": oldPath, "new_path": newPath})
+		return renameFile(oldPath, newPath, logCallback)
+
+	case "get_file_info":
+		path, _ := args["path"].(string)
+		progress("tool_progress", "Mengambil informasi file.", map[string]interface{}{"path": path})
+		return getFileInfo(path, logCallback)
+
+	case "apply_diff":
+		path, _ := args["path"].(string)
+		diff, _ := args["diff"].(string)
+		progress("tool_progress", "Menerapkan diff patch.", map[string]interface{}{"path": path})
+		return applyDiff(path, diff, logCallback)
+
+	case "get_diagnostics":
+		path, _ := args["path"].(string)
+		progress("tool_progress", "Mengambil diagnostics.", map[string]interface{}{"path": path})
+		return getDiagnostics(path, logCallback)
+
+	case "get_git_status":
+		path, _ := args["path"].(string)
+		progress("tool_progress", "Mengambil git status.", map[string]interface{}{"path": path})
+		return getGitStatus(path, logCallback)
+
+	case "create_terminal":
+		command, _ := args["command"].(string)
+		workingDir, _ := args["working_dir"].(string)
+		progress("tool_progress", "Menjalankan background process.", map[string]interface{}{"command": command})
+		return createTerminal(command, workingDir, logCallback)
+
+	case "kill_process":
+		pid := int(args["pid"].(float64))
+		progress("tool_progress", "Menghentikan process.", map[string]interface{}{"pid": pid})
+		return killProcess(pid, logCallback)
+
+	case "git_diff":
+		path, _ := args["path"].(string)
+		staged, _ := args["staged"].(bool)
+		progress("tool_progress", "Mengambil git diff.", map[string]interface{}{"path": path, "staged": staged})
+		return gitDiff(path, staged, logCallback)
+
+	case "git_commit":
+		message, _ := args["message"].(string)
+		path, _ := args["path"].(string)
+		all, _ := args["all"].(bool)
+		progress("tool_progress", "Membuat git commit.", map[string]interface{}{"message": message})
+		return gitCommit(message, path, all, logCallback)
 
 	case "get_cwd":
 		progress("tool_progress", "Membaca direktori kerja saat ini.", nil)
@@ -4228,4 +4738,594 @@ func serveProject(args map[string]interface{}) (string, error) {
 		"✅ Server %s berjalan\n📂 Project: %s\n🚀 Entry: %s\n🔗 URL akses: %s\n\nBuka di browser PC kamu:\n%s",
 		detected.entryFile, projectDir, detected.entryFile, url, url,
 	), nil
+}
+
+// globFiles mencari files berdasarkan glob pattern.
+func globFiles(pattern, root string, limit int, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Mencari pattern '%s' di '%s'...", pattern, root))
+	}
+
+	if root == "" {
+		root = "."
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("gagal resolve path '%s': %w", root, err)
+	}
+
+	fullPattern := filepath.Join(absRoot, pattern)
+
+	matcher := workspace.NewIgnoreMatcher(absRoot)
+	var results []string
+
+	err = filepath.Walk(absRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if matcher.IsIgnored(path, info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		matched, matchErr := filepath.Match(fullPattern, path)
+		if matchErr != nil {
+			return nil
+		}
+
+		// For ** patterns, also try matching just the filename/base part
+		if !matched && strings.Contains(pattern, "**") {
+			// Use doublestar-style: match against relative path
+			rel, relErr := filepath.Rel(absRoot, path)
+			if relErr == nil {
+				matched, _ = filepath.Match(pattern, rel)
+				if !matched {
+					// Try matching with prefix wildcard expansion
+					suffix := strings.TrimPrefix(pattern, "**/")
+					if strings.HasSuffix(rel, suffix) || matchGlobSuffix(suffix, rel) {
+						matched = true
+					}
+				}
+			}
+		}
+
+		if matched {
+			rel, _ := filepath.Rel(absRoot, path)
+			results = append(results, rel)
+		}
+
+		if len(results) >= limit {
+			return io.EOF
+		}
+		return nil
+	})
+
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+
+	if len(results) == 0 {
+		return fmt.Sprintf("Tidak ada files yang cocok dengan pattern '%s' di '%s'.", pattern, root), nil
+	}
+
+	return fmt.Sprintf("Ditemukan %d files untuk pattern '%s':\n- %s", len(results), pattern, strings.Join(results, "\n- ")), nil
+}
+
+// matchGlobSuffix checks if a relative path matches a glob suffix pattern.
+func matchGlobSuffix(pattern, relPath string) bool {
+	parts := strings.Split(relPath, string(filepath.Separator))
+	for i := range parts {
+		sub := strings.Join(parts[i:], string(filepath.Separator))
+		if matched, _ := filepath.Match(pattern, sub); matched {
+			return true
+		}
+	}
+	return false
+}
+
+// copyFile menyalin file dari source ke destination.
+func copyFile(source, destination string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Menyalin '%s' ke '%s'...", source, destination))
+	}
+
+	// Check source exists
+	srcInfo, err := os.Stat(source)
+	if err != nil {
+		return "", fmt.Errorf("file sumber tidak ditemukan atau tidak bisa diakses: %w", err)
+	}
+
+	if srcInfo.IsDir() {
+		return "", fmt.Errorf("sumber adalah direktori, gunakan run_command dengan 'cp -r' untuk menyalin direktori")
+	}
+
+	// Open source file
+	srcFile, err := os.Open(source)
+	if err != nil {
+		return "", fmt.Errorf("gagal membuka file sumber: %w", err)
+	}
+	defer srcFile.Close()
+
+	// Create destination directory if needed
+	destDir := filepath.Dir(destination)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return "", fmt.Errorf("gagal membuat direktori tujuan: %w", err)
+	}
+
+	// Create destination file
+	dstFile, err := os.Create(destination)
+	if err != nil {
+		return "", fmt.Errorf("gagal membuat file tujuan: %w", err)
+	}
+	defer dstFile.Close()
+
+	// Copy content
+	written, err := io.Copy(dstFile, srcFile)
+	if err != nil {
+		return "", fmt.Errorf("gagal menyalin isi file: %w", err)
+	}
+
+	// Preserve permissions
+	if err := os.Chmod(destination, srcInfo.Mode()); err != nil {
+		return "", fmt.Errorf("file tersalin tapi gagal mengatur permissions: %w", err)
+	}
+
+	return fmt.Sprintf("✅ File berhasil disalin:\n- Dari: %s\n- Ke: %s\n- Ukuran: %d bytes", source, destination, written), nil
+}
+
+// renameFile memindahkan atau menama ulang file/direktori.
+func renameFile(oldPath, newPath string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Memindahkan '%s' ke '%s'...", oldPath, newPath))
+	}
+
+	// Check source exists
+	if _, err := os.Stat(oldPath); err != nil {
+		return "", fmt.Errorf("file/direktori sumber tidak ditemukan: %w", err)
+	}
+
+	// Create destination directory if needed
+	newDir := filepath.Dir(newPath)
+	if err := os.MkdirAll(newDir, 0755); err != nil {
+		return "", fmt.Errorf("gagal membuat direktori tujuan: %w", err)
+	}
+
+	// Check if destination already exists
+	if _, err := os.Stat(newPath); err == nil {
+		return "", fmt.Errorf("tujuan sudah ada: %s (hapus dulu atau gunakan nama lain)", newPath)
+	}
+
+	// Rename/move
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return "", fmt.Errorf("gagal memindahkan: %w", err)
+	}
+
+	return fmt.Sprintf("✅ File berhasil dipindahkan:\n- Dari: %s\n- Ke: %s", oldPath, newPath), nil
+}
+
+// getFileInfo mengembalikan informasi metadata file.
+func getFileInfo(path string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Mengambil info '%s'...", path))
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("gagal mengakses path: %w", err)
+	}
+
+	// Determine type
+	fileType := "file"
+	if info.IsDir() {
+		fileType = "direktori"
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		fileType = "symlink"
+	}
+
+	// Format size
+	size := info.Size()
+	sizeStr := fmt.Sprintf("%d bytes", size)
+	if size > 1024*1024 {
+		sizeStr = fmt.Sprintf("%.2f MB (%d bytes)", float64(size)/(1024*1024), size)
+	} else if size > 1024 {
+		sizeStr = fmt.Sprintf("%.2f KB (%d bytes)", float64(size)/1024, size)
+	}
+
+	// Format time
+	modTime := info.ModTime()
+	modStr := modTime.Format("2006-01-02 15:04:05")
+
+	// Count files if directory
+	dirInfo := ""
+	if info.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err == nil {
+			files := 0
+			dirs := 0
+			for _, e := range entries {
+				if e.IsDir() {
+					dirs++
+				} else {
+					files++
+				}
+			}
+			dirInfo = fmt.Sprintf("\n- Isi: %d files, %d subdirektori", files, dirs)
+		}
+	}
+
+	result := fmt.Sprintf(
+		"📄 Informasi file:\n- Path: %s\n- Tipe: %s\n- Ukuran: %s\n- Dimodifikasi: %s\n- Permissions: %s%s",
+		path, fileType, sizeStr, modStr, info.Mode().String(), dirInfo,
+	)
+
+	return result, nil
+}
+
+// applyDiff menerapkan unified diff patch ke file.
+func applyDiff(path, diff string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Menerapkan diff ke '%s'...", path))
+	}
+
+	// Read original file
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("gagal membaca file: %w", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	diffLines := strings.Split(diff, "\n")
+
+	var newLines []string
+	lineIdx := 0
+
+	for i := 0; i < len(diffLines); i++ {
+		diffLine := diffLines[i]
+
+		// Parse hunk header
+		if strings.HasPrefix(diffLine, "@@") {
+			// Extract line numbers: @@ -old_start,old_count +new_start,new_count @@
+			var oldStart, oldCount, newStart, newCount int
+			_, err := fmt.Sscanf(diffLine, "@@ -%d,%d +%d,%d @@", &oldStart, &oldCount, &newStart, &newCount)
+			if err != nil {
+				// Try without count (single line)
+				_, err = fmt.Sscanf(diffLine, "@@ -%d +%d @@", &oldStart, &newStart)
+				if err != nil {
+					return "", fmt.Errorf("invalid diff format di line %d: %s", i+1, diffLine)
+				}
+				oldCount, newCount = 1, 1
+			}
+
+			// Copy lines before this hunk
+			for lineIdx < oldStart-1 && lineIdx < len(lines) {
+				newLines = append(newLines, lines[lineIdx])
+				lineIdx++
+			}
+			continue
+		}
+
+		// Context line (starts with space)
+		if strings.HasPrefix(diffLine, " ") {
+			if lineIdx < len(lines) {
+				newLines = append(newLines, lines[lineIdx])
+				lineIdx++
+			}
+		} else if strings.HasPrefix(diffLine, "-") {
+			// Removed line
+			lineIdx++
+		} else if strings.HasPrefix(diffLine, "+") {
+			// Added line
+			newLines = append(newLines, strings.TrimPrefix(diffLine, "+"))
+		}
+	}
+
+	// Copy remaining lines
+	for lineIdx < len(lines) {
+		newLines = append(newLines, lines[lineIdx])
+		lineIdx++
+	}
+
+	// Write back
+	newContent := strings.Join(newLines, "\n")
+	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+		return "", fmt.Errorf("gagal menulis file: %w", err)
+	}
+
+	return fmt.Sprintf("✅ Diff berhasil diterapkan ke '%s'\n- Lines before: %d\n- Lines after: %d", path, len(lines), len(newLines)), nil
+}
+
+// getDiagnostics mengambil lint/type errors dari file.
+func getDiagnostics(path string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Mengambil diagnostics untuk '%s'...", path))
+	}
+
+	// Check file exists
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("file tidak ditemukan: %w", err)
+	}
+
+	// Determine language and run appropriate checker
+	ext := strings.ToLower(filepath.Ext(path))
+	var diagnostics []string
+
+	switch ext {
+	case ".go":
+		// Try go vet or golangci-lint
+		cmd := exec.Command("go", "vet", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			diagnostics = append(diagnostics, string(output))
+		}
+
+		// Also try build to catch compile errors
+		dir := filepath.Dir(path)
+		buildCmd := exec.Command("go", "build", "-o", "/dev/null", dir)
+		buildOutput, buildErr := buildCmd.CombinedOutput()
+		if buildErr != nil {
+			diagnostics = append(diagnostics, string(buildOutput))
+		}
+
+	case ".js", ".ts", ".jsx", ".tsx":
+		// Try eslint or tsc
+		if ext == ".ts" || ext == ".tsx" {
+			cmd := exec.Command("npx", "tsc", "--noEmit", path)
+			output, _ := cmd.CombinedOutput()
+			if len(output) > 0 {
+				diagnostics = append(diagnostics, string(output))
+			}
+		}
+
+	case ".py":
+		// Try pylint or flake8
+		cmd := exec.Command("python3", "-m", "py_compile", path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			diagnostics = append(diagnostics, string(output))
+		}
+
+	default:
+		return fmt.Sprintf("ℹ️ Diagnostics tidak tersedia untuk file tipe '%s'", ext), nil
+	}
+
+	if len(diagnostics) == 0 {
+		return fmt.Sprintf("✅ Tidak ada errors atau warnings di '%s'", path), nil
+	}
+
+	// Limit output
+	combined := strings.Join(diagnostics, "\n")
+	if len(combined) > 3000 {
+		combined = combined[:3000] + "\n... (truncated)"
+	}
+
+	return fmt.Sprintf("⚠️ Ditemukan issues di '%s':\n%s", path, combined), nil
+}
+
+// getGitStatus mengambil status git repository.
+func getGitStatus(path string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Mengambil git status di '%s'...", path))
+	}
+
+	if path == "" {
+		path = "."
+	}
+
+	// Check if it's a git repo
+	checkCmd := exec.Command("git", "-C", path, "rev-parse", "--git-dir")
+	if err := checkCmd.Run(); err != nil {
+		return "", fmt.Errorf("bukan git repository: %s", path)
+	}
+
+	// Get status
+	cmd := exec.Command("git", "-C", path, "status", "--porcelain", "--branch")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("gagal mendapatkan git status: %w", err)
+	}
+
+	if len(output) == 0 {
+		return "✅ Working tree bersih (tidak ada perubahan)", nil
+	}
+
+	// Parse output
+	lines := strings.Split(string(output), "\n")
+	var modified, added, deleted, untracked, renamed []string
+	var branch string
+
+	for _, line := range lines {
+		if len(line) < 2 {
+			continue
+		}
+
+		// Branch info
+		if strings.HasPrefix(line, "##") {
+			branch = strings.TrimPrefix(line, "## ")
+			branch = strings.Split(branch, "...")[0] // Remove tracking info
+			continue
+		}
+
+		status := line[:2]
+		file := strings.TrimSpace(line[2:])
+
+		// Handle renames (R  old -> new)
+		if strings.Contains(file, " -> ") {
+			renamed = append(renamed, file)
+			continue
+		}
+
+		switch {
+		case strings.Contains(status, "M"):
+			modified = append(modified, file)
+		case strings.Contains(status, "A"):
+			added = append(added, file)
+		case strings.Contains(status, "D"):
+			deleted = append(deleted, file)
+		case strings.Contains(status, "?"):
+			untracked = append(untracked, file)
+		}
+	}
+
+	// Build result
+	var result []string
+	if branch != "" {
+		result = append(result, fmt.Sprintf("📂 Branch: %s", branch))
+	}
+
+	if len(modified) > 0 {
+		result = append(result, fmt.Sprintf("\n📝 Modified (%d):\n- %s", len(modified), strings.Join(modified, "\n- ")))
+	}
+	if len(added) > 0 {
+		result = append(result, fmt.Sprintf("\n➕ Added (%d):\n- %s", len(added), strings.Join(added, "\n- ")))
+	}
+	if len(deleted) > 0 {
+		result = append(result, fmt.Sprintf("\n➖ Deleted (%d):\n- %s", len(deleted), strings.Join(deleted, "\n- ")))
+	}
+	if len(renamed) > 0 {
+		result = append(result, fmt.Sprintf("\n🔄 Renamed (%d):\n- %s", len(renamed), strings.Join(renamed, "\n- ")))
+	}
+	if len(untracked) > 0 {
+		result = append(result, fmt.Sprintf("\n❓ Untracked (%d):\n- %s", len(untracked), strings.Join(untracked, "\n- ")))
+	}
+
+	total := len(modified) + len(added) + len(deleted) + len(renamed) + len(untracked)
+	result = append(result, fmt.Sprintf("\n📊 Total: %d files changed", total))
+
+	return strings.Join(result, "\n"), nil
+}
+
+// createTerminal menjalankan command di background dan return PID.
+func createTerminal(command, workingDir string, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Menjalankan background process: %s", command))
+	}
+
+	if workingDir == "" {
+		workingDir = "."
+	}
+
+	// Parse command
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Dir = workingDir
+
+	// Start process
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("gagal menjalankan command: %w", err)
+	}
+
+	pid := cmd.Process.Pid
+
+	// Don't wait - let it run in background
+	go func() {
+		cmd.Wait()
+	}()
+
+	return fmt.Sprintf("✅ Background process dimulai:\n- PID: %d\n- Command: %s\n- Working dir: %s\n\nGunakan `kill_process` dengan PID %d untuk menghentikan.", pid, command, workingDir, pid), nil
+}
+
+// killProcess menghentikan process berdasarkan PID.
+func killProcess(pid int, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Menghentikan process PID %d...", pid))
+	}
+
+	// Find process
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return "", fmt.Errorf("process tidak ditemukan: %w", err)
+	}
+
+	// Try graceful shutdown first (SIGTERM)
+	if err := process.Signal(os.Interrupt); err != nil {
+		// If SIGTERM fails, try SIGKILL
+		if err := process.Kill(); err != nil {
+			return "", fmt.Errorf("gagal menghentikan process: %w", err)
+		}
+	}
+
+	return fmt.Sprintf("✅ Process %d berhasil dihentikan", pid), nil
+}
+
+// gitDiff menampilkan git diff.
+func gitDiff(path string, staged bool, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Mengambil git diff di '%s'...", path))
+	}
+
+	if path == "" {
+		path = "."
+	}
+
+	// Check if it's a git repo
+	checkCmd := exec.Command("git", "-C", path, "rev-parse", "--git-dir")
+	if err := checkCmd.Run(); err != nil {
+		return "", fmt.Errorf("bukan git repository: %s", path)
+	}
+
+	// Build command
+	args := []string{"-C", path, "diff"}
+	if staged {
+		args = append(args, "--cached")
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("gagal mendapatkan git diff: %w", err)
+	}
+
+	if len(output) == 0 {
+		if staged {
+			return "✅ Tidak ada staged changes", nil
+		}
+		return "✅ Tidak ada perubahan (working tree bersih)", nil
+	}
+
+	diffStr := string(output)
+
+	// Limit output if too large
+	if len(diffStr) > 5000 {
+		diffStr = diffStr[:5000] + "\n... (truncated, gunakan git CLI untuk diff lengkap)"
+	}
+
+	return diffStr, nil
+}
+
+// gitCommit membuat git commit.
+func gitCommit(message, path string, all bool, logFn func(string, string)) (string, error) {
+	if logFn != nil {
+		logFn("system", fmt.Sprintf("Membuat git commit: %s", message))
+	}
+
+	if path == "" {
+		path = "."
+	}
+
+	// Check if it's a git repo
+	checkCmd := exec.Command("git", "-C", path, "rev-parse", "--git-dir")
+	if err := checkCmd.Run(); err != nil {
+		return "", fmt.Errorf("bukan git repository: %s", path)
+	}
+
+	// Build command
+	args := []string{"-C", path, "commit", "-m", message}
+	if all {
+		args = append(args, "-a")
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gagal commit: %s\n%s", err.Error(), string(output))
+	}
+
+	return fmt.Sprintf("✅ Commit berhasil:\n%s", string(output)), nil
 }

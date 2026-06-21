@@ -56,6 +56,7 @@ type PlatformSession struct {
 	ChannelID string    // Channel/chat ID
 	UserID    string    // Primary user ID
 	Mode      string    // Current agent mode (ask, rush, plan)
+	SessionID string    // Smara supervisor session ID bound to this platform channel/user
 	CreatedAt time.Time // Session creation time
 	LastMsg   time.Time // Last message time
 }
