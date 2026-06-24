@@ -110,11 +110,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer supervisor.Close()
 
 	if agent.ValidMode(serveMode) {
-		supervisor.SetMode(agent.Mode(serveMode))
+		mode := agent.Mode(serveMode)
+		if mode == agent.ModeRush {
+			agent.EnableRushAutoApprovalEnv()
+		}
+		supervisor.SetMode(mode)
 	}
-	modeInfo := agent.GetModeInfo(supervisor.GetMode())
-	ui.PrintSuccess("Mode: %s %s — %s", modeInfo.Emoji, modeInfo.Label, modeInfo.Description)
-
+	if agent.IsRushAutoApprovalEnabled() {
+		agent.EnableRushAutoApprovalEnv()
+		supervisor.SetMode(agent.ModeRush)
+	}
 	// 4. Connect MCP Servers
 	var mcpConfigs []mcp.MCPServerConfig
 

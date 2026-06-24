@@ -231,7 +231,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// Set initial mode (if override via flag)
 	if startMode != "ask" && agent.ValidMode(startMode) {
-		supervisor.SetMode(agent.Mode(startMode))
+		mode := agent.Mode(startMode)
+		if mode == agent.ModeRush {
+			agent.EnableRushAutoApprovalEnv()
+		}
+		supervisor.SetMode(mode)
+	} else if agent.IsRushAutoApprovalEnabled() {
+		// Env vars indicate RUSH autonomous execution; auto-set mode.
+		agent.EnableRushAutoApprovalEnv()
+		supervisor.SetMode(agent.ModeRush)
 	}
 	modeInfo := agent.GetModeInfo(supervisor.GetMode())
 	ui.PrintSuccess("Mode: %s %s — %s", modeInfo.Emoji, modeInfo.Label, modeInfo.Description)

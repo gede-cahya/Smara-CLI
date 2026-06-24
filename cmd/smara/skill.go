@@ -71,6 +71,7 @@ var skillRunCmd = &cobra.Command{
 	Short: "Jalankan skill yang tersimpan",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		start := time.Now()
 		name := args[0]
 		sk, err := skill.Load(name)
 		if err != nil {
@@ -83,31 +84,39 @@ var skillRunCmd = &cobra.Command{
 			}
 			sk = sk.WithArgs(runtimeArgs)
 		}
+
 		assessment := skill.AssessRisk(sk)
 		if skillRunDryRun {
 			printRiskAssessment(assessment)
 			return nil
 		}
-		if assessment.RequiresApproval && !skillRunApprove {
+
+		rushAutoApprove := agent.IsRushAutoApprovalEnabled()
+		if assessment.RequiresApproval && !skillRunApprove && !rushAutoApprove {
 			printRiskAssessment(assessment)
 			return fmt.Errorf("skill '%s' berisiko %s dan membutuhkan approval eksplisit; jalankan ulang dengan --approve setelah review dry-run", sk.Name, assessment.Level)
 		}
-		if assessment.RequiresApproval && skillRunApprove {
-			fmt.Printf("Approval diterima untuk skill berisiko %s: %s\n", assessment.Level, sk.Name)
+		if assessment.RequiresApproval {
+			if rushAutoApprove && !skillRunApprove {
+				fmt.Printf("Rush auto-approval aktif; bypass approval untuk skill berisiko %s: %s\n", assessment.Level, sk.Name)
+			} else {
+				fmt.Printf("Approval diterima untuk skill berisiko %s: %s\n", assessment.Level, sk.Name)
+			}
 		}
-		fmt.Printf("Menjalankan skill: %s\n", sk.Summary())
+
 		supervisor, err := getSupervisorForSkill()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Gagal inisialisasi supervisor: %v\n", err)
-			fmt.Println("Gunakan TUI (smara start) untuk eksekusi penuh dengan MCP support.")
-			os.Exit(1)
+			return err
 		}
 		defer supervisor.Close()
-		start := time.Now()
+		if rushAutoApprove {
+			supervisor.SetMode(agent.ModeRush)
+		}
+
 		var result *skill.RunResult
 		if sk.HasWorkflowComposition() {
 			plan := sk.CompositionPlan()
-			fmt.Println("Execution plan:")
+			fmt.Println("Composition plan:")
 			for i, st := range plan.Steps {
 				marker := ""
 				if st.Blocking {
@@ -124,12 +133,12 @@ var skillRunCmd = &cobra.Command{
 			}
 			result = composedRunToRunResult(sk.Name, composed)
 		} else {
-			var err error
 			result, err = sk.Run(supervisor.SkillExecutor())
 			if err != nil {
 				return fmt.Errorf("skill execution error: %w", err)
 			}
 		}
+
 		fmt.Println()
 		if result.Success {
 			fmt.Println("Skill berhasil dieksekusi!")
@@ -155,11 +164,12 @@ var skillRunCmd = &cobra.Command{
 }
 
 func composedRunToRunResult(skillName string, composed *skill.ComposedRunResult) *skill.RunResult {
+	if composed == nil {
+		return &skill.RunResult{SkillName: skillName, Success: false, Summary: "skill workflow returned no result"}
+	}
 	result := &skill.RunResult{SkillName: skillName, Success: composed.Success, Summary: composed.Summary}
-	for _, rr := range composed.Results {
-		for _, sr := range rr.StepResults {
-			result.StepResults = append(result.StepResults, sr)
-		}
+	for _, run := range composed.Results {
+		result.StepResults = append(result.StepResults, run.StepResults...)
 	}
 	return result
 }

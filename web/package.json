@@ -1,7 +1,7 @@
 {
   "name": "smara-web",
   "private": true,
-  "version": "1.20.32",
+  "version": "1.20.65",
   "type": "module",
   "scripts": {
     "dev": "vite",

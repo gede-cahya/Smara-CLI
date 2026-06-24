@@ -76,12 +76,30 @@ func (s *SQLiteStore) SearchFullText(query string, workspaceID int64, filters Me
 
 		rows, errQuery = s.db.Query(queryStr, args...)
 	} else {
-		// Fallback to LIKE query
+		// Fallback to LIKE query — split OR-separated terms so identity
+		// queries like "nama OR profil OR identitas" still match individual
+		// memory entries instead of being treated as one literal string.
+		terms := strings.Split(query, " OR ")
+		if len(terms) <= 1 {
+			terms = strings.Fields(query) // also split on spaces for plain multi-word queries
+		}
+		var orClauses []string
+		var args []interface{}
+		for _, t := range terms {
+			t = strings.TrimSpace(t)
+			if t == "" {
+				continue
+			}
+			orClauses = append(orClauses, "(content LIKE ? OR tags LIKE ? OR source LIKE ?)")
+			args = append(args, "%"+t+"%", "%"+t+"%", "%"+t+"%")
+		}
+		if len(orClauses) == 0 {
+			return nil, nil // no usable terms
+		}
 		queryStr := `
 			SELECT id, workspace_id, content, embedding, tags, source, created_at, updated_at, expires_at, category_id, metadata, version
 			FROM memories
-			WHERE (content LIKE ? OR tags LIKE ? OR source LIKE ?)`
-		args := []interface{}{"%" + query + "%", "%" + query + "%", "%" + query + "%"}
+			WHERE (` + strings.Join(orClauses, " OR ") + `)`
 
 		if workspaceID > 0 {
 			queryStr += fmt.Sprintf(" AND (workspace_id = $%d OR workspace_id IS NULL)", len(args)+1)

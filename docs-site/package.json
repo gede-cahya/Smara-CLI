@@ -1,7 +1,7 @@
 {
   "name": "smara-docs-site",
   "private": true,
-  "version": "1.20.34",
+  "version": "1.20.65",
   "type": "module",
   "scripts": {
     "dev": "vitepress dev . --host 0.0.0.0",

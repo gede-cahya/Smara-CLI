@@ -1,5 +1,8 @@
 {
-  "version": "1.20.34",
+  "version": "v1.20.65",
   "releaseDate": "2026-06-20",
-  "releaseUrl": "https://github.com/gede-cahya/Smara-CLI/releases/tag/v1.20.34"
+  "releaseUrl": "https://github.com/gede-cahya/Smara-CLI/releases/tag/v1.20.65",
+  "name": "Smara CLI",
+  "versionNumber": "1.20.65",
+  "updatedAt": "2026-06-24T18:37:48Z"
 }

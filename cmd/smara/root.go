@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	cfgFile string
-	verbose bool
+	cfgFile    string
+	verbose    bool
+	globalMode string
 )
 
 // rootCmd represents the base command when called without any subcommands.

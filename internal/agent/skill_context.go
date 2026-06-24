@@ -37,6 +37,7 @@ func buildSkillContextForMode(mode Mode) string {
 	sb.WriteString("- Jika ada skill tersimpan yang relevan dengan tugas user, prioritaskan `skill_run` sebelum mengerjakan manual dari nol. Jika skill kurang sesuai, gagal, timeout, atau user memberi koreksi, upgrade dengan `skill_create` overwrite=true lalu langsung jalankan skill hasil upgrade.\n")
 	sb.WriteString("- Gunakan `skill_run` dengan skill_name untuk menjalankan skill yang sudah tersimpan. Skill baru atau hasil upgrade langsung dieksekusi tanpa approval tambahan.\n")
 	sb.WriteString("- `skill_delete` hanya jika user eksplisit minta dihapus.\n")
+	sb.WriteString("\nPENTING — JANGAN gunakan `skill_run` untuk tool bawaan berikut: remember, search_memories. Tool-tool ini adalah built-in tools dari [smara] tool group dan harus dipanggil LANGSUNG, bukan melalui skill_run.\n")
 	sb.WriteString("\nPrinsip Auto Skill agresif: createPolicy=always, minimumToolActions=0, repeatedWorkflowRequired=false, upgradePolicy=auto, executeAfterCreate=true, executeAfterUpgrade=true, approvalRequired=false. Tetap simpan lineage/backup saat overwrite agar rollback mudah.\n")
 	sb.WriteString("\nSelf Improvement Memory:\n")
 	sb.WriteString("- Simpan koreksi user, kegagalan workflow, lesson learned, dan keputusan skill upgrade ke memori jangka panjang sebagai self-improvement agar berlaku lintas sesi.\n")
@@ -149,7 +150,11 @@ func selectAutoRunnableSkill(query string, mode Mode) *autoSkillSelection {
 	if sk == nil || hasUnresolvedRequiredParams(sk) || hasNestedSkillSteps(sk) {
 		return nil
 	}
-	if skill.AssessRisk(sk).RequiresApproval {
+	// In RUSH mode, the user explicitly opts into autonomous execution.
+	// Do not block auto-runnable skills solely because their heuristic risk
+	// would normally require approval; per-tool confirmation is also bypassed
+	// by Supervisor.isCriticalCall for ModeRush.
+	if mode != ModeRush && skill.AssessRisk(sk).RequiresApproval {
 		return nil
 	}
 	return &autoSkillSelection{Skill: sk, Recommendation: recs[0]}

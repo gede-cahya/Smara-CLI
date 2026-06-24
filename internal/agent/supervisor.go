@@ -199,6 +199,12 @@ func (s *Supervisor) updateStats(tokens int, cost float64, duration time.Duratio
 
 // SetMode changes the agent's operating mode.
 func (s *Supervisor) SetMode(mode Mode) {
+	if mode == ModeRush {
+		// Make Rush sticky for child processes/subcommands and for confirmation
+		// gates that check environment variables instead of Supervisor state.
+		EnableRushAutoApprovalEnv()
+	}
+
 	s.mode = mode
 	// History is now preserved across mode changes to maintain conversation context
 
@@ -541,10 +547,13 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 		return "Tool generate_image hanya tersedia di mode image. Ganti mode ke image untuk membuat gambar.", nil
 	}
 
-	// Safety engine enforcement: block write/execute/delete tools in Plan Mode
-	if s.safetyEngine != nil {
-		ok, reason := s.safetyEngine.CanExecute(tc.Function)
-		if !ok {
+	// Safety engine enforcement: block write/execute/delete tools in Plan Mode.
+	// RUSH is an explicit autonomous execution mode: bypass safety permission
+	// gates here as well as confirmation gates below.
+	// Also bypass when env vars explicitly enable rush auto-approval, even if
+	// the mode flag itself wasn't set to "rush" (defence-in-depth).
+	if s.safetyEngine != nil && s.mode != ModeRush && !IsRushAutoApprovalEnabled() {
+		if ok, reason := s.safetyEngine.CanExecute(tc.Function); !ok {
 			s.safetyEngine.RecordDraft(tc.Function, tc.Args)
 			return "", fmt.Errorf("safety block: %s", reason)
 		}
@@ -2537,7 +2546,8 @@ func truncate(s string, maxLen int) string {
 func (s *Supervisor) isCriticalCall(mode Mode, name string, args map[string]interface{}) bool {
 	// Mode RUSH bypasses ALL permission checks for maximum speed,
 	// including sensitive path access (.env, .pem, .key, credentials, etc.)
-	if mode == ModeRush {
+	// Also bypass when env vars explicitly enable rush auto-approval.
+	if mode == ModeRush || IsRushAutoApprovalEnabled() {
 		return false
 	}
 

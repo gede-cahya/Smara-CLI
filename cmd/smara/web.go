@@ -124,12 +124,16 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	defer supervisor.Close()
 
 	if agent.ValidMode(webMode) {
-		supervisor.SetMode(agent.Mode(webMode))
+		mode := agent.Mode(webMode)
+		if mode == agent.ModeRush {
+			agent.EnableRushAutoApprovalEnv()
+		}
+		supervisor.SetMode(mode)
 	}
-	modeInfo := agent.GetModeInfo(supervisor.GetMode())
-	ui.PrintSuccess("Mode: %s %s — %s", modeInfo.Emoji, modeInfo.Label, modeInfo.Description)
-
-	// 3.1 Workspace Initialization
+	if agent.IsRushAutoApprovalEnabled() {
+		agent.EnableRushAutoApprovalEnv()
+		supervisor.SetMode(agent.ModeRush)
+	}
 	activeWorkspaceName := cfg.ActiveWorkspace
 	if activeWorkspaceName == "" {
 		activeWorkspaceName = "default"
