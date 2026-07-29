@@ -84,3 +84,47 @@ func TestGeneratePRDMarkdown_FoodProductIdea(t *testing.T) {
 	}
 }
 
+func TestGeneratePRDMarkdown_FinancialAnalyticsIdea(t *testing.T) {
+	answers := PRDAnswers{
+		Idea:         "buatkan website analisis keuangan statistik",
+		ProductType:  "Web App",
+		TargetUser:   "Business",
+		Platform:     "Multi-platform",
+		TechStack:    "Fullstack JS/TS",
+		Scope:        "Enterprise",
+		Priority:     "Premium UX & Design",
+		WorkflowPlan: "Phase-based",
+		DiagramFlow:  "Semua Diagram",
+		DetailLevel:  "Lengkap",
+	}
+
+	md := GeneratePRDMarkdown(answers)
+
+	if strings.Contains(md, "# PRD: Buatkan Website") {
+		t.Fatalf("Product name should not contain lead-in verb 'Buatkan Website'\nGot: %s", md)
+	}
+
+	if strings.Contains(md, "memfasilitasi kebutuhan buatkan website") {
+		t.Fatalf("Overview text should not contain raw lead-in phrase 'buatkan website'\nGot: %s", md)
+	}
+
+	expectedPhrases := []string{
+		"# PRD: Website Analisis Keuangan Statistik",
+		"analisis keuangan",
+		"rasio finansial",
+		"pemrosesan statistik",
+		"### User Flowchart Diagram",
+		"### Sequence Diagram (System Interaction)",
+		"### State Transition Diagram",
+		"gantt",
+		"Fullstack JS/TS",
+		"Premium UX & Design",
+	}
+
+	for _, want := range expectedPhrases {
+		if !strings.Contains(md, want) {
+			t.Fatalf("expected markdown to contain %q, but it didn't.\nFull Output:\n%s", want, md)
+		}
+	}
+}
+

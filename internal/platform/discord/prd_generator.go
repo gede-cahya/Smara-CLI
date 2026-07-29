@@ -341,6 +341,36 @@ func defaultStr(val, fallback string) string {
 	return val
 }
 
+func stripRequestPrefixes(idea string) string {
+	clean := strings.TrimSpace(idea)
+	prefixes := []string{
+		"tolong buatkan ", "tolong buat ", "tolong bikin ",
+		"bantu buatkan ", "bantu buat ", "bantu bikin ",
+		"buatkan ", "buat ", "bikin ", "membuat ",
+		"create a ", "create ", "build a ", "build ", "develop a ", "develop ",
+	}
+	lower := strings.ToLower(clean)
+	for _, p := range prefixes {
+		if strings.HasPrefix(lower, p) {
+			clean = clean[len(p):]
+			lower = strings.ToLower(clean)
+			break
+		}
+	}
+	typePrefixes := []string{"website ", "web app ", "aplikasi ", "app ", "sistem ", "platform ", "bot "}
+	for _, tp := range typePrefixes {
+		if strings.HasPrefix(lower, tp) {
+			clean = clean[len(tp):]
+			lower = strings.ToLower(clean)
+			break
+		}
+	}
+	if strings.TrimSpace(clean) == "" {
+		return idea
+	}
+	return strings.TrimSpace(clean)
+}
+
 func buildDomainContext(a PRDAnswers) domainContext {
 	pName := a.ProductName
 	pType := defaultStr(a.ProductType, "Web App")
@@ -356,10 +386,11 @@ func buildDomainContext(a PRDAnswers) domainContext {
 
 	techInfo := fmt.Sprintf(" Serta dibangun di atas rekomendasi arsitektur **%s** dengan fokus utama pada **%s**.", techStack, priority)
 
-	// Detect domain type: Food/E-Commerce, Bot/Automation, SaaS/Management, Community, General
+	// Detect domain type: Food/E-Commerce, Finance/Analytics, Bot/Automation, SaaS/Management, Community, General
 	isFood := strings.Contains(ideaLower, "makanan") || strings.Contains(ideaLower, "mie") || strings.Contains(ideaLower, "kuliner") || strings.Contains(ideaLower, "instan") || strings.Contains(ideaLower, "toko") || strings.Contains(ideaLower, "resto") || strings.Contains(ideaLower, "katalog")
+	isFinance := strings.Contains(ideaLower, "keuangan") || strings.Contains(ideaLower, "finansial") || strings.Contains(ideaLower, "statistik") || strings.Contains(ideaLower, "akuntansi") || strings.Contains(ideaLower, "investasi") || strings.Contains(ideaLower, "pajak") || strings.Contains(ideaLower, "kas") || strings.Contains(ideaLower, "budget") || strings.Contains(ideaLower, "profit")
 	isBot := strings.Contains(ideaLower, "bot") || strings.Contains(ideaLower, "discord") || strings.Contains(ideaLower, "telegram") || strings.Contains(ideaLower, "automation") || strings.Contains(ideaLower, "webhook")
-	isSaaS := strings.Contains(ideaLower, "dashboard") || strings.Contains(ideaLower, "crm") || strings.Contains(ideaLower, "analytics") || strings.Contains(ideaLower, "manajemen") || strings.Contains(ideaLower, "saas") || strings.Contains(ideaLower, "finance")
+	isSaaS := strings.Contains(ideaLower, "dashboard") || strings.Contains(ideaLower, "crm") || strings.Contains(ideaLower, "analytics") || strings.Contains(ideaLower, "manajemen") || strings.Contains(ideaLower, "saas")
 
 	if isFood {
 		return domainContext{
@@ -513,6 +544,141 @@ func buildDomainContext(a PRDAnswers) domainContext {
 				"Metode pembayaran digital apa yang paling disukai oleh konsumen target makanan instan?",
 				"Apakah integrasi otomatis dengan penyedia jasa kurir instan diperlukan pada rilis rintisan?",
 				"Bagaimana alur penanganan pesanan jika terjadi kehabisan stok varian mie secara tiba-tiba?",
+			},
+		}
+	}
+
+	if isFinance {
+		return domainContext{
+			OverviewDesc: fmt.Sprintf("%s adalah %s yang dikembangkan khusus untuk memfasilitasi pemrosesan analisis keuangan, laporan rasio finansial, dan pemodelan statistik bagi %s di platform %s.%s Dokumen PRD ini menyajikan spesifikasi solusi, kebutuhan fungsional, arsitektur flow, dan rencana eksekusi.", pName, pTypeLower, tUserLower, platform, techInfo),
+			ProblemDesc:  fmt.Sprintf("Pengguna (%s) sering menghadapi hambatan dalam mengolah data transaksi keuangan, melakukan agregasi indikator statistik, dan memvisualisasikan rasio finansial secara otomatis. Tanpa platform ini, alur kerja sangat bergantung pada spreadsheet manual yang rentan terhadap human error dan lambat dievaluasi.", tUser),
+			Goals: []string{
+				fmt.Sprintf("Menyediakan modul analisis keuangan dan pemrosesan statistik yang intuitif bagi %s.", tUserLower),
+				"Mengotomatisasikan perhitungan rasio finansial, visualisasi tren arus kas, dan indikator statistik utama.",
+				fmt.Sprintf("Menghasilkan laporan finansial terstruktur dan terukur dalam scope %s.", scope),
+				"Menyiapkan arsitektur data terpusat untuk integrasi sumber data keuangan pada rilis mendatang.",
+			},
+			NonGoals: []string{
+				"Membangun core banking atau lembaga keuangan terlisensi dalam versi rintisan.",
+				"Mengganti seluruh software ERP akuntansi enterprise tanpa fase migrasi data.",
+			},
+			PrimaryUser:   fmt.Sprintf("%s (Analis Keuangan / Pengambil Keputusan Bisnis)", tUser),
+			SecondaryUser: "Manajemen Keuangan, Auditor, dan Administrator Sistem",
+			UserStories: []string{
+				fmt.Sprintf("Sebagai %s, saya ingin mengunggah atau menginput data transaksi keuangan agar sistem dapat menghitung indikator statistik dan rasio secara otomatis.", tUserLower),
+				fmt.Sprintf("Sebagai %s, saya ingin melihat dashboard visualisasi grafik tren keuangan dan mengekspor laporan ke format PDF/Excel.", tUserLower),
+				"Sebagai Admin, saya ingin mengelola hak akses akun dan audit log transaksi untuk menjaga integritas data keuangan.",
+			},
+			FunctionalReqs: []string{
+				fmt.Sprintf("%s harus menyediakan modul entry point untuk input data transaksi atau impor berkas keuangan (CSV/Excel).", pName),
+				"Sistem harus menghitung kalkulasi statistik keuangan (rasio likuiditas, profitabilitas, tren pendapatan, dan perkiraan arus kas).",
+				"Sistem harus menyajikan dashboard visualisasi grafik statistik interaktif dan fitur filter periode laporan.",
+				"Sistem harus menyediakan modul pencetakan/ekspor laporan analitik keuangan terformat.",
+				fmt.Sprintf("Sistem harus berjalan optimal di platform %s dengan arsitektur %s.", platform, techStack),
+			},
+			NonFunctionalReqs: []string{
+				"Usability: Antarmuka analitik yang bersih sehingga laporan statistik keuangan dapat ditinjau dalam < 3 menit.",
+				"Performance: Waktu agregasi dan pembuatan grafik statistik < 2 detik.",
+				"Security/Privacy: Enkripsi data sensitif transaksi keuangan (AES-256) dan manajemen hak akses terisolasi.",
+				"Reliability: Akurasi perhitungan matematika/statistik 100% tanpa pembulatan data yang merugikan.",
+			},
+			UserFlowSteps: []string{
+				fmt.Sprintf("User login ke platform %s (%s).", platform, pName),
+				"User mengakses modul analisis keuangan dan menginput/mengunggah data transaksi.",
+				"Sistem memvalidasi skema data dan menjalankan engine pemrosesan statistik finansial.",
+				"User meninjau dashboard visual grafik rasio keuangan dan melakukan penyesuaian parameter.",
+				"User mengekspor laporan finansial terformat atau menyimpan sesi analisis data.",
+			},
+			FlowchartMermaid: fmt.Sprintf(`flowchart TD
+    A[User Login ke Portal %s] --> B[Akses Modul Analisis Keuangan & Statistik]
+    B --> C[Input / Upload Data Transaksi Keuangan]
+    C --> D[Validasi Skema Data & Hitung Rasio Finansial]
+    D --> E[Generate Grafik Tren & Statistik Laporan]
+    E --> F{User Butuh Ekspor Laporan?}
+    F -- Ya --> G[Generasi Dokumen Laporan PDF / Excel]
+    F -- Tidak --> H[Tinjau Dashboard Analitik di Screen]`, platform),
+			SequenceMermaid: `sequenceDiagram
+    autonumber
+    actor User as Business User
+    participant Web as Platform Web/Client
+    participant Engine as Financial Stats Engine
+    participant DB as Secure Storage
+
+    User->>Web: Input / Upload Data Keuangan
+    Web->>Engine: Send Transaction & Metric Payload
+    Engine->>Engine: Process Statistical Calculations & Ratios
+    Engine->>DB: Save Financial Session Record
+    DB-->>Engine: Confirm Record Stored
+    Engine-->>Web: Return Formatted Metrics & Chart Data
+    Web-->>User: Display Financial Analytics Dashboard`,
+			StateMermaid: `stateDiagram-v2
+    [*] --> Idle: Session Init
+    Idle --> DataEntry: Input Financial Records
+    DataEntry --> ProcessingStats: Run Statistical Engine
+    ProcessingStats --> DashboardActive: Render Analytics & Charts
+    DashboardActive --> ExportingReport: Export PDF / Excel
+    ExportingReport --> DashboardActive: Export Finished
+    DashboardActive --> [*]`,
+			TahapanFlow: []string{
+				"**Entry point**: User mengakses portal analisis keuangan dan memilih opsi analisis.",
+				"**Context collection**: Sistem mengumpulkan data laporan, nominal transaksi, dan periode.",
+				"**Processing**: Engine mengkalkulasi rasio statistik keuangan dan menyusun grafik.",
+				"**Output review**: User melihat ringkasan metrik statistik dan visualisasi tren.",
+				"**Final action**: User mengunduh laporan PDF/Excel atau menyimpan hasil analisis.",
+			},
+			SprintRoadmap: []string{
+				"**Sprint 1 — Database & Financial Engine**: Inisialisasi skema data keuangan, tabel transaksi, dan modul kalkulasi statistik.",
+				"**Sprint 2 — Analytics Dashboard & Visuals**: Pengembangan UI dashboard, komponen grafik statistik, dan filter periode.",
+				"**Sprint 3 — Report Export & Security**: Fitur generator PDF/Excel, enkripsi data finansial, dan audit log.",
+				"**Sprint 4 — QA, Performance & Launch**: Load testing kalkulasi data besar, audit presisi angka, dan release.",
+			},
+			PhasedRoadmap: []string{
+				"**Fase 1 (Discovery & Schema)**: Perancangan rumus statistik keuangan, skema database, dan wireframe dashboard.",
+				"**Fase 2 (Build Core)**: Pembuatan engine kalkulasi statistik dan komponen visualisasi UI.",
+				"**Fase 3 (Testing & Audit)**: Validasi akurasi numerik, enkripsi data, dan pengujian alur ekspor.",
+				"**Fase 4 (Deployment)**: Soft launch dan monitoring penggunaan awal oleh tim bisnis.",
+			},
+			ChecklistRoadmap: []string{
+				"Task 1: Setup arsitektur project & database keuangan.",
+				"Task 2: Buat engine kalkulasi statistik & rasio finansial.",
+				"Task 3: Implementasikan UI dashboard visualisasi grafik.",
+				"Task 4: Hubungkan modul ekspor laporan PDF/Excel.",
+				"Task 5: Rilis versi awal aplikasi.",
+			},
+			GanttMermaid: fmt.Sprintf(`gantt
+    title Implementation Roadmap - %s
+    dateFormat YYYY-MM-DD
+    section Core Engine
+    Financial Schema & Engine    :a1, 2025-01-01, 7d
+    Analytics API & Calculation  :a2, after a1, 8d
+    section Dashboard & Release
+    Visual Charts & Filter UI    :b1, 2025-01-10, 8d
+    Export Engine & Launch       :crit, after b1, 5d`, pName),
+			SuccessMetrics: []string{
+				"Calculation Accuracy: Akurasi perhitungan statistik dan rasio finansial 100%.",
+				"Report Generation Time: Waktu pembentukan laporan PDF/Excel < 3 detik.",
+				"User Retention: Tingkat penggunaan kembali aplikasi analisis oleh tim bisnis.",
+				"CSAT: Evaluasi kepuasan pengguna terhadap kejelasan visualisasi statistik (> 4.6/5).",
+			},
+			RisksAndMitigations: [][2]string{
+				{"Format input data tidak valid", "Penerapan validasi skema data di awal (client & server-side validation) dengan pesan error spesifik."},
+				{"Ukuran berkas data keuangan sangat besar", "Pengolahan data secara asynchronous/chunking agar tidak blocking UI."},
+			},
+			MVPScope: []string{
+				"Modul input/upload data transaksi keuangan dasar.",
+				"Dashboard visualisasi statistik tren dan rasio finansial utama.",
+				"Ekspor laporan ke format PDF dan Excel.",
+				"Penanganan error dan dokumen petunjuk penggunaan.",
+			},
+			ReleasePlan: []string{
+				"Fase 1: Alpha testing internal & uji validasi rumus statistik.",
+				"Fase 2: Beta testing terpandu dengan tim keuangan/bisnis.",
+				"Fase 3: Rilis publik MVP di platform Web.",
+				"Fase 4: Iterasi penambahan fitur proyeksi berbasis ML/AI.",
+			},
+			OpenQuestions: []string{
+				"Format file laporan apa yang paling sering digunakan oleh pengguna bisnis saat impor data?",
+				"Apakah diperlukan sistem peran (role-based access) antara staf keuangan dan eksekutif?",
 			},
 		}
 	}
@@ -762,7 +928,7 @@ func buildDomainContext(a PRDAnswers) domainContext {
 	}
 
 	// General / Fallback Domain
-	cleanIdeaSummary := idea
+	cleanIdeaSummary := stripRequestPrefixes(idea)
 	if len(cleanIdeaSummary) > 120 {
 		cleanIdeaSummary = cleanIdeaSummary[:117] + "..."
 	}
