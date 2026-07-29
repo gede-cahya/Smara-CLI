@@ -97,18 +97,28 @@ func BuildReleaseEmbed(payload *GitHubReleasePayload) *discordgo.MessageEmbed {
 		},
 	}
 
-	if payload.Sender.AvatarURL != "" {
-		embed.Author = &discordgo.MessageEmbedAuthor{
-			Name:    payload.Sender.Login,
-			IconURL: payload.Sender.AvatarURL,
-			URL:     payload.Sender.HTMLURL,
-		}
-	} else if rel.Author.AvatarURL != "" {
-		embed.Author = &discordgo.MessageEmbedAuthor{
-			Name:    rel.Author.Login,
-			IconURL: rel.Author.AvatarURL,
-			URL:     rel.Author.HTMLURL,
-		}
+	authorName := "cahya"
+	authorAvatar := "https://github.com/gede-cahya.png"
+	authorURL := ""
+
+	if payload.Sender.Login != "" {
+		authorName = payload.Sender.Login
+		authorAvatar = payload.Sender.AvatarURL
+		authorURL = payload.Sender.HTMLURL
+	} else if rel.Author.Login != "" {
+		authorName = rel.Author.Login
+		authorAvatar = rel.Author.AvatarURL
+		authorURL = rel.Author.HTMLURL
+	}
+
+	if authorAvatar == "" {
+		authorAvatar = "https://github.com/gede-cahya.png"
+	}
+
+	embed.Author = &discordgo.MessageEmbedAuthor{
+		Name:    authorName,
+		IconURL: authorAvatar,
+		URL:     authorURL,
 	}
 
 	// Add Fields for Version & Assets

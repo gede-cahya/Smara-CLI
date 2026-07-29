@@ -35,8 +35,8 @@ jobs:
             const releaseUrl = process.env.RELEASE_URL;
             const repoName = process.env.REPO_NAME;
             const tag = process.env.RELEASE_TAG;
-            const author = process.env.AUTHOR || "smara-bot";
-            const avatar = process.env.AUTHOR_AVATAR || "https://avatars.githubusercontent.com/u/104273347?v=4";
+            const author = process.env.AUTHOR || "cahya";
+            const avatar = process.env.AUTHOR_AVATAR || "https://github.com/gede-cahya.png";
             const body = process.env.FULL_BODY || "";
             let assets = [];
             try {
