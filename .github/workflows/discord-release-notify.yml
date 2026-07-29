@@ -19,47 +19,70 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           AUTHOR: ${{ github.event.release.author.login }}
           AUTHOR_AVATAR: ${{ github.event.release.author.avatar_url }}
+          ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
         run: |
           WEBHOOK_URL="${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1531906488673501258/yWGWphOOQloBD4UtxnEWsGXAkuSQQIDSbIHw5a2SEg6254klUH0VJyCUiOkvPsxAntuT}"
 
-          # Format body (escape quotes/newlines for json)
           TITLE="${RELEASE_TITLE:-$RELEASE_TAG}"
-          CLEAN_BODY=$(echo "$RELEASE_BODY" | head -c 1800 | jq -aRs .)
+          HEADER="# 🌀 $TITLE Released!
 
-          PAYLOAD=$(cat <<EOF
-          {
-            "username": "Smara Release Bot",
-            "avatar_url": "https://raw.githubusercontent.com/$REPO_NAME/main/web/public/favicon.ico",
-            "embeds": [
-              {
-                "title": "🚀 New Release: [$REPO_NAME] $TITLE",
-                "url": "$RELEASE_URL",
-                "description": $CLEAN_BODY,
-                "color": 8214260,
-                "author": {
-                  "name": "$AUTHOR",
-                  "icon_url": "$AUTHOR_AVATAR"
-                },
-                "fields": [
-                  {
-                    "name": "📌 Version Tag",
-                    "value": "\`$RELEASE_TAG\`",
-                    "inline": true
+"
+          FULL_BODY="${HEADER}${RELEASE_BODY}"
+
+          # Construct JSON payload via node
+          PAYLOAD=$(node -e '
+            const title = process.env.TITLE;
+            const releaseUrl = process.env.RELEASE_URL;
+            const repoName = process.env.REPO_NAME;
+            const tag = process.env.RELEASE_TAG;
+            const author = process.env.AUTHOR || "smara-bot";
+            const avatar = process.env.AUTHOR_AVATAR || "https://avatars.githubusercontent.com/u/104273347?v=4";
+            const body = process.env.FULL_BODY || "";
+            let assets = [];
+            try {
+              assets = JSON.parse(process.env.ASSETS_JSON || "[]");
+            } catch (e) {}
+
+            let desc = body.trim();
+            if (desc.length > 1900) {
+              desc = desc.substring(0, 1897) + "...";
+            }
+
+            const fields = [
+              { name: "📌 Version Tag", value: "`" + tag + "`", inline: true },
+              { name: "📦 Repository", value: "[" + repoName + "](https://github.com/" + repoName + ")", inline: true }
+            ];
+
+            if (assets && assets.length > 0) {
+              const assetLines = assets.slice(0, 6).map(a => {
+                const sizeMB = (a.size / (1024 * 1024)).toFixed(1);
+                return "• [" + a.name + "](" + a.browser_download_url + ") (" + sizeMB + " MB)";
+              }).join("\n");
+              fields.push({ name: "💾 Downloads / Assets", value: assetLines, inline: false });
+            }
+
+            const payload = {
+              username: "Smara Release Bot",
+              avatar_url: "https://raw.githubusercontent.com/" + repoName + "/main/web/public/favicon.ico",
+              embeds: [
+                {
+                  title: "🚀 New Release: " + title,
+                  url: releaseUrl,
+                  description: desc,
+                  color: 8214260,
+                  author: {
+                    name: author,
+                    icon_url: avatar
                   },
-                  {
-                    "name": "📦 Repository",
-                    "value": "[$REPO_NAME](https://github.com/$REPO_NAME)",
-                    "inline": true
+                  fields: fields,
+                  footer: {
+                    text: "🌀 Smara Discord Integration • GitHub Release Notification"
                   }
-                ],
-                "footer": {
-                  "text": "🌀 Smara Discord Integration • GitHub Release Notification"
                 }
-              }
-            ]
-          }
-          EOF
-          )
+              ]
+            };
+            console.log(JSON.stringify(payload));
+          ')
 
           curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL"
           echo "✅ Notifikasi GitHub Release terkirim ke Discord!"

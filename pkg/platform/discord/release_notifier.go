@@ -62,36 +62,38 @@ func BuildReleaseEmbed(payload *GitHubReleasePayload) *discordgo.MessageEmbed {
 	rel := payload.Release
 	repo := payload.Repository
 
-	title := rel.Name
-	if title == "" {
-		title = rel.TagName
-	}
-	if repo.FullName != "" {
-		title = fmt.Sprintf("[%s] %s", repo.FullName, title)
+	releaseName := rel.Name
+	if releaseName == "" {
+		releaseName = rel.TagName
 	}
 
-	// Status badge/prefix
-	statusPrefix := "🚀 **New Release**"
-	if rel.Prerelease {
-		statusPrefix = "🧪 **Pre-Release**"
+	embedTitle := fmt.Sprintf("🚀 New Release: %s", releaseName)
+	if repo.FullName != "" && !strings.Contains(releaseName, repo.Name) {
+		embedTitle = fmt.Sprintf("🚀 New Release: [%s] %s", repo.FullName, releaseName)
 	}
 
-	desc := rel.Body
-	if len(desc) > 2000 {
-		desc = desc[:1997] + "..."
-	}
-	if desc == "" {
-		desc = "_Tidak ada release notes yang disertakan._"
+	// Description Header + Body
+	var descBuilder strings.Builder
+	descBuilder.WriteString(fmt.Sprintf("# 🌀 %s Released!\n\n", releaseName))
+
+	bodyText := strings.TrimSpace(rel.Body)
+	if bodyText != "" {
+		if len(bodyText) > 1600 {
+			bodyText = bodyText[:1597] + "..."
+		}
+		descBuilder.WriteString(bodyText)
+	} else {
+		descBuilder.WriteString("_Tidak ada release notes yang disertakan._")
 	}
 
 	embed := &discordgo.MessageEmbed{
-		Title:       fmt.Sprintf("%s: %s", statusPrefix, title),
+		Title:       embedTitle,
 		URL:         rel.HTMLURL,
-		Description: desc,
-		Color:       0x7D56F4, // Smara purple
+		Description: descBuilder.String(),
+		Color:       8214260, // 0x7D56F4
 		Timestamp:   rel.PublishedAt,
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: "🌀 Smara Discord Integration • GitHub Release",
+			Text: "🌀 Smara Discord Integration • GitHub Release Notification",
 		},
 	}
 
@@ -129,12 +131,12 @@ func BuildReleaseEmbed(payload *GitHubReleasePayload) *discordgo.MessageEmbed {
 	if len(rel.Assets) > 0 {
 		var assetSb strings.Builder
 		for i, asset := range rel.Assets {
-			if i >= 5 {
-				assetSb.WriteString(fmt.Sprintf("\n_...and %d more assets_", len(rel.Assets)-5))
+			if i >= 6 {
+				assetSb.WriteString(fmt.Sprintf("\n_...and %d more assets_", len(rel.Assets)-6))
 				break
 			}
 			sizeMB := float64(asset.Size) / (1024 * 1024)
-			assetSb.WriteString(fmt.Sprintf("• [%s](%s) (%.2f MB)\n", asset.Name, asset.BrowserDownloadURL, sizeMB))
+			assetSb.WriteString(fmt.Sprintf("• [%s](%s) (%.1f MB)\n", asset.Name, asset.BrowserDownloadURL, sizeMB))
 		}
 		fields = append(fields, &discordgo.MessageEmbedField{
 			Name:   "💾 Downloads / Assets",
