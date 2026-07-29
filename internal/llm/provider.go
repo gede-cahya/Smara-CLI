@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Provider is the interface that all LLM backends must implement.
@@ -111,8 +112,35 @@ func AvailableProviders() map[string]ProviderInfo {
 		},
 		"custom": {
 			Name:        "custom",
-			Description: "9router (OpenAI-compatible) via local proxy at localhost:20128",
-			Models:      []string{"cx/gpt-5.5", "cx/gpt-5.5-mini", "gpt-image-2", "gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"},
+			Description: "9router (OpenAI-compatible) via local proxy — semua model tersedia",
+			Models: []string{
+				// Combo (direct)
+				"mimo", "glm5", "dsv4", "minimaxm3",
+				// cx (premium)
+				"cx/gpt-5.5", "cx/gpt-5.4", "cx/gpt-5.3-codex", "cx/gpt-5.2", "cx/gpt-5.1", "cx/gpt-5-codex",
+				// sr (shared)
+				"sr/gpt-5.5", "sr/gpt-5.4", "sr/claude-opus-4-7", "sr/claude-sonnet-4-6", "sr/deepseek-v4-pro", "sr/gemini-2.5-pro", "sr/glm-5", "sr/kimi-k2.7", "sr/minimax-m3", "sr/mimo-v2.5-pro", "sr/qwen3.7-plus",
+				// bai
+				"bai/gpt-5.5", "bai/claude-opus-4.8", "bai/gemini-3.1-pro", "bai/deepseek-v4-pro", "bai/glm-5.1", "bai/minimax-m3",
+				// tr (together)
+				"tr/openai/gpt-5.5", "tr/anthropic/claude-opus-4.8", "tr/google/gemini-3.1-pro-preview", "tr/deepseek/deepseek-v4-pro", "tr/z-ai/glm-5.1", "tr/x-ai/grok-4.3",
+				// tk
+				"tk/gpt-5.5", "tk/claude-opus-4-8", "tk/gemini-3.1-pro", "tk/deepseek-v4-pro", "tk/glm-5.2", "tk/minimax-m3",
+				// ae (anthropic endpoints)
+				"ae/claude-opus-4-8", "ae/claude-fable-5", "ae/claude-sonnet-4-6",
+				// gemini
+				"gemini/gemini-3.1-pro-preview", "gemini/gemini-3-flash-preview",
+				// glm
+				"glm/glm-5.1", "glm/glm-5", "glm/glm-4.7",
+				// mimo
+				"mimo/mimo-v2.5-pro", "mimo/mimo-v2.5",
+				// kr
+				"kr/claude-sonnet-4.5", "kr/deepseek-3.2", "kr/qwen3-coder-next",
+				// nara (free)
+				"nara/mimo-v2.5-free", "nara/mistral-large",
+				// Image models
+				"gpt-image-2", "gemini-2.5-flash-image", "gemini-3.1-flash-image-preview",
+			},
 			NeedsAPIKey: true,
 		},
 	}
@@ -155,4 +183,41 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 	default:
 		return nil, fmt.Errorf("provider tidak dikenali: %s (tersedia: ollama, openai, openrouter, anthropic, custom)", cfg.Name)
 	}
+}
+
+// ModelSupportsNativeToolCall returns true if the model supports native
+// function calling (tool_calls in OpenAI format). Models that don't support
+// native tool calls will use DSML text-based tool calling as fallback.
+func ModelSupportsNativeToolCall(model string) bool {
+	model = strings.ToLower(model)
+
+	// Models that support native function calling
+	nativePrefixes := []string{
+		// OpenAI GPT family
+		"cx/gpt-", "sr/gpt-", "bai/gpt-", "tr/openai/gpt-", "tk/gpt-", "gpt-",
+		// Claude family
+		"sr/claude-", "bai/claude-", "tr/anthropic/claude-", "ae/claude-", "tk/claude-", "kr/claude-", "cl/anthropic/claude-", "claude-",
+		// Gemini family
+		"gemini/", "sr/gemini-", "bai/gemini-", "tr/google/gemini-", "tk/gemini-", "cl/google/gemini-", "gemini-",
+		// GLM-5+ (supports function calling)
+		"glm/glm-5", "glm/glm-4.7", "sr/glm-5", "bai/glm-5", "tr/z-ai/glm-5", "tk/glm-5", "glm5",
+		// Grok
+		"tr/x-ai/grok-",
+		// MiniMax M3 (newer models support it)
+		"minimaxm3", "sr/minimax-m3", "tk/minimax-m3",
+		// mimo (supports function calling)
+		"mimo/mimo-v2.5", "mimo",
+		// qwen3.7+ (supports function calling)
+		"sr/qwen3.7", "tk/qwen3.7", "tr/qwen/qwen3.7",
+	}
+
+	for _, prefix := range nativePrefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+
+	// Models that DON'T support native function calling (use DSML fallback)
+	// DeepSeek, older Qwen, MiniMax M2.x, Kimi, etc.
+	return false
 }

@@ -239,6 +239,28 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	server := web.NewServer(addr, supervisor, memStore, collector, cfg)
 	server.WebSessions = web.NewWebSessionManager(provider, providerCfg, memStore, activeWorkspaceName, cfg.ActiveWorkspaceID, cfg.AgentMaxIterations, filepath.Join(filepath.Dir(cfg.DBPath), "web-sessions.json"))
 	server.WebSessions.SetMCPConnections(supervisor.GetMCPClients(), supervisor.GetMCPInfo())
+
+	// Hot-reload model/provider when config.yaml changes on disk (e.g. manual edit).
+	config.OnReload(func(newCfg *config.SmaraConfig) {
+		model := newCfg.Model
+		provName := newCfg.Provider
+		if provName == "custom" && newCfg.CustomModel != "" {
+			model = newCfg.CustomModel
+		}
+		if model == "" {
+			return
+		}
+		_ = supervisor.SetModel(provName, model)
+		if server.WebSessions != nil {
+			server.WebSessions.UpdateProviderConfig(llm.ProviderConfig{
+				Name:            provName,
+				Model:           model,
+				Host:            newCfg.CustomBaseURL,
+				APIKey:          newCfg.CustomAPIKey,
+				ReasoningEffort: newCfg.ReasoningEffort,
+			})
+		}
+	})
 	server.RemoteDesktop = web.NewRemoteDesktopManager(filepath.Join(filepath.Dir(cfg.DBPath), "remote-desktop-devices.json"))
 	if desktopAgentAddr != "" {
 		if _, err := server.RemoteDesktop.Upsert("local-desktop", desktopAgentAddr, desktopAgentToken); err != nil {

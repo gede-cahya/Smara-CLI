@@ -1,0 +1,68 @@
+name: Discord Release Notifier
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify-discord:
+    name: Notify Discord Channel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Release Notification to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_TITLE: ${{ github.event.release.name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          REPO_NAME: ${{ github.repository }}
+          AUTHOR: ${{ github.event.release.author.login }}
+          AUTHOR_AVATAR: ${{ github.event.release.author.avatar_url }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "⚠ Secret DISCORD_WEBHOOK_URL tidak ditemukan. Notification skipped."
+            exit 0
+          fi
+
+          # Format body (escape quotes/newlines for json)
+          TITLE="${RELEASE_TITLE:-$RELEASE_TAG}"
+          CLEAN_BODY=$(echo "$RELEASE_BODY" | head -c 1800 | jq -aRs .)
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "username": "Smara Release Bot",
+            "avatar_url": "https://raw.githubusercontent.com/$REPO_NAME/main/web/public/favicon.ico",
+            "embeds": [
+              {
+                "title": "🚀 New Release: [$REPO_NAME] $TITLE",
+                "url": "$RELEASE_URL",
+                "description": $CLEAN_BODY,
+                "color": 8214260,
+                "author": {
+                  "name": "$AUTHOR",
+                  "icon_url": "$AUTHOR_AVATAR"
+                },
+                "fields": [
+                  {
+                    "name": "📌 Version Tag",
+                    "value": "\`$RELEASE_TAG\`",
+                    "inline": true
+                  },
+                  {
+                    "name": "📦 Repository",
+                    "value": "[$REPO_NAME](https://github.com/$REPO_NAME)",
+                    "inline": true
+                  }
+                ],
+                "footer": {
+                  "text": "🌀 Smara Discord Integration • GitHub Release Notification"
+                }
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_WEBHOOK"
+          echo "✅ Notifikasi GitHub Release terkirim ke Discord!"

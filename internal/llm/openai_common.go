@@ -183,29 +183,78 @@ func normalizeReasoningEffort(effort string) string {
 }
 
 // convertMessagesToOpenAI converts internal messages to OpenAI format.
+// Defensive deduplication for upstream 400 errors:
+//  1) "Duplicate tool response for tool_call_id='...'" — same tool response sent twice
+//  2) "'xxx_dup1' does not match any tool_calls[].id" — rewritten tool response ID
+//     does not exist in any preceding assistant tool_calls.
+//
+// Root cause of (2) in the previous implementation: a single `seen` set was
+// used for both assistant tool_calls and tool responses. Every valid tool
+// response (which MUST reuse the assistant ID) was then treated as duplicate
+// and renamed to _dupN, breaking the pairing and triggering (2).
+// New implementation keeps the two namespaces separate and pairs via FIFO.
 func convertMessagesToOpenAI(messages []Message) []openAIMessage {
-	om := make([]openAIMessage, len(messages))
-	for i, m := range messages {
+	om := make([]openAIMessage, 0, len(messages))
+	seenAssistant := make(map[string]bool)
+	seenTool := make(map[string]bool)
+	pending := make(map[string][]string) // origID -> queue of outIDs awaiting tool response
+	dupCounter := 0
+
+	for _, m := range messages {
+		if m.Role == RoleTool && m.ToolCallID != "" {
+			orig := m.ToolCallID
+			var outID string
+			if q, ok := pending[orig]; ok && len(q) > 0 {
+				outID = q[0]
+				pending[orig] = q[1:]
+				if len(pending[orig]) == 0 {
+					delete(pending, orig)
+				}
+			} else if seenAssistant[orig] && !seenTool[orig] {
+				outID = orig
+			} else {
+				// No matching assistant tool_call — skip to avoid
+				// 400 "'id' does not match any tool_calls[].id".
+				continue
+			}
+			if seenTool[outID] {
+				continue
+			}
+			seenTool[outID] = true
+			om = append(om, openAIMessage{
+				Role:             string(m.Role),
+				Content:          m.Content,
+				ToolCallID:       outID,
+				ReasoningContent: m.ReasoningContent,
+			})
+			continue
+		}
+
 		msg := openAIMessage{
 			Role:             string(m.Role),
 			Content:          m.Content,
 			ToolCallID:       m.ToolCallID,
 			ReasoningContent: m.ReasoningContent,
 		}
+
 		for _, tc := range m.ToolCalls {
+			origID := tc.ID
+			outID := origID
+			if outID != "" && seenAssistant[outID] {
+				dupCounter++
+				outID = fmt.Sprintf("%s_%d", origID, dupCounter)
+			}
+			if outID != "" {
+				seenAssistant[outID] = true
+				pending[origID] = append(pending[origID], outID)
+			}
 			args := tc.Args
-			// Workaround for OpenAI-to-Anthropic proxies (e.g. 9Router) that
-			// mishandle empty JSON objects in tool_call arguments (treating {}
-			// as falsy and converting to null). Adding a sentinel key ensures
-			// the arguments payload is never an empty object, preventing the
-			// "tool_use.input: Input should be an object" 400 error from
-			// Anthropic when the proxy converts OpenAI → Anthropic format.
 			if args == nil || len(args) == 0 {
 				args = map[string]interface{}{"_noop": true}
 			}
 			argsJSON, _ := json.Marshal(args)
 			msg.ToolCalls = append(msg.ToolCalls, openAIToolCall{
-				ID:   tc.ID,
+				ID:   outID,
 				Type: "function",
 				Function: openAIToolCallFunc{
 					Name:      tc.Function,
@@ -213,7 +262,7 @@ func convertMessagesToOpenAI(messages []Message) []openAIMessage {
 				},
 			})
 		}
-		om[i] = msg
+		om = append(om, msg)
 	}
 	return om
 }

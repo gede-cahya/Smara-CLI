@@ -1,0 +1,176 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Dashboard" active="dashboard">
+  <!-- Stats Cards -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="bg-dark-900 rounded-xl p-6 border border-dark-800">
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-dark-400 text-sm">Total Users</span>
+        <span class="p-2 bg-primary-600/20 rounded-lg text-primary-400">👥</span>
+      </div>
+      <p id="stat-users" class="text-3xl font-bold text-dark-100">-</p>
+      <p class="text-xs text-dark-500 mt-1">registered users</p>
+    </div>
+    <div class="bg-dark-900 rounded-xl p-6 border border-dark-800">
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-dark-400 text-sm">Active Today</span>
+        <span class="p-2 bg-green-600/20 rounded-lg text-green-400">🟢</span>
+      </div>
+      <p id="stat-active" class="text-3xl font-bold text-dark-100">-</p>
+      <p class="text-xs text-dark-500 mt-1">users active today</p>
+    </div>
+    <div class="bg-dark-900 rounded-xl p-6 border border-dark-800">
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-dark-400 text-sm">Total Requests</span>
+        <span class="p-2 bg-yellow-600/20 rounded-lg text-yellow-400">📊</span>
+      </div>
+      <p id="stat-requests" class="text-3xl font-bold text-dark-100">-</p>
+      <p class="text-xs text-dark-500 mt-1">all time</p>
+    </div>
+    <div class="bg-dark-900 rounded-xl p-6 border border-dark-800">
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-dark-400 text-sm">Revenue</span>
+        <span class="p-2 bg-emerald-600/20 rounded-lg text-emerald-400">💰</span>
+      </div>
+      <p id="stat-revenue" class="text-3xl font-bold text-dark-100">-</p>
+      <p class="text-xs text-dark-500 mt-1">total revenue</p>
+    </div>
+  </div>
+
+  <!-- Tier Distribution & Recent Users -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <div class="bg-dark-900 rounded-xl p-6 border border-dark-800">
+      <h3 class="text-lg font-semibold text-dark-100 mb-4">Tier Distribution</h3>
+      <div id="tier-chart" class="space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-dark-300">Free</span>
+          <div class="flex-1 mx-4 bg-dark-800 rounded-full h-3"><div id="tier-free" class="bg-gray-500 h-3 rounded-full" style="width:0%"></div></div>
+          <span id="tier-free-count" class="text-dark-400 text-sm w-8 text-right">0</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-dark-300">Basic</span>
+          <div class="flex-1 mx-4 bg-dark-800 rounded-full h-3"><div id="tier-basic" class="bg-blue-500 h-3 rounded-full" style="width:0%"></div></div>
+          <span id="tier-basic-count" class="text-dark-400 text-sm w-8 text-right">0</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-dark-300">Premium</span>
+          <div class="flex-1 mx-4 bg-dark-800 rounded-full h-3"><div id="tier-premium" class="bg-purple-500 h-3 rounded-full" style="width:0%"></div></div>
+          <span id="tier-premium-count" class="text-dark-400 text-sm w-8 text-right">0</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-dark-300">Enterprise</span>
+          <div class="flex-1 mx-4 bg-dark-800 rounded-full h-3"><div id="tier-enterprise" class="bg-yellow-500 h-3 rounded-full" style="width:0%"></div></div>
+          <span id="tier-enterprise-count" class="text-dark-400 text-sm w-8 text-right">0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-dark-900 rounded-xl p-6 border border-dark-800">
+      <h3 class="text-lg font-semibold text-dark-100 mb-4">Popular Models</h3>
+      <div id="models-chart" class="space-y-3">
+        <p class="text-dark-500 text-sm">Loading...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Users Table -->
+  <div class="bg-dark-900 rounded-xl border border-dark-800">
+    <div class="p-6 border-b border-dark-800 flex items-center justify-between">
+      <h3 class="text-lg font-semibold text-dark-100">Recent Users</h3>
+      <a href="/users" class="text-sm text-primary-400 hover:text-primary-300">View all →</a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-dark-800">
+            <th class="text-left py-3 px-6 text-xs font-medium text-dark-400 uppercase">ID</th>
+            <th class="text-left py-3 px-6 text-xs font-medium text-dark-400 uppercase">Username</th>
+            <th class="text-left py-3 px-6 text-xs font-medium text-dark-400 uppercase">Tier</th>
+            <th class="text-left py-3 px-6 text-xs font-medium text-dark-400 uppercase">Requests</th>
+            <th class="text-left py-3 px-6 text-xs font-medium text-dark-400 uppercase">Joined</th>
+          </tr>
+        </thead>
+        <tbody id="recent-users">
+          <tr><td colspan="5" class="text-center py-8 text-dark-500">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script is:inline>
+    const tierColors = { free:'bg-gray-500', basic:'bg-blue-500', premium:'bg-purple-500', enterprise:'bg-yellow-500' };
+
+    async function loadDashboard() {
+      try {
+        const data = await apiGet('/dashboard');
+        if (!data || data.error) return;
+
+        document.getElementById('stat-users').textContent = data.total_users || 0;
+        document.getElementById('stat-active').textContent = data.active_users || 0;
+        document.getElementById('stat-requests').textContent = (data.total_requests || 0).toLocaleString();
+        document.getElementById('stat-revenue').textContent = 'Rp ' + (data.total_revenue || 0).toLocaleString();
+
+        // Tier distribution
+        const tiers = data.tier_distribution || {};
+        const total = Object.values(tiers).reduce((a, b) => a + b, 0) || 1;
+        for (const [tier, count] of Object.entries(tiers)) {
+          const bar = document.getElementById(`tier-${tier}`);
+          const label = document.getElementById(`tier-${tier}-count`);
+          if (bar) bar.style.width = `${(count / total) * 100}%`;
+          if (label) label.textContent = count;
+        }
+
+        // Popular models
+        const modelsDiv = document.getElementById('models-chart');
+        const models = data.popular_models || [];
+        if (models.length > 0) {
+          const maxCount = Math.max(...models.map(m => m.count));
+          modelsDiv.innerHTML = models.slice(0, 5).map(m => `
+            <div class="flex items-center justify-between">
+              <span class="text-dark-300 text-sm">${m.model}</span>
+              <div class="flex-1 mx-4 bg-dark-800 rounded-full h-3">
+                <div class="bg-primary-500 h-3 rounded-full" style="width:${(m.count/maxCount)*100}%"></div>
+              </div>
+              <span class="text-dark-400 text-sm w-12 text-right">${m.count}</span>
+            </div>
+          `).join('');
+        } else {
+          modelsDiv.innerHTML = '<p class="text-dark-500 text-sm">No data yet</p>';
+        }
+
+        // Recent users
+        const tbody = document.getElementById('recent-users');
+        const users = data.recent_users || [];
+        if (users.length > 0) {
+          tbody.innerHTML = users.map(u => `
+            <tr class="border-b border-dark-800/50 hover:bg-dark-800/30">
+              <td class="py-3 px-6 text-sm text-dark-300">${u.telegram_id}</td>
+              <td class="py-3 px-6 text-sm text-dark-200">${u.username || '-'}</td>
+              <td class="py-3 px-6"><span class="px-2 py-1 rounded-full text-xs font-medium ${tierBadge(u.tier)}">${u.tier}</span></td>
+              <td class="py-3 px-6 text-sm text-dark-300">${u.total_requests}</td>
+              <td class="py-3 px-6 text-sm text-dark-400">${new Date(u.created_at).toLocaleDateString('id-ID')}</td>
+            </tr>
+          `).join('');
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-dark-500">No users yet</td></tr>';
+        }
+      } catch (e) {
+        console.error('Dashboard load failed:', e);
+      }
+    }
+
+    function tierBadge(tier) {
+      const map = { free:'bg-gray-600/30 text-gray-300', basic:'bg-blue-600/30 text-blue-300', premium:'bg-purple-600/30 text-purple-300', enterprise:'bg-yellow-600/30 text-yellow-300' };
+      return map[tier] || map.free;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (authToken) loadDashboard();
+      else {
+        const origHide = hideLoginModal;
+        hideLoginModal = () => { origHide(); loadDashboard(); };
+      }
+    });
+  </script>
+</Layout>

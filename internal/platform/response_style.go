@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 )
 
 // RenderStatusMessage returns a polished, compact progress card for chat platforms.
@@ -18,6 +19,8 @@ func RenderStatusMessage(platform, phase, detail string, elapsed time.Duration) 
 	if detail == "" {
 		detail = "Smara sedang memproses permintaan Anda"
 	}
+	// Defense: status detail might contain DSML from thought summaries
+	detail = llm.SanitizeForUser(detail)
 
 	switch strings.ToLower(platform) {
 	case "discord":
@@ -30,7 +33,10 @@ func RenderStatusMessage(platform, phase, detail string, elapsed time.Duration) 
 // RenderPlatformResponse wraps the final assistant response with a tasteful
 // platform-aware header/footer. It keeps the original content readable while
 // making Telegram, WhatsApp, Discord, and other chat surfaces feel less flat.
+// Also guarantees zero DSML leakage by sanitizing input first.
 func RenderPlatformResponse(platform, content, modelName string, duration time.Duration, tools, inputTokens, outputTokens int) string {
+	// Hardening: sanitize DSML at render boundary so even if upstream missed it, user never sees raw tags
+	content = llm.SanitizeForUser(content)
 	content = strings.TrimSpace(content)
 	if content == "" {
 		content = "Selesai."

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
 
@@ -35,6 +36,8 @@ type PlatformBotConfig struct {
 	SensitiveDenyMessage string   `mapstructure:"sensitive_deny_message" yaml:"sensitive_deny_message"`
 	GuildIDs             []string `mapstructure:"guild_ids" yaml:"guild_ids"`         // Discord only
 	AllowedRoles         []string `mapstructure:"allowed_roles" yaml:"allowed_roles"` // Discord only
+	ReleaseChannelID     string   `mapstructure:"release_channel_id" yaml:"release_channel_id"` // Discord only
+	ReleaseWebhookURL    string   `mapstructure:"release_webhook_url" yaml:"release_webhook_url"` // Discord/webhook notification URL
 	RateLimit            int      `mapstructure:"rate_limit" yaml:"rate_limit"`       // requests per minute
 	RateBurst            int      `mapstructure:"rate_burst" yaml:"rate_burst"`       // burst size
 }
@@ -237,10 +240,16 @@ type RegistryConfig struct {
 }
 
 var (
-	cfg     *SmaraConfig
-	cfgDir  string
-	cfgFile string
+	cfg          *SmaraConfig
+	cfgDir       string
+	cfgFile      string
+	onReloadFuncs []func(*SmaraConfig)
 )
+
+// OnReload registers a callback fired when the config file changes on disk.
+func OnReload(fn func(*SmaraConfig)) {
+	onReloadFuncs = append(onReloadFuncs, fn)
+}
 
 // DefaultConfig returns sensible defaults for MVP.
 func DefaultConfig() *SmaraConfig {
@@ -466,6 +475,19 @@ func Init(configPath string) error {
 	if err := os.MkdirAll(cfg.SyncDir, 0o755); err != nil {
 		return fmt.Errorf("gagal membuat sync dir: %w", err)
 	}
+
+	// Watch config file for external changes and hot-reload.
+	viper.WatchConfig()
+	viper.OnConfigChange(func(e fsnotify.Event) {
+		newCfg := &SmaraConfig{}
+		if err := viper.Unmarshal(newCfg); err != nil {
+			return
+		}
+		cfg = newCfg
+		for _, fn := range onReloadFuncs {
+			fn(newCfg)
+		}
+	})
 
 	// Initialize database and workspace ID
 	return initWorkspaceID()

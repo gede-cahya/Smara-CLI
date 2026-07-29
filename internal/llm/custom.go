@@ -26,6 +26,36 @@ type CustomProvider struct {
 	embDisabled atomic.Int32
 }
 
+// modelAliases maps common short names to valid 9Router model IDs.
+// Users can type "mimo-v2.5" and it auto-resolves to "mimo/mimo-v2.5".
+var modelAliases = map[string]string{
+	"mimo-v2.5":       "mimo/mimo-v2.5",
+	"mimo-v2.5-pro":   "mimo/mimo-v2.5-pro",
+	"mimo-v2-pro":     "mimo/mimo-v2-pro",
+	"mimo-v2-omni":    "mimo/mimo-v2-omni",
+	"mimo-v2-flash":   "mimo/mimo-v2-flash",
+	"mimo-v2":         "mimo/mimo-v2-pro",
+	"deepseek-v4":     "sr/deepseek-v4-pro",
+	"deepseek-v4-pro": "sr/deepseek-v4-pro",
+	"deepseek-v4-flash": "sr/deepseek-v4-flash",
+	"glm-5":           "sr/glm-5",
+	"glm-5.1":         "sr/glm-5.1",
+	"glm-4.7":         "sr/glm-4.7",
+	"minimax-m3":      "sr/minimax-m3",
+	"minimax-m2.7":    "sr/minimax-m2.7",
+	"kimi-k2.5":       "sr/kimi-k2.5",
+	"kimi-k2.6":       "sr/kimi-k2.6",
+	"kimi-k2.7":       "sr/kimi-k2.7",
+	"gpt-5.5":         "sr/gpt-5.5",
+	"gpt-5.4":         "sr/gpt-5.4",
+	"gpt-5.4-mini":    "sr/gpt-5.4-mini",
+	"claude-opus-4.7": "sr/claude-opus-4-7",
+	"claude-sonnet-4.6": "sr/claude-sonnet-4-6",
+	"gemini-2.5-pro":  "sr/gemini-2.5-pro",
+	"gemini-2.5-flash": "sr/gemini-2.5-flash",
+	"qwen3.7-plus":    "sr/qwen3.7-plus",
+}
+
 // NewCustomProvider creates a new custom provider.
 func NewCustomProvider(name, apiKey, model, baseURL string, reasoningEffort ...string) *CustomProvider {
 	if model == "" {
@@ -33,6 +63,10 @@ func NewCustomProvider(name, apiKey, model, baseURL string, reasoningEffort ...s
 	}
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
+	}
+	// Auto-resolve model aliases
+	if resolved, ok := modelAliases[model]; ok {
+		model = resolved
 	}
 	effort := ""
 	if len(reasoningEffort) > 0 {

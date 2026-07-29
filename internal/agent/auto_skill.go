@@ -214,7 +214,10 @@ func (s *Supervisor) generateSkillMeta(trace skill.ExecutionTrace) (string, stri
 
 // llmStripDSML defers to llm.ExtractToolCallsFromContent to remove any
 // stray DSML tags from model output. Returns tool calls (ignored here) and
-// cleaned text.
+// cleaned text. Now uses SanitizeForUser for aggressive residual cleaning.
 func llmStripDSML(content string) ([]llm.ToolCall, string) {
-	return llm.ExtractToolCallsFromContent(content)
+	calls, cleaned := llm.ExtractToolCallsFromContent(content)
+	// Second pass aggressive sanitize to kill truncated/partial leftovers
+	cleaned = llm.SanitizeForUser(cleaned)
+	return calls, cleaned
 }

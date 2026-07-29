@@ -37,19 +37,35 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	modeInfo := agent.GetModeInfo(mode)
 	providerEndpoint := providerHealthEndpoint(s.Cfg)
 	providerOnline, providerError := providerReachable(providerEndpoint)
+	provider, model := s.currentProviderModel()
+
+	// Build 9Router-specific info
+	var router9Info map[string]interface{}
+	if s.Cfg != nil && s.Cfg.Provider == "custom" {
+		router9Info = map[string]interface{}{
+			"base_url":       s.Cfg.CustomBaseURL,
+			"provider_name":  s.Cfg.CustomProviderName,
+			"model":          model,
+			"native_tool":    llm.ModelSupportsNativeToolCall(model),
+			"stream_disabled": s.Cfg.CustomDisableStream,
+		}
+	}
+
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"status":            "running",
 		"mode":              string(mode),
 		"mode_label":        modeInfo.Label,
 		"mode_desc":         modeInfo.Description,
 		"mode_emoji":        modeInfo.Emoji,
-		"provider":          s.Supervisor.GetProvider().Name(),
+		"provider":          provider,
+		"model":             model,
 		"provider_online":   providerOnline,
 		"provider_endpoint": providerEndpoint,
 		"provider_error":    providerError,
 		"workspace":         s.Cfg.ActiveWorkspace,
 		"version":           "1.0.0",
 		"web_sessions":      s.WebSessions != nil,
+		"router9":           router9Info,
 	})
 }
 
@@ -144,7 +160,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				errorResponse(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			jsonResponse(w, http.StatusOK, chatResponse{Response: response})
+			jsonResponse(w, http.StatusOK, chatResponse{Response: llm.SanitizeForUser(response)})
 			return
 		}
 		if response, handled, err := s.tryCreateCustomWorkflowPrompt(req.Message); handled {
@@ -152,7 +168,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				errorResponse(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			jsonResponse(w, http.StatusOK, chatResponse{Response: response})
+			jsonResponse(w, http.StatusOK, chatResponse{Response: llm.SanitizeForUser(response)})
 			return
 		}
 	}
@@ -166,7 +182,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("agent swarm workflow gagal: %v", err))
 			return
 		}
-		jsonResponse(w, http.StatusOK, chatResponse{Response: formatAgentSwarmCompletion(result, 0)})
+		jsonResponse(w, http.StatusOK, chatResponse{Response: llm.SanitizeForUser(formatAgentSwarmCompletion(result, 0))})
 		return
 	}
 	if orchestration.ShouldAutoParallelOrchestrate(req.Message, requestMode) {
@@ -176,7 +192,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("auto parallel orchestration gagal: %v", err))
 			return
 		}
-		jsonResponse(w, http.StatusOK, chatResponse{Response: formatAutoParallelCompletion(result, 0)})
+		jsonResponse(w, http.StatusOK, chatResponse{Response: llm.SanitizeForUser(formatAutoParallelCompletion(result, 0))})
 		return
 	}
 	result, err := s.Supervisor.ProcessPrompt(ctx, req.Message)
@@ -184,7 +200,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusOK, chatResponse{Response: s.rewriteGeneratedImageLinks(result.Response)})
+	jsonResponse(w, http.StatusOK, chatResponse{Response: s.rewriteGeneratedImageLinks(llm.SanitizeForUser(result.Response))})
 }
 
 func (s *Server) handleGeneratedImage(w http.ResponseWriter, r *http.Request) {
@@ -498,6 +514,28 @@ func promptResultWSStats(result *agent.PromptResult, provider, model string) *ws
 
 func (s *Server) chatWSMessage(sessionID, payload, requestPrompt string, result *agent.PromptResult) wsMessage {
 	provider, model := s.currentProviderModel()
+	// Prefer the per-session model so the label matches what that specific
+	// session's supervisor actually used. The global providerCfg and main
+	// supervisor can lag behind after a model switch, causing a stale/wrong
+	// model label (e.g. showing "kimi" when the session actually used "glm-5.2").
+	if s.WebSessions != nil && sessionID != "" {
+		if p, m, ok := s.WebSessions.SessionModelInfo(sessionID); ok {
+			provider = p
+			model = m
+		}
+	}
+	// Fallback to global providerCfg only if per-session lookup failed.
+	if s.WebSessions != nil && (provider == "" || model == "" || provider == "unknown") {
+		cfg := s.WebSessions.ProviderConfig()
+		if cfg.Name != "" && provider == "unknown" {
+			provider = cfg.Name
+		}
+		if cfg.Model != "" && model == "" {
+			model = cfg.Model
+		}
+	}
+	// FINAL sanitization boundary — no DSML tags should ever reach the WS client
+	payload = llm.SanitizeForUser(payload)
 	return wsMessage{
 		Type:          "chat",
 		SessionID:     sessionID,
@@ -635,6 +673,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 				return
 			}
 			_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
+			s.recordSimpleUsageEvent("workflow", msg.Payload, response)
 			return
 		}
 		if response, handled, err := s.tryCreateCustomWorkflowPrompt(msg.Payload); handled {
@@ -644,6 +683,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 				return
 			}
 			_ = session.WriteJSON(wsMessage{Type: "chat", Payload: response, RequestPrompt: msg.Payload})
+			s.recordSimpleUsageEvent("workflow", msg.Payload, response)
 			return
 		}
 	}
@@ -660,6 +700,7 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			summary = "Workflow selesai tanpa ringkasan tambahan."
 		}
 		_ = session.WriteJSON(wsMessage{Type: "chat", Payload: fmt.Sprintf("✅ Auto parallel orchestration selesai\n\n%s\nProject: %s", summary, result.ProjectPath), RequestPrompt: msg.Payload})
+		s.recordSimpleUsageEvent("parallel", msg.Payload, summary)
 		return
 	}
 
@@ -705,7 +746,8 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 	if s.Cfg != nil {
 		path := metrics.DefaultAnalyticsPath(s.Cfg.DBPath)
 		provider, model := s.currentProviderModel()
-		_ = metrics.AppendUsageEvent(path, metrics.UsageEvent{
+		log.Printf("[analytics] recording: provider=%s model=%s in=%d out=%d total=%d", provider, model, result.InputTokens, result.OutputTokens, result.TotalTokens)
+		if err := metrics.AppendUsageEvent(path, metrics.UsageEvent{
 			Timestamp:    time.Now(),
 			Provider:     provider,
 			Model:        model,
@@ -717,7 +759,41 @@ func (s *Server) handleWSChat(session *ChatSession, msg wsMessage) {
 			CostUSD:      metrics.EstimateCost(provider, model, int64(result.InputTokens), int64(result.OutputTokens)),
 			DurationMs:   result.Duration.Milliseconds(),
 			Workspace:    s.Cfg.ActiveWorkspace,
-		})
+		}); err != nil {
+			log.Printf("[analytics] FAILED to record: %v", err)
+		} else {
+			log.Printf("[analytics] recorded OK to %s", path)
+		}
+	} else {
+		log.Printf("[analytics] SKIPPED: s.Cfg is nil")
+	}
+}
+
+// recordSimpleUsageEvent records a basic analytics event for non-ProcessPrompt
+// paths (workflow, parallel orchestration, etc.) using character-based token estimation.
+func (s *Server) recordSimpleUsageEvent(eventType, prompt, response string) {
+	if s.Cfg == nil {
+		return
+	}
+	path := metrics.DefaultAnalyticsPath(s.Cfg.DBPath)
+	provider, model := s.currentProviderModel()
+	inputTokens := len(prompt) / 4
+	outputTokens := len(response) / 4
+	log.Printf("[analytics] recording %s: provider=%s model=%s in=%d out=%d", eventType, provider, model, inputTokens, outputTokens)
+	if err := metrics.AppendUsageEvent(path, metrics.UsageEvent{
+		Timestamp:    time.Now(),
+		Provider:     provider,
+		Model:        model,
+		PromptCount:  1,
+		RequestCount: 1,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  inputTokens + outputTokens,
+		CostUSD:      metrics.EstimateCost(provider, model, int64(inputTokens), int64(outputTokens)),
+		DurationMs:   0,
+		Workspace:    s.Cfg.ActiveWorkspace,
+	}); err != nil {
+		log.Printf("[analytics] FAILED to record %s: %v", eventType, err)
 	}
 }
 
@@ -2001,10 +2077,112 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		jsonResponse(w, http.StatusOK, map[string]string{"status": "updated"})
+
+		// When model-related config changes, apply immediately to the running supervisor
+		// AND to the web session manager so active/new web sessions pick up the new model.
+		if s.Supervisor != nil {
+			switch req.Key {
+			case "model", "custom_model":
+				provider := s.Cfg.Provider
+				if provider == "" {
+					provider = "custom"
+				}
+				log.Printf("[config] model changed to %s (provider=%s), applying immediately", valStr, provider)
+				if err := s.Supervisor.SetModel(provider, valStr); err != nil {
+					log.Printf("[config] failed to apply model change: %v", err)
+				}
+				if s.WebSessions != nil {
+					s.WebSessions.UpdateProviderConfig(llm.ProviderConfig{
+						Name:            provider,
+						Model:           valStr,
+						Host:            s.Cfg.CustomBaseURL,
+						APIKey:          s.Cfg.CustomAPIKey,
+						ReasoningEffort: s.Cfg.ReasoningEffort,
+					})
+				}
+			case "provider":
+				model := s.Cfg.Model
+				if valStr == "custom" {
+					model = s.Cfg.CustomModel
+				}
+				log.Printf("[config] provider changed to %s (model=%s), applying immediately", valStr, model)
+				if err := s.Supervisor.SetModel(valStr, model); err != nil {
+					log.Printf("[config] failed to apply provider change: %v", err)
+				}
+				if s.WebSessions != nil {
+					s.WebSessions.UpdateProviderConfig(llm.ProviderConfig{
+						Name:            valStr,
+						Model:           model,
+						Host:            s.Cfg.CustomBaseURL,
+						APIKey:          s.Cfg.CustomAPIKey,
+						ReasoningEffort: s.Cfg.ReasoningEffort,
+					})
+				}
+			}
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"ok": true})
 	default:
-		errorResponse(w, http.StatusMethodNotAllowed, "only GET/POST")
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET or POST")
 	}
+}
+
+// --- Static Provider Models ---
+
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+	jsonResponse(w, http.StatusOK, llm.AvailableProviders())
+}
+
+// --- Live 9Router Models ---
+
+func (s *Server) handle9RouterModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, http.StatusMethodNotAllowed, "only GET")
+		return
+	}
+
+	cfg := config.Get()
+	if cfg == nil {
+		errorResponse(w, http.StatusInternalServerError, "config not loaded")
+		return
+	}
+
+	baseURL := cfg.CustomBaseURL
+	apiKey := cfg.CustomAPIKey
+	if baseURL == "" || apiKey == "" {
+		// Return empty list if custom provider not configured
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"models": []string{}})
+		return
+	}
+
+	// Call 9Router /v1/models endpoint
+	modelsURL := strings.TrimRight(baseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, modelsURL, nil)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		errorResponse(w, http.StatusBadGateway, "gagal menghubungi 9router: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Forward the response as-is
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
 }
 
 // --- MCP Status ---
@@ -2044,11 +2222,14 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		days = 30
 	}
 	path := metrics.DefaultAnalyticsPath(s.Cfg.DBPath)
+	log.Printf("[metrics] reading from %s (days=%d)", path, days)
 	summary, err := metrics.ReadAnalyticsSummary(path, s.Cfg.DBPath, days)
 	if err != nil {
+		log.Printf("[metrics] error: %v", err)
 		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("[metrics] OK: prompts=%d tokens=%d models=%d daily=%d", summary.TotalPrompts, summary.TotalTokens, len(summary.Models), len(summary.Daily))
 	jsonResponse(w, http.StatusOK, summary)
 }
 

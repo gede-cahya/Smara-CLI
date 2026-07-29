@@ -1,25 +1,35 @@
 package llm
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
+	"time"
 )
+
+var dsmlIDSeq atomic.Int64
 
 // pipe-like chars that models may use instead of ASCII |
 var pipeLike = []rune{'｜', '┃', '│', '║', '┆', '┇', '┊', '┋'}
 
+var pipeLikeFast = func() map[rune]struct{} {
+	m := make(map[rune]struct{}, len(pipeLike))
+	for _, r := range pipeLike {
+		m[r] = struct{}{}
+	}
+	return m
+}()
+
 // normalizePipes replaces all pipe-like Unicode chars with ASCII |.
 func normalizePipes(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { _, ok := pipeLikeFast[r]; return ok }) {
+		return s
+	}
 	var b strings.Builder
+	b.Grow(len(s))
 	for _, r := range s {
-		isPipe := false
-		for _, p := range pipeLike {
-			if r == p {
-				isPipe = true
-				break
-			}
-		}
-		if isPipe {
+		if _, ok := pipeLikeFast[r]; ok {
 			b.WriteRune('|')
 		} else {
 			b.WriteRune(r)
@@ -30,19 +40,32 @@ func normalizePipes(s string) string {
 
 var (
 	// Matches any messy variation of DSML tags (e.g. "< | | DSML | | tag>" or "<| DSML |tag>")
+	// Also handles "<｜｜DSML｜｜tool_calls>" with fullwidth pipes normalized.
 	dsmlTagNormalizeRe = regexp.MustCompile(`(?s)</?\s*\|(?:\s*\|)*\s*DSML\s*\|(?:\s*\|)*\s*([^>]*?)>`)
 
 	// Regexes for normalized format <|DSML|...>
 	dsmlInvokeRe  = regexp.MustCompile(`<\|DSML\|invoke\s+name="([^"]+)"\s*>`)
 	dsmlParamRe   = regexp.MustCompile(`<\|DSML\|parameter\s+name="([^"]+)"(?:\s+string="true")?\s*>(.*?)</\|DSML\|parameter\s*>`)
-	dsmlOpenTagRe = regexp.MustCompile(`<\|DSML\|[^>]*>`)
+	dsmlOpenTagRe = regexp.MustCompile(`</?\|DSML\|[^>]*>`)
+	// Aggressive residual cleaner for partial/truncated DSML leftovers at end of answer
+	// e.g. "<|DSML|invoke name="skill_run">" without closing tag.
+	dsmlResidualRe = regexp.MustCompile(`(?s)</?\|DSML\|.*`)
+	// Plain leak: literal "skill_run auto-xxx" or "skill_run" told without DSML wrapper but
+	// from the supervisor fallback summary that accidentally includes tool names
+	// — we DON'T strip plain tool names in prose, only DSML tags. However some
+	// models hallucinate DSML-like backtick code blocks:
+	//   <｜｜DSML｜｜invoke name="skill_run"> <｜｜DSML｜｜parameter ...>auto-cek-status-vps</...>
+	// which normal re already handles. The residual re catches leftovers.
 )
 
 // normalizeDSMLTags converts any variation of DSML tags to standard <|DSML|...> format.
 func normalizeDSMLTags(content string) string {
 	// First replace any Unicode pipe-like chars with ASCII pipe
 	content = normalizePipes(content)
-
+	// Fast path: no DSML string at all
+	if !strings.Contains(content, "DSML") {
+		return content
+	}
 	return dsmlTagNormalizeRe.ReplaceAllStringFunc(content, func(match string) string {
 		submatches := dsmlTagNormalizeRe.FindStringSubmatch(match)
 		if len(submatches) < 2 {
@@ -201,51 +224,106 @@ func StripThinkTags(content string) (cleaned string, thinking string) {
 	return stripThinkingTags(content)
 }
 
+// dsmlInvokeEndRe finds </|DSML|invoke> or any closing variation
+var dsmlInvokeEndRe = regexp.MustCompile(`(?i)</\|DSML\|invoke[^>]*>`)
+
 func ExtractToolCallsFromContent(content string) ([]ToolCall, string) {
 	// Normalize messy tag formats from models like deepseek-v4-flash
 	normalized := normalizeDSMLTags(content)
 
 	if !strings.Contains(normalized, "<|DSML|") {
-		return nil, content
+		if !strings.Contains(content, "DSML") {
+			return nil, content
+		}
+		// DSML substring but no normalized tag (partial/truncated)
+		stripped := dsmlOpenTagRe.ReplaceAllString(normalized, "")
+		stripped = dsmlResidualRe.ReplaceAllString(stripped, "")
+		stripped = strings.TrimSpace(stripped)
+		return nil, stripped
 	}
 
-	cleaned := normalized
 	var toolCalls []ToolCall
 
-	// Find all invoke blocks with submatch indices
-	invokeMatches := dsmlInvokeRe.FindAllStringSubmatchIndex(normalized, -1)
-	for i, inv := range invokeMatches {
-		funcName := normalized[inv[2]:inv[3]] // submatch group 1
+	// Use index-based removal to avoid Replace string collisions when blocks repeat
+	type removal struct{ s, e int }
+	var removals []removal
 
-		// Determine the end of this invoke block
+	invokeMatches := dsmlInvokeRe.FindAllStringSubmatchIndex(normalized, -1)
+	for _, inv := range invokeMatches {
+		funcName := normalized[inv[2]:inv[3]]
+
+		// End of this invoke = next invoke start, or </|DSML|invoke> after this one, or end
+		start := inv[0]
+		// look for explicit close tag </|DSML|invoke> after start
 		end := len(normalized)
-		if i+1 < len(invokeMatches) {
-			end = invokeMatches[i+1][0]
+		if loc := dsmlInvokeEndRe.FindStringIndex(normalized[start:]); loc != nil {
+			end = start + loc[1]
+		}
+		// but don't span past next invoke opening if close tag missing
+		// (find next invoke start after current start)
+		for _, next := range invokeMatches {
+			if next[0] > start && next[0] < end {
+				end = next[0]
+				break
+			}
 		}
 
-		block := normalized[inv[0]:end]
+		block := normalized[start:end]
 		args := make(map[string]interface{})
-
-		paramMatches := dsmlParamRe.FindAllStringSubmatch(block, -1)
-		for _, pm := range paramMatches {
+		for _, pm := range dsmlParamRe.FindAllStringSubmatch(block, -1) {
 			if len(pm) >= 3 {
 				args[pm[1]] = pm[2]
 			}
 		}
 
+		seq := dsmlIDSeq.Add(1)
 		toolCalls = append(toolCalls, ToolCall{
-			ID:       "dsml_" + funcName + "_" + string(rune('a'+i)),
+			ID:       fmt.Sprintf("dsml_%s_%d_%d", funcName, time.Now().UnixNano(), seq),
 			Function: funcName,
 			Args:     args,
 		})
-
-		// Remove this DSML block from cleaned content
-		cleaned = strings.Replace(cleaned, block, "", 1)
+		removals = append(removals, removal{start, end})
 	}
 
-	// Strip any remaining dangling DSML tags
+	// Build cleaned by skipping removed ranges (reverse order to keep indices stable via builder)
+	if len(removals) == 0 {
+		// No invoke matched but we have DSML tags — strip all
+		cleaned := dsmlOpenTagRe.ReplaceAllString(normalized, "")
+		cleaned = dsmlResidualRe.ReplaceAllString(cleaned, "")
+		return toolCalls, strings.TrimSpace(cleaned)
+	}
+
+	var b strings.Builder
+	prev := 0
+	for _, r := range removals {
+		if r.s > prev {
+			b.WriteString(normalized[prev:r.s])
+		}
+		prev = r.e
+	}
+	b.WriteString(normalized[prev:])
+	cleaned := b.String()
 	cleaned = dsmlOpenTagRe.ReplaceAllString(cleaned, "")
+	cleaned = dsmlResidualRe.ReplaceAllString(cleaned, "")
 	cleaned = strings.TrimSpace(cleaned)
 
 	return toolCalls, cleaned
+}
+
+// SanitizeForUser is the final defense-in-depth sanitizer that must be called
+// before any LLM output is shown to user on ANY surface (web, telegram, discord, cli).
+// It guarantees zero DSML tag leaks, handles partial/truncated tags, and also
+// removes the specific leak reported: "<|DSML|invoke name="skill_run"> ... </|DSML|invoke>"
+// appearing as raw text in final answers.
+func SanitizeForUser(text string) string {
+	if text == "" {
+		return text
+	}
+	_, cleaned := ExtractToolCallsFromContent(text)
+	// Double-clean aggressive: some models emit nested/recursive DSML
+	if strings.Contains(cleaned, "<|DSML|") || strings.Contains(cleaned, "DSML") && strings.Contains(cleaned, "<") {
+		cleaned = dsmlResidualRe.ReplaceAllString(cleaned, "")
+		cleaned = dsmlOpenTagRe.ReplaceAllString(cleaned, "")
+	}
+	return strings.TrimSpace(cleaned)
 }

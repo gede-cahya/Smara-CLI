@@ -1,0 +1,159 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Settings" active="settings">
+  <!-- API Info -->
+  <div class="bg-dark-900 rounded-xl border border-dark-800 p-6 mb-6">
+    <h3 class="text-lg font-semibold text-dark-100 mb-4">📡 API Information</h3>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-dark-800 rounded-lg p-4">
+        <p class="text-xs text-dark-400 mb-1">Base URL</p>
+        <div class="flex items-center gap-2">
+          <code id="api-url" class="text-primary-400 font-mono text-sm">http://129.226.222.242:8090/v1</code>
+          <button onclick="copyText('api-url')" class="text-dark-400 hover:text-dark-200 text-xs px-2 py-1 bg-dark-700 rounded">Copy</button>
+        </div>
+      </div>
+      <div class="bg-dark-800 rounded-lg p-4">
+        <p class="text-xs text-dark-400 mb-1">Admin API Key</p>
+        <div class="flex items-center gap-2">
+          <code id="admin-key" class="text-yellow-400 font-mono text-sm">sk-ead94e...9e41b5</code>
+          <button onclick="copyText('admin-key')" class="text-dark-400 hover:text-dark-200 text-xs px-2 py-1 bg-dark-700 rounded">Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tier Config -->
+  <div class="bg-dark-900 rounded-xl border border-dark-800 p-6 mb-6">
+    <h3 class="text-lg font-semibold text-dark-100 mb-4">🏷️ Tier Configuration</h3>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="tier-config">
+      <div class="bg-dark-800 rounded-lg p-4 border border-dark-700">
+        <h4 class="font-semibold text-gray-300 mb-3">Free</h4>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-dark-400">Price</span><span class="text-dark-200">Rp 0</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Daily Limit</span><span class="text-dark-200">20</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Models</span><span class="text-dark-200">2</span></div>
+        </div>
+      </div>
+      <div class="bg-dark-800 rounded-lg p-4 border border-blue-800">
+        <h4 class="font-semibold text-blue-300 mb-3">Basic</h4>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-dark-400">Price</span><span class="text-blue-200">Rp 49.000</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Daily Limit</span><span class="text-blue-200">200</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Models</span><span class="text-blue-200">4</span></div>
+        </div>
+      </div>
+      <div class="bg-dark-800 rounded-lg p-4 border border-purple-800">
+        <h4 class="font-semibold text-purple-300 mb-3">Premium</h4>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-dark-400">Price</span><span class="text-purple-200">Rp 149.000</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Daily Limit</span><span class="text-purple-200">1000</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Models</span><span class="text-purple-200">6</span></div>
+        </div>
+      </div>
+      <div class="bg-dark-800 rounded-lg p-4 border border-yellow-800">
+        <h4 class="font-semibold text-yellow-300 mb-3">Enterprise</h4>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-dark-400">Price</span><span class="text-yellow-200">Rp 499.000</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Daily Limit</span><span class="text-yellow-200">Unlimited</span></div>
+          <div class="flex justify-between"><span class="text-dark-400">Models</span><span class="text-yellow-200">All</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Service Status -->
+  <div class="bg-dark-900 rounded-xl border border-dark-800 p-6 mb-6">
+    <h3 class="text-lg font-semibold text-dark-100 mb-4">🔧 Service Status</h3>
+    <div class="space-y-3" id="services">
+      <div class="flex items-center justify-between bg-dark-800 rounded-lg p-3">
+        <div class="flex items-center gap-3">
+          <span id="svc-bot" class="w-3 h-3 rounded-full bg-gray-500"></span>
+          <span class="text-dark-200">Telegram Bot (ai-seller-bot)</span>
+        </div>
+        <span class="text-xs text-dark-400 font-mono">port: webhook</span>
+      </div>
+      <div class="flex items-center justify-between bg-dark-800 rounded-lg p-3">
+        <div class="flex items-center gap-3">
+          <span id="svc-api" class="w-3 h-3 rounded-full bg-gray-500"></span>
+          <span class="text-dark-200">REST API (ai-seller-api)</span>
+        </div>
+        <span class="text-xs text-dark-400 font-mono">port: 8090</span>
+      </div>
+      <div class="flex items-center justify-between bg-dark-800 rounded-lg p-3">
+        <div class="flex items-center gap-3">
+          <span id="svc-9router" class="w-3 h-3 rounded-full bg-gray-500"></span>
+          <span class="text-dark-200">9Router AI Gateway</span>
+        </div>
+        <span class="text-xs text-dark-400 font-mono">port: 20128</span>
+      </div>
+      <div class="flex items-center justify-between bg-dark-800 rounded-lg p-3">
+        <div class="flex items-center gap-3">
+          <span id="svc-db" class="w-3 h-3 rounded-full bg-gray-500"></span>
+          <span class="text-dark-200">Database (SQLite)</span>
+        </div>
+        <span class="text-xs text-dark-400 font-mono">local</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Usage & Limits -->
+  <div class="bg-dark-900 rounded-xl border border-dark-800 p-6">
+    <h3 class="text-lg font-semibold text-dark-100 mb-4">📊 Quick Actions</h3>
+    <div class="flex flex-wrap gap-3">
+      <button onclick="broadcast()" class="px-4 py-2.5 bg-primary-600/20 hover:bg-primary-600/40 text-primary-400 rounded-lg text-sm font-medium transition border border-primary-600/30">📢 Broadcast Message</button>
+      <button onclick="resetDaily()" class="px-4 py-2.5 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 rounded-lg text-sm font-medium transition border border-yellow-600/30">🔄 Reset Daily Limits</button>
+      <button onclick="location.href='http://129.226.222.242:8090/docs'" class="px-4 py-2.5 bg-dark-800 hover:bg-dark-700 text-dark-200 rounded-lg text-sm font-medium transition border border-dark-700">📄 API Docs</button>
+    </div>
+  </div>
+
+  <script is:inline>
+    function copyText(id) {
+      const el = document.getElementById(id);
+      const text = el.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        el.classList.add('text-green-400');
+        setTimeout(() => el.classList.remove('text-green-400'), 1000);
+      });
+    }
+
+    async function checkServices() {
+      // Check API
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        document.getElementById('svc-api').className = `w-3 h-3 rounded-full ${data.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`;
+      } catch { document.getElementById('svc-api').className = 'w-3 h-3 rounded-full bg-red-500'; }
+
+      // Check bot (same server)
+      document.getElementById('svc-bot').className = 'w-3 h-3 rounded-full bg-green-500';
+
+      // Check DB
+      try {
+        const data = await apiGet('/dashboard');
+        document.getElementById('svc-db').className = `w-3 h-3 rounded-full ${data && !data.error ? 'bg-green-500' : 'bg-red-500'}`;
+      } catch { document.getElementById('svc-db').className = 'w-3 h-3 rounded-full bg-red-500'; }
+
+      // 9Router is used by the bot/API
+      document.getElementById('svc-9router').className = 'w-3 h-3 rounded-full bg-green-500';
+    }
+
+    async function broadcast() {
+      const msg = prompt('Enter broadcast message:');
+      if (!msg) return;
+      const res = await apiPost('/broadcast', { message: msg });
+      alert(res.message || res.error || 'Done');
+    }
+
+    async function resetDaily() {
+      if (!confirm('Reset daily limits for all users?')) return;
+      const res = await apiPost('/reset-daily');
+      alert(res.message || res.error || 'Done');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (authToken) checkServices();
+      else { const orig = hideLoginModal; hideLoginModal = () => { orig(); checkServices(); }; }
+    });
+  </script>
+</Layout>

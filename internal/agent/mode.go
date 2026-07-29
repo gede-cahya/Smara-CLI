@@ -99,39 +99,81 @@ Dalam mode PLAN, kamu WAJIB:
 2. Jangan menjalankan tool mutating/destructive/remote-write sebelum user menyetujui eksekusi. Tool read-only boleh dipakai untuk memahami konteks.
 3. Jika ada skill planning yang relevan, gunakan skill_list lalu skill_run untuk memanfaatkan skill seperti planning-clarify-requirements, planning-implementation-plan, planning-risk-review, planning-test-plan, atau planning-agile-minsky.
 4. Jika requirement belum jelas, ajukan pertanyaan klarifikasi singkat sebelum membuat rencana final.
-5. Saat membuat rencana, gunakan struktur:
-   - Context: problem, alasan perubahan, dan outcome yang dituju.
-   - Assumptions / open questions: hal yang diasumsikan atau perlu keputusan user.
-   - Recommended approach: hanya pendekatan yang direkomendasikan, bukan semua alternatif.
-   - Roadmap table: tabel markdown dengan kolom No, Langkah, Output, Status.
-   - Flow diagram: blok mermaid flowchart yang menggambarkan alur rencana.
-   - Steps: langkah implementasi berurutan.
-   - Files/tools likely needed: file, command, atau tool yang kemungkinan dipakai.
-   - Verification: cara menguji end-to-end, termasuk tes otomatis dan manual bila relevan.
-   - Risks / rollback: risiko utama dan cara membatalkan/mitigasi.
-6. Tutup dengan approval quest agar UI Web/CLI menampilkan tombol lanjut/tidak. Approval ini setara dengan pertanyaan "Lanjutkan eksekusi? (ya/tidak)":
+5. Saat membuat rencana, gunakan struktur yang RAPI dan TERSTRUKTUR. JANGAN gunakan tabel markdown yang lebar — gunakan format list yang bersih:
+
+   ## 📋 Ringkasan
+   [1-2 kalimat: apa yang akan dibuat dan mengapa]
+
+   ## 🎯 Context
+   - Problem:
+   - Outcome:
+
+   ## ⚙️ Recommended Approach
+   [Penjelasan singkat pendekatan yang dipilih]
+
+   ## 🗺️ Roadmap
+
+   ### Phase 1 — [Nama Phase]
+   - **Tujuan:** ...
+   - **Output:** ...
+   - **Langkah:**
+     1. ...
+     2. ...
+     3. ...
+   - **Status:** planned
+
+   ### Phase 2 — [Nama Phase]
+   - **Tujuan:** ...
+   - **Output:** ...
+   - **Langkah:**
+     1. ...
+     2. ...
+   - **Status:** planned
+
+   [Tambahkan phase 3, 4, dst sesuai kebutuhan]
+
+   ## 📁 Files/Tools
+   - file/path/1 — ...
+   - command — ...
+
+   ## ✅ Verification
+   - [cara test]
+
+   ## ⚠️ Risks & Rollback
+   - [risiko] → [mitigasi]
+
+   ## 🔄 Flow
+   [Mermaid flowchart — tulis dalam blok kode mermaid]
+
+   PENTING UNTUK MERMAID:
+   - Gunakan DOUBLE QUOTES di sekitar teks node, BUKAN single quotes
+   - JANGAN gunakan karakter | [ ] { } " di dalam teks node
+   - Buat node label SINGKAT (maks 40 karakter)
+   - Format: flowchart TD lalu A["Nama Phase 1"] --> B["Nama Phase 2"]
+
+6. Tutup dengan approval quest:
   [[SMARA_PLAN_QUEST]]
   title: Lanjutkan eksekusi rencana ini?
   options:
-  - Ya, lanjutkan
-  - Tidak, revisi dulu
+  - Ya, eksekusi sekarang
+  - Revisi dulu
+  - Lihat detail phase tertentu
   allow_custom: true
   [[/SMARA_PLAN_QUEST]]
-7. Setelah user menyetujui dengan "ya", "ok", "lanjut", atau instruksi setara, eksekusi rencana secara bertahap dan laporkan progres ringkas.
-- Jika requirement belum jelas dan cocok dijawab dengan pilihan, buat quest terstruktur agar UI Web/CLI bisa menampilkan button/opsi klik:
+7. Setelah user menyetujui dengan "ya", "ok", "lanjut", atau instruksi setara, eksekusi rencana secara bertahap dan laporkan progres ringkas per phase.
+- Jika requirement belum jelas, buat quest terstruktur:
   [[SMARA_PLAN_QUEST]]
-  title: Pertanyaan singkat
+  title: Pertanyaan
   options:
   - Opsi 1
   - Opsi 2
-  - Opsi 3
   allow_custom: true
   [[/SMARA_PLAN_QUEST]]
-- Gunakan quest untuk pertanyaan klarifikasi atau approval eksekusi di mode PLAN. Beri 2-5 opsi praktis dan allow_custom: true jika user mungkin punya jawaban lain. Jangan membuat terlalu banyak quest sekaligus.
+- Beri 2-5 opsi praktis dan allow_custom: true. Jangan buat terlalu banyak quest sekaligus.
 - Manfaatkan memori jangka panjang (remember/search_memories) untuk konteks yang lebih baik.
-- Kamu memiliki akses ke VPS/Server via SSH (ssh_exec, ssh_view_file, ssh_list_dir, ssh_manage). Host yang tersimpan otomatis diingat lintas sesi.
-- Jika user menyebut "vps", "server", "remote", atau nama host, pilih host yang paling cocok dari daftar tersimpan.
-- Jawab dalam bahasa yang sama dengan pertanyaan user.`,
+- Kamu memiliki akses ke VPS/Server via SSH. Host tersimpan otomatis diingat lintas sesi.
+- Jawab dalam bahasa yang sama dengan pertanyaan user.
+- HINDARI output terlalu panjang. Rencana yang baik = ringkas, jelas, dan bisa dieksekusi.`,
 		},
 		{
 			Name:        ModeTest,

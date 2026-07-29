@@ -75,3 +75,40 @@ func TestSanitizeDSML_AsciiPipes(t *testing.T) {
 	assert.Contains(t, cleaned, "Selesai cek log.")
 	assert.NotContains(t, cleaned, "DSML")
 }
+
+// TestSanitizeDSML_SkillRunLeak regresses the user-reported bug where
+// "tadi response kamu <|DSML|invoke name="skill_run"> <|DSML|parameter name="skill_name">auto-cek-status-vps</|DSML|parameter> </|DSML|invoke>Skill tolong di fix"
+// leaked raw DSML to Telegram/Web/Discord surfaces.
+func TestSanitizeDSML_SkillRunLeak(t *testing.T) {
+	cases := []string{
+		`Berhasil! Berikut status VPS kamu:
+
+| Metrik | Status |
+|---|---|
+| **Uptime** | 21 hari |
+
+<|DSML|invoke name="skill_run"> <|DSML|parameter name="skill_name">auto-cek-status-vps</|DSML|parameter> </|DSML|invoke>Skill  tolong di fix dulu di smara web, smara adapter telegram , discord`,
+		"Selesai cek.\n\n<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name=\"skill_run\">\n<｜｜DSML｜｜parameter name=\"skill_name\" string=\"true\">auto-cek-status-vps</｜｜DSML｜｜parameter>\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>",
+		"PM2 sebenarnya jalan! Hanya issue PATH di script. Biar saya perbaiki. <|DSML|invoke name=\"skill_run\">",
+		"Oke, saya lanjutkan eksekusi, tapi harus saya hentikan di tengah karena batas iterasi tool tercapai.\n\ntadi response kamu <|DSML|invoke name=\"skill_run\"> <|DSML|parameter name=\"skill_name\">auto-cek-status-vps</|DSML|parameter> </|DSML|invoke>Skill  tolong di fix dulu di smara web, smara adapter telegram , discord",
+	}
+	for i, raw := range cases {
+		cleaned := sanitizeDSML(raw)
+		assert.NotContains(t, cleaned, "DSML", "case %d should not contain DSML", i+1)
+		assert.NotContains(t, cleaned, "invoke name=", "case %d should not contain invoke", i+1)
+		assert.NotContains(t, cleaned, "｜", "case %d should not contain fullwidth pipe", i+1)
+		// skill_name inside DSML must be stripped; plain mention of skill name in user prose is ok only if DSML was present — here DSML present so must strip
+		if strings.Contains(raw, "<|DSML|") || strings.Contains(raw, "｜｜DSML｜｜") {
+			assert.NotContains(t, cleaned, "auto-cek-status-vps", "case %d skill_name leak", i+1)
+		}
+	}
+}
+
+// TestSanitizeDSML_PartialTruncated ensures truncated DSML at end of answer
+// (common in max-iterations fallback) is removed.
+func TestSanitizeDSML_PartialTruncated(t *testing.T) {
+	raw := "Jawaban setengah jadi <|DSML|invoke name=\"skill_run\"> <|DSML|parameter name=\"skill_name\">"
+	cleaned := sanitizeDSML(raw)
+	assert.NotContains(t, cleaned, "DSML")
+	assert.Contains(t, cleaned, "Jawaban setengah jadi")
+}

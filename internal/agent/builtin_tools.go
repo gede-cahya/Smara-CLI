@@ -94,6 +94,7 @@ var toolGroup = map[string]string{
 	"get_diagnostics":          "core",
 	"get_git_status":           "core",
 	"create_terminal":          "core",
+	"ask_user":                 "core",
 	"kill_process":             "core",
 	"git_diff":                 "core",
 	"git_commit":               "core",
@@ -1564,6 +1565,27 @@ func allBuiltinTools() []llm.ToolFunction {
 				"required": []string{"path"},
 			},
 		},
+		{
+			Name:        "ask_user",
+			Description: "Ajukan pertanyaan klarifikasi kepada user. Gunakan tool ini ketika kamu butuh informasi tambahan dari user sebelum melanjutkan (misal: pilih opsi, konfirmasi, atau berikan detail). Jangan gunakan untuk pertanyaan retoris.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"question": map[string]interface{}{
+						"type":        "string",
+						"description": "Pertanyaan yang ingin diajukan ke user",
+					},
+					"options": map[string]interface{}{
+						"type":        "array",
+						"description": "Daftar opsi pilihan untuk user (opsional, jika ada)",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+				"required": []string{"question"},
+			},
+		},
 	}
 }
 
@@ -1711,6 +1733,29 @@ func ExecuteBuiltinToolWithContext(ctx context.Context, toolName string, args ma
 			logCallback("Assistant", message)
 		}
 		return message, nil
+	case "ask_user":
+		question, _ := args["question"].(string)
+		if question == "" {
+			return "", fmt.Errorf("argumen 'question' wajib diisi")
+		}
+		// Format the question with options if provided
+		var sb strings.Builder
+		sb.WriteString(question)
+		if options, ok := args["options"].([]interface{}); ok && len(options) > 0 {
+			sb.WriteString("\n\nPilihan:")
+			for i, opt := range options {
+				if s, ok := opt.(string); ok {
+					fmt.Fprintf(&sb, "\n%d. %s", i+1, s)
+				}
+			}
+		}
+		// In web/CLI mode, emit the question as a message to the user
+		if logCallback != nil {
+			logCallback("Assistant", sb.String())
+		}
+		// Return the formatted question as the tool result so the LLM
+		// can see what was asked and wait for user response
+		return fmt.Sprintf("Pertanyaan dikirim ke user: %s\nMenunggu jawaban user...", sb.String()), nil
 	case "request_iteration_budget":
 		progress("tool_progress", "Meminta tambahan budget iterasi.", nil)
 		ctrl := getActiveBudgetController()

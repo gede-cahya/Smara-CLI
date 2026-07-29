@@ -115,6 +115,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/workspaces/create", s.handleWorkspaceCreate)
 	mux.HandleFunc("/api/categories", s.handleCategories)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/models", s.handleModels)
+	mux.HandleFunc("/api/9router/models", s.handle9RouterModels)
 	mux.HandleFunc("/api/orchestration/status", s.handleOrchestrationStatus)
 	mux.HandleFunc("/api/orchestration/events", s.handleOrchestrationEvents)
 	mux.HandleFunc("/api/orchestration/config", s.handleOrchestrationConfig)
@@ -183,6 +185,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/remote-desktop/devices/", s.handleRemoteDesktopDeviceByID)
 	mux.HandleFunc("/api/remote-desktop/proxy", s.handleRemoteDesktopProxy)
 	mux.HandleFunc("/api/remote-desktop/screenshot", s.handleRemoteDesktopScreenshot)
+	mux.HandleFunc("/api/webhooks/github", s.handleGitHubWebhook)
+	mux.HandleFunc("/api/webhooks/discord-release", s.handleGitHubWebhook)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/", s.handleStatic)
 

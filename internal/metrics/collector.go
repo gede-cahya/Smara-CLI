@@ -428,14 +428,16 @@ func EstimateCost(provider, model string, inputTokens, outputTokens int64) float
 		}
 		return cost(3.0, 15.0)
 	case "custom":
-		// Custom is an OpenAI-compatible paid proxy. It may expose model names like
-		// custom/gpt-55, gpt-5.5, deepseek, minimax, etc. Do not return zero just
-		// because the exact upstream model is unknown; use conservative paid defaults.
+		// Custom is an OpenAI-compatible paid proxy (9Router). Model names
+		// may have provider prefixes like cx/, sr/, bai/, tr/, tk/, etc.
+		// Match based on the underlying model name after the last slash.
 		switch {
 		case strings.Contains(model, "free") || strings.Contains(model, "local"):
 			return 0
 		case strings.Contains(model, "haiku"):
 			return cost(0.25, 1.25)
+		case strings.Contains(model, "opus") || strings.Contains(model, "fable"):
+			return cost(15.0, 75.0)
 		case strings.Contains(model, "sonnet") || strings.Contains(model, "claude"):
 			return cost(3.0, 15.0)
 		case strings.Contains(model, "gpt-5.5"):
@@ -458,14 +460,55 @@ func EstimateCost(provider, model string, inputTokens, outputTokens int64) float
 			return cost(0.40, 1.60)
 		case strings.Contains(model, "gpt-4.1"):
 			return cost(2.0, 8.0)
-		case strings.Contains(model, "deepseek"):
-			return cost(0.55, 2.19)
-		case strings.Contains(model, "minimax"):
-			return cost(0.20, 1.10)
 		case strings.Contains(model, "gpt"):
 			return cost(3.0, 15.0)
+		case strings.Contains(model, "gemini-3.1-pro") || strings.Contains(model, "gemini-3.5"):
+			return cost(2.50, 15.0)
+		case strings.Contains(model, "gemini-3-flash"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "gemini-2.5-pro"):
+			return cost(1.25, 10.0)
+		case strings.Contains(model, "gemini-2.5-flash"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "gemini"):
+			return cost(0.50, 2.00)
+		case strings.Contains(model, "deepseek-r1") || strings.Contains(model, "deepseek-v4"):
+			return cost(0.55, 2.19)
+		case strings.Contains(model, "deepseek"):
+			return cost(0.27, 1.10)
+		case strings.Contains(model, "minimax-m3"):
+			return cost(0.30, 1.50)
+		case strings.Contains(model, "minimax-m2"):
+			return cost(0.20, 1.10)
+		case strings.Contains(model, "minimax"):
+			return cost(0.10, 0.50)
+		case strings.Contains(model, "glm-5"):
+			return cost(0.50, 2.00)
+		case strings.Contains(model, "glm-4"):
+			return cost(0.10, 0.40)
+		case strings.Contains(model, "glm"):
+			return cost(0.20, 0.80)
+		case strings.Contains(model, "kimi"):
+			return cost(0.30, 1.20)
+		case strings.Contains(model, "qwen3.7") || strings.Contains(model, "qwen3-coder"):
+			return cost(0.50, 2.00)
+		case strings.Contains(model, "qwen3"):
+			return cost(0.20, 0.80)
+		case strings.Contains(model, "qwen"):
+			return cost(0.10, 0.40)
+		case strings.Contains(model, "mimo"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "grok"):
+			return cost(3.0, 15.0)
+		case strings.Contains(model, "mistral"):
+			return cost(0.25, 1.00)
+		case strings.Contains(model, "nemotron"):
+			return cost(0.15, 0.60)
+		case strings.Contains(model, "command"):
+			return cost(0.15, 0.60)
 		}
-		return cost(3.0, 15.0)
+		// Conservative default for unknown 9Router models
+		return cost(0.50, 2.00)
 	}
 	return 0
 }

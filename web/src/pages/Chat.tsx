@@ -1102,68 +1102,65 @@ function RoadmapProgressPanel({
   const activeIndex = focusIndex !== null && focusIndex < insight.steps.length ? focusIndex : summary.running
 
   return (
-    <div className="rounded-xl border border-[#31421f]/50 bg-[#1a2314]/62">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/45 px-3 py-2">
-        <div className="flex items-center gap-2 text-xs font-semibold text-lime-100">
+    <div className="rounded-2xl border border-smara-300/15 bg-gradient-to-br from-[#20291a]/85 to-[#1a2314]/85 shadow-lg shadow-lime-950/20">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/40 px-4 py-2.5">
+        <div className="flex items-center gap-2 text-xs font-semibold text-gray-100">
           <CheckCircle2 className="h-3.5 w-3.5 text-smara-300" />
-          Progress roadmap
+          Roadmap Progress
         </div>
-        <span className="rounded-full bg-[#26331d]/80 px-2 py-0.5 text-[10px] text-neutral-300">
-          {summary.done}/{summary.total} done
-        </span>
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-800">
+            <div className="h-full rounded-full bg-gradient-to-r from-smara-600 to-smara-300 transition-all" style={{ width: `${summary.total > 0 ? Math.round((summary.done / summary.total) * 100) : 0}%` }} />
+          </div>
+          <span className="text-[10px] font-medium text-smara-300">{summary.done}/{summary.total}</span>
+        </div>
       </div>
-      <div className="max-h-64 overflow-y-auto p-2">
+      <div className="max-h-72 overflow-y-auto p-2 space-y-1">
         {insight.steps.map((step, idx) => {
           const state = summary.states[idx]
           const focused = idx === activeIndex
           const phase = insight.phases?.[idx]
           const expanded = openPhase === idx
+          const isDone = state === 'done'
+          const isRunning = state === 'running'
           return (
-            <div
-              key={`${idx}-${step}`}
-              className={`rounded-lg text-xs ${
-                focused ? 'bg-smara-300/10 ring-1 ring-smara-300/20' : 'hover:bg-[#20291a]/72'
-              }`}
-            >
+            <div key={`${idx}-${step}`} className={`rounded-xl transition-all ${
+              focused ? 'bg-smara-300/10 ring-1 ring-smara-300/20' : isRunning ? 'bg-smara-300/5' : 'hover:bg-[#20291a]/60'
+            }`}>
               <button
                 onClick={() => setOpenPhase(expanded ? null : idx)}
-                className="grid w-full grid-cols-[26px_1fr_auto_18px] items-start gap-2 px-2 py-2 text-left"
+                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
               >
-                <span className="font-mono text-[10px] text-neutral-500">{phase?.phase || idx + 1}</span>
-                <div className="min-w-0">
-                  <div className={focused ? 'text-gray-100' : 'text-gray-300'}>{phase?.title || step}</div>
-                  {phase?.output && <div className="mt-0.5 truncate text-[10px] text-neutral-500">{phase.output}</div>}
-                  {focused && (
-                    <div className="mt-1 text-[10px] text-smara-200">
-                      {state === 'running' ? 'Sedang diproses sekarang.' : focusIndex === idx ? 'Phase ini sedang diminta untuk dicek.' : 'Phase aktif roadmap.'}
-                    </div>
-                  )}
-                </div>
-                <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] ${
-                  state === 'done' ? 'bg-emerald-400/10 text-emerald-300'
-                  : state === 'running' ? 'bg-smara-500/10 text-smara-200'
-                  : focused ? 'bg-yellow-500/10 text-yellow-200'
-                  : 'bg-[#26331d]/80 text-neutral-400'
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-mono font-bold ${
+                  isDone ? 'bg-emerald-400/15 text-emerald-300' : isRunning ? 'bg-smara-300/20 text-smara-200' : 'bg-[#26331d]/70 text-neutral-500'
                 }`}>
-                  {state === 'done' ? <CheckCircle2 className="h-3 w-3" /> : state === 'running' ? <Loader2 className="h-3 w-3 animate-spin" /> : focused ? <AlertCircle className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
-                  {state === 'done' ? 'done' : state === 'running' ? 'running' : focused ? 'focus' : 'planned'}
+                  {isDone ? <CheckCircle2 className="h-3 w-3" /> : isRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : phase?.phase || idx + 1}
                 </span>
-                {expanded ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 text-neutral-500" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 text-neutral-500" />}
+                <div className="flex-1 min-w-0">
+                  <div className={`text-xs font-medium ${isDone ? 'text-gray-400' : isRunning ? 'text-gray-100' : 'text-gray-300'}`}>{phase?.title || step}</div>
+                  {phase?.output && <div className="mt-0.5 truncate text-[10px] text-neutral-500">{phase.output}</div>}
+                </div>
+                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                  isDone ? 'bg-emerald-400/10 text-emerald-300' : isRunning ? 'bg-smara-300/15 text-smara-200' : focused ? 'bg-yellow-500/10 text-yellow-200' : 'bg-[#26331d]/60 text-neutral-500'
+                }`}>
+                  {isDone ? 'done' : isRunning ? 'running' : focused ? 'focus' : 'planned'}
+                </span>
+                {expanded ? <ChevronDown className="h-3.5 w-3.5 text-neutral-500" /> : <ChevronRight className="h-3.5 w-3.5 text-neutral-500" />}
               </button>
               {expanded && phase && (
-                <div className="border-t border-[#31421f]/35 px-2 pb-2 pt-1">
+                <div className="border-t border-[#31421f]/30 px-3 pb-3 pt-2 space-y-2">
                   {phase.objective && (
-                    <div className="mb-2 rounded-md bg-[#20291a]/70 px-2 py-1.5 text-[11px] leading-5 text-gray-300">
+                    <div className="rounded-lg bg-[#20291a]/60 px-2.5 py-2 text-[11px] leading-5 text-gray-300">
                       {phase.objective}
                     </div>
                   )}
                   {phase.deliverables.length > 0 && (
-                    <div className="mb-2">
-                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Deliverables</div>
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Deliverables</div>
                       <div className="space-y-1">
                         {phase.deliverables.map(item => (
-                          <div key={item} className="flex gap-1.5 text-[11px] text-gray-300">
-                            <span className="mt-1 h-1 w-1 rounded-full bg-smara-300/70" />
+                          <div key={item} className="flex items-start gap-2 text-[11px] text-gray-300">
+                            <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-smara-300/60" />
                             <span>{item}</span>
                           </div>
                         ))}
@@ -1171,12 +1168,12 @@ function RoadmapProgressPanel({
                     </div>
                   )}
                   {phase.acceptance.length > 0 && (
-                    <div className="mb-2">
-                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Checklist</div>
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Checklist</div>
                       <div className="space-y-1">
                         {phase.acceptance.map(item => (
-                          <div key={item.text} className="flex gap-1.5 text-[11px] text-gray-300">
-                            {item.checked || state === 'done' ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-300" /> : <Clock className="mt-0.5 h-3 w-3 shrink-0 text-neutral-500" />}
+                          <div key={item.text} className="flex items-start gap-2 text-[11px] text-gray-300">
+                            {item.checked || isDone ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-300" /> : <Clock className="mt-0.5 h-3 w-3 shrink-0 text-neutral-600" />}
                             <span>{item.text}</span>
                           </div>
                         ))}
@@ -1195,7 +1192,7 @@ function RoadmapProgressPanel({
                       )}
                       {phase.validated.length > 0 && (
                         <div>
-                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Validated</div>
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Validated</div>
                           <div className="space-y-1">
                             {phase.validated.map(item => <div key={item} className="truncate font-mono text-[10px] text-gray-400">{item}</div>)}
                           </div>
@@ -1204,13 +1201,13 @@ function RoadmapProgressPanel({
                     </div>
                   )}
                   {!phase.objective && phase.deliverables.length === 0 && phase.acceptance.length === 0 && (
-                    <div className="text-[11px] text-neutral-500">Belum ada detail phase di roadmap.</div>
+                    <div className="text-[11px] text-neutral-500 italic">Belum ada detail phase.</div>
                   )}
                 </div>
               )}
               {expanded && !phase && (
-                <div className="border-t border-[#31421f]/35 px-2 pb-2 pt-1 text-[11px] text-neutral-500">
-                  Detail phase belum tersedia dari response roadmap.
+                <div className="border-t border-[#31421f]/30 px-3 pb-2 pt-2 text-[11px] text-neutral-500 italic">
+                  Detail phase belum tersedia.
                 </div>
               )}
             </div>
@@ -1238,59 +1235,76 @@ function PlanInsightCard({
 }) {
   const summary = roadmapProgressSummary(insight, activePhases, runStatus)
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-[#31421f]/60 bg-[#20291a]/78">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/60 px-3 py-2">
-        <div className="flex items-center gap-2 text-xs font-semibold text-lime-100">
-          <ClipboardList className="h-3.5 w-3.5 text-smara-300" />
-          {insight.title}
-          <span className="rounded-full bg-[#26331d]/80 px-2 py-0.5 text-[10px] font-normal text-neutral-300">{summary.done}/{summary.total} done</span>
-        </div>
-        {showApproval && (
-          <div className="flex gap-1.5">
-            <button onClick={onApprove} className="inline-flex items-center gap-1 rounded-lg bg-smara-300 px-2.5 py-1.5 text-[11px] font-semibold text-black hover:bg-smara-200">
-              <Check className="h-3 w-3" /> Lanjutkan
-            </button>
-            <button onClick={onReject} className="inline-flex items-center gap-1 rounded-lg border border-[#5f7446]/35 bg-[#26331d]/72 px-2.5 py-1.5 text-[11px] font-medium text-gray-300 hover:bg-[#2f3f23]">
-              <X className="h-3 w-3" /> Tidak
-            </button>
+    <div className="mt-3 overflow-hidden rounded-2xl border border-smara-300/15 bg-gradient-to-br from-[#20291a]/85 to-[#1a2314]/85 shadow-xl shadow-lime-950/20">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#31421f]/50 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-7 w-7 place-items-center rounded-lg bg-smara-300/15">
+            <ClipboardList className="h-3.5 w-3.5 text-smara-300" />
           </div>
-        )}
-      </div>
-      <div className="grid gap-3 p-3 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="overflow-hidden rounded-lg border border-[#31421f]/45">
-          <table className="min-w-full text-left text-xs">
-            <thead className="bg-[#26331d]/80 text-neutral-400">
-              <tr>
-                <th className="w-12 px-2 py-2 font-medium">No</th>
-                <th className="px-2 py-2 font-medium">Langkah</th>
-                <th className="w-24 px-2 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#31421f]/45">
-              {insight.steps.map((step, idx) => {
-                const state = summary.states[idx]
-                const phase = insight.phases?.[idx]
-                return (
-                  <tr key={`${idx}-${step}`} className="bg-[#1a2314]/54">
-                    <td className="px-2 py-2 font-mono text-neutral-500">{phase?.phase || idx + 1}</td>
-                    <td className="px-2 py-2 text-gray-200">{phase?.title || step}</td>
-                    <td className="px-2 py-2">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
-                        state === 'done' ? 'bg-emerald-400/10 text-emerald-300'
-                        : state === 'running' ? 'bg-smara-500/10 text-smara-200'
-                        : 'bg-[#26331d]/80 text-neutral-400'
-                      }`}>
-                        {state === 'done' ? <CheckCircle2 className="h-3 w-3" /> : state === 'running' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Clock className="h-3 w-3" />}
-                        {state === 'done' ? 'done' : state === 'running' ? 'running' : 'planned'}
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <div>
+            <div className="text-sm font-semibold text-gray-100">{insight.title}</div>
+            <div className="text-[10px] text-neutral-500">{summary.total} langkah • {summary.done} selesai</div>
+          </div>
         </div>
-        <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          {/* Progress bar */}
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-neutral-800">
+              <div className="h-full rounded-full bg-gradient-to-r from-smara-600 to-smara-300 transition-all duration-500" style={{ width: `${summary.total > 0 ? Math.round((summary.done / summary.total) * 100) : 0}%` }} />
+            </div>
+            <span className="text-[11px] font-medium text-smara-300">{summary.total > 0 ? Math.round((summary.done / summary.total) * 100) : 0}%</span>
+          </div>
+          {showApproval && (
+            <div className="flex gap-1.5 ml-2">
+              <button onClick={onApprove} className="inline-flex items-center gap-1.5 rounded-xl bg-smara-300 px-3.5 py-1.5 text-[11px] font-semibold text-black shadow-lg shadow-smara-950/30 transition-all hover:bg-smara-200 hover:shadow-smara-950/40">
+                <Check className="h-3.5 w-3.5" /> Eksekusi
+              </button>
+              <button onClick={onReject} className="inline-flex items-center gap-1.5 rounded-xl border border-[#5f7446]/30 bg-[#26331d]/60 px-3.5 py-1.5 text-[11px] font-medium text-gray-300 transition-all hover:bg-[#2f3f23] hover:border-smara-300/20">
+                <X className="h-3.5 w-3.5" /> Revisi
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="grid gap-4 p-4 lg:grid-cols-[1.1fr_0.9fr]">
+        {/* Steps list */}
+        <div className="space-y-1.5">
+          {insight.steps.map((step, idx) => {
+            const state = summary.states[idx]
+            const phase = insight.phases?.[idx]
+            const isRunning = state === 'running'
+            const isDone = state === 'done'
+            return (
+              <div key={`${idx}-${step}`} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all ${
+                isRunning ? 'bg-smara-300/10 ring-1 ring-smara-300/20' : isDone ? 'bg-emerald-500/5' : 'bg-[#1a2314]/40 hover:bg-[#20291a]/60'
+              }`}>
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[11px] font-mono font-bold ${
+                  isDone ? 'bg-emerald-400/15 text-emerald-300' : isRunning ? 'bg-smara-300/20 text-smara-200' : 'bg-[#26331d]/80 text-neutral-500'
+                }`}>
+                  {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : phase?.phase || idx + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-xs font-medium ${isDone ? 'text-gray-400 line-through' : isRunning ? 'text-gray-100' : 'text-gray-200'}`}>
+                    {phase?.title || step}
+                  </div>
+                  {phase?.output && <div className="text-[10px] text-neutral-500 truncate mt-0.5">{phase.output}</div>}
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  isDone ? 'bg-emerald-400/10 text-emerald-300' : isRunning ? 'bg-smara-300/15 text-smara-200' : 'bg-[#26331d]/60 text-neutral-500'
+                }`}>
+                  {isDone ? 'done' : isRunning ? 'running' : 'planned'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Mermaid diagram */}
+        <div className="min-w-0 rounded-xl border border-[#31421f]/40 bg-[#1a2314]/50 p-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Flow</div>
           <MermaidBlock code={planFlowMermaid(insight.steps)} />
         </div>
       </div>
@@ -3928,26 +3942,37 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
           })}
         </div>
         {activePlanQuest && (
-          <div className="rounded-2xl border border-[#31421f]/60 bg-[#20291a]/78 p-3 shadow-lg shadow-lime-950/20">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-lime-200">
-              <ClipboardList className="h-3.5 w-3.5" /> {isPlanApprovalQuest(activePlanQuest) ? 'Plan approval' : 'Open question'}
+          <div className="rounded-2xl border border-smara-300/20 bg-gradient-to-br from-[#20291a]/90 to-[#1a2314]/90 p-4 shadow-xl shadow-lime-950/30 backdrop-blur-sm">
+            <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-smara-300">
+              {isPlanApprovalQuest(activePlanQuest) ? (
+                <><Check className="h-3.5 w-3.5" /> Plan Approval</>
+              ) : (
+                <><ClipboardList className="h-3.5 w-3.5" /> Clarification</>
+              )}
             </div>
-            <div className="mb-3 text-sm font-medium text-gray-100">{activePlanQuest.title}</div>
-            <div className="flex flex-wrap gap-2">
-              {activePlanQuest.options.map(opt => (
+            <div className="mb-3.5 text-sm font-semibold text-gray-100 leading-relaxed">{activePlanQuest.title}</div>
+            <div className="flex flex-col gap-2">
+              {activePlanQuest.options.map((opt, idx) => (
                 <button
                   key={opt}
                   onClick={() => sendPlanQuestAnswer(opt)}
                   disabled={thinking}
-                  className="rounded-xl bg-smara-300/8 px-3 py-2 text-xs text-gray-100 transition-colors hover:bg-smara-300/14 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="group flex items-center gap-3 rounded-xl border border-[#31421f]/50 bg-[#1a2314]/60 px-4 py-2.5 text-left text-sm text-gray-200 transition-all hover:border-smara-300/30 hover:bg-smara-300/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {opt}
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[#26331d]/80 text-[11px] font-mono font-bold text-smara-300 group-hover:bg-smara-300/20">
+                    {idx + 1}
+                  </span>
+                  <span className="flex-1">{opt}</span>
+                  <span className="text-[10px] text-neutral-500 group-hover:text-smara-300">→</span>
                 </button>
               ))}
-              {activePlanQuest.allowCustom && (
-                <span className="rounded-xl border border-[#31421f]/60 bg-[#20291a]/78 px-3 py-2 text-xs text-gray-400">Custom: ketik jawaban di input</span>
-              )}
             </div>
+            {activePlanQuest.allowCustom && (
+              <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-dashed border-[#31421f]/40 bg-[#1a2314]/30 px-3 py-2 text-[11px] text-neutral-500">
+                <span className="text-smara-300">✏️</span>
+                Ketik jawaban custom di input di bawah, lalu tekan Enter
+              </div>
+            )}
           </div>
         )}
         {attachments.length > 0 && (

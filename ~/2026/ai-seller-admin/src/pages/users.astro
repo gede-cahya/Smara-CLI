@@ -1,0 +1,163 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Users" active="users">
+  <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-4">
+      <input id="search" type="text" placeholder="Search by username or ID..." class="px-4 py-2.5 bg-dark-900 border border-dark-800 rounded-lg text-dark-100 focus:outline-none focus:ring-2 focus:ring-primary-500 w-72" />
+      <select id="tier-filter" class="px-4 py-2.5 bg-dark-900 border border-dark-800 rounded-lg text-dark-100 focus:outline-none focus:ring-2 focus:ring-primary-500">
+        <option value="">All Tiers</option>
+        <option value="free">Free</option>
+        <option value="basic">Basic</option>
+        <option value="premium">Premium</option>
+        <option value="enterprise">Enterprise</option>
+      </select>
+    </div>
+    <button onclick="loadUsers()" class="px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition">Refresh</button>
+  </div>
+
+  <div class="bg-dark-900 rounded-xl border border-dark-800 overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-dark-800 bg-dark-900/50">
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">ID</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Telegram ID</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Username</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Tier</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">API Keys</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Requests</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Daily</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Status</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Joined</th>
+            <th class="text-left py-3 px-4 text-xs font-medium text-dark-400 uppercase">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="users-body">
+          <tr><td colspan="10" class="text-center py-12 text-dark-500">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- User Detail Modal -->
+  <div id="user-modal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
+    <div class="bg-dark-900 rounded-2xl p-6 w-[500px] border border-dark-700 shadow-2xl max-h-[80vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold text-dark-100">User Detail</h3>
+        <button onclick="document.getElementById('user-modal').classList.add('hidden')" class="text-dark-400 hover:text-dark-200">✕</button>
+      </div>
+      <div id="user-detail" class="space-y-3"></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    let allUsers = [];
+
+    async function loadUsers() {
+      const data = await apiGet('/users');
+      if (!data || data.error) return;
+      allUsers = Array.isArray(data) ? data : [];
+      renderUsers();
+    }
+
+    function renderUsers() {
+      const search = document.getElementById('search').value.toLowerCase();
+      const tierF = document.getElementById('tier-filter').value;
+      let filtered = allUsers.filter(u => {
+        const matchSearch = !search || (u.username || '').toLowerCase().includes(search) || String(u.telegram_id).includes(search);
+        const matchTier = !tierF || u.tier === tierF;
+        return matchSearch && matchTier;
+      });
+
+      const tbody = document.getElementById('users-body');
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-12 text-dark-500">No users found</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(u => `
+        <tr class="border-b border-dark-800/50 hover:bg-dark-800/30 transition">
+          <td class="py-3 px-4 text-sm text-dark-300">${u.id}</td>
+          <td class="py-3 px-4 text-sm text-dark-200 font-mono">${u.telegram_id}</td>
+          <td class="py-3 px-4 text-sm text-dark-200">${u.username || '-'}</td>
+          <td class="py-3 px-4"><span class="px-2 py-1 rounded-full text-xs font-medium ${tierBadge(u.tier)}">${u.tier}</span></td>
+          <td class="py-3 px-4 text-sm text-dark-300 text-center">${u.api_key_count || 0}</td>
+          <td class="py-3 px-4 text-sm text-dark-300">${u.total_requests}</td>
+          <td class="py-3 px-4 text-sm text-dark-300">${u.daily_requests_used}/${u.daily_requests_limit}</td>
+          <td class="py-3 px-4">${u.is_banned ? '<span class="px-2 py-1 rounded-full text-xs bg-red-600/30 text-red-300">Banned</span>' : '<span class="px-2 py-1 rounded-full text-xs bg-green-600/30 text-green-300">Active</span>'}</td>
+          <td class="py-3 px-4 text-sm text-dark-400">${new Date(u.created_at).toLocaleDateString('id-ID')}</td>
+          <td class="py-3 px-4">
+            <div class="flex items-center gap-2">
+              <button onclick="viewUser(${u.id})" class="px-2 py-1 text-xs bg-dark-800 hover:bg-dark-700 text-dark-300 rounded">Detail</button>
+              <button onclick="toggleBan(${u.id}, ${u.is_banned ? 'false' : 'true'})" class="px-2 py-1 text-xs ${u.is_banned ? 'bg-green-600/30 hover:bg-green-600/50 text-green-300' : 'bg-red-600/30 hover:bg-red-600/50 text-red-300'} rounded">${u.is_banned ? 'Unban' : 'Ban'}</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function tierBadge(tier) {
+      const map = { free:'bg-gray-600/30 text-gray-300', basic:'bg-blue-600/30 text-blue-300', premium:'bg-purple-600/30 text-purple-300', enterprise:'bg-yellow-600/30 text-yellow-300' };
+      return map[tier] || map.free;
+    }
+
+    async function viewUser(id) {
+      const u = allUsers.find(u => u.id === id);
+      if (!u) return;
+      const detail = document.getElementById('user-detail');
+      detail.innerHTML = `
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Database ID</p><p class="text-dark-100 font-mono">${u.id}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Telegram ID</p><p class="text-dark-100 font-mono">${u.telegram_id}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Username</p><p class="text-dark-100">${u.username || '-'}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Tier</p><p class="text-dark-100">${u.tier}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Total Requests</p><p class="text-dark-100">${u.total_requests}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Daily Used</p><p class="text-dark-100">${u.daily_requests_used}/${u.daily_requests_limit}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Status</p><p class="text-dark-100">${u.is_banned ? '🔴 Banned' : '🟢 Active'}</p></div>
+          <div class="bg-dark-800 rounded-lg p-3"><p class="text-xs text-dark-400">Joined</p><p class="text-dark-100">${new Date(u.created_at).toLocaleString('id-ID')}</p></div>
+        </div>
+        <div class="flex gap-2 mt-4">
+          <select id="new-tier-${u.id}" class="px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-100 text-sm">
+            <option value="free" ${u.tier==='free'?'selected':''}>Free</option>
+            <option value="basic" ${u.tier==='basic'?'selected':''}>Basic</option>
+            <option value="premium" ${u.tier==='premium'?'selected':''}>Premium</option>
+            <option value="enterprise" ${u.tier==='enterprise'?'selected':''}>Enterprise</option>
+          </select>
+          <button onclick="changeTier(${u.id})" class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm">Change Tier</button>
+          <button onclick="toggleBan(${u.id}, ${u.is_banned ? 'false' : 'true'})" class="px-4 py-2 ${u.is_banned ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} text-white rounded-lg text-sm">${u.is_banned ? 'Unban' : 'Ban'}</button>
+        </div>
+      `;
+      document.getElementById('user-modal').classList.remove('hidden');
+    }
+
+    async function changeTier(id) {
+      const tier = document.getElementById(`new-tier-${id}`).value;
+      const res = await apiPost(`/users/${id}/tier`, { tier });
+      if (res && !res.error) {
+        document.getElementById('user-modal').classList.add('hidden');
+        loadUsers();
+      } else {
+        alert(res.error || 'Failed to change tier');
+      }
+    }
+
+    async function toggleBan(id, ban) {
+      const res = await apiPost(`/users/${id}/ban`, { banned: ban });
+      if (res && !res.error) {
+        document.getElementById('user-modal').classList.add('hidden');
+        loadUsers();
+      } else {
+        alert(res.error || 'Failed');
+      }
+    }
+
+    document.getElementById('search').addEventListener('input', renderUsers);
+    document.getElementById('tier-filter').addEventListener('change', renderUsers);
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (authToken) loadUsers();
+      else { const orig = hideLoginModal; hideLoginModal = () => { orig(); loadUsers(); }; }
+    });
+  </script>
+</Layout>

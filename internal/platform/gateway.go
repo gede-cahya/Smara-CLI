@@ -933,14 +933,13 @@ func phaseEmoji(phase string) string {
 // This is a defense-in-depth safeguard; the supervisor should already strip
 // DSML before returning, but some edge cases (e.g., max-iterations fallback,
 // models emitting malformed DSML near the answer) can let fragments through.
-// We delegate to llm.ExtractToolCallsFromContent which handles all known
-// format variants including double full-width pipes (U+FF5C).
+// Fixed: now delegates to llm.SanitizeForUser which handles fullwidth pipes,
+// partial/truncated tags, and aggressive residual cleaning.
 func sanitizeDSML(text string) string {
 	if text == "" {
 		return text
 	}
-	_, cleaned := llm.ExtractToolCallsFromContent(text)
-	return strings.TrimSpace(cleaned)
+	return llm.SanitizeForUser(text)
 }
 
 // sendReply sends a response back to the platform where the message originated.
@@ -1256,11 +1255,13 @@ func splitMessage(content string, maxLen int) []string {
 // calls that got stripped, or hit the max-iteration cap). Returning an
 // empty string in Telegram looks like the bot froze; this function lets
 // the user see the intermediate progress instead.
+// FIXED: now calls llm.SanitizeForUser for every intermediate thought to
+// guarantee zero DSML leakage (skill_run, parameter tags, etc.)
 func buildFallbackSummary(thoughts []string, tools []string) string {
 	var sb strings.Builder
 	sb.WriteString("⚠ Smara tidak menghasilkan jawaban final yang jelas — tool loop berhenti tanpa kesimpulan.\n\n")
 
-	// Keep the last 3 non-empty thoughts.
+	// Keep the last 3 non-empty thoughts, sanitized aggressively.
 	kept := 0
 	for i := len(thoughts) - 1; i >= 0 && kept < 3; i-- {
 		t := strings.TrimSpace(thoughts[i])

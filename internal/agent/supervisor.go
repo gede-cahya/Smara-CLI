@@ -258,20 +258,46 @@ func (s *Supervisor) GetMemoryStore() memory.MemoryStore {
 
 // SetModel switches the LLM model/provider at runtime.
 func (s *Supervisor) SetModel(provider, model string) error {
-	// Build new config from stored config, updating provider and model
-	cfg := s.providerConfig
-	cfg.Name = provider
+	cfg := config.Get()
+	newCfg := s.providerConfig
+	newCfg.Name = provider
 	if model != "" {
-		cfg.Model = model
+		newCfg.Model = model
 	}
 
-	newProvider, err := llm.NewProvider(cfg)
+	// Re-read live credentials so config changes made via the web UI take effect
+	// immediately instead of using the snapshot captured at startup.
+	switch provider {
+	case "openai":
+		newCfg.APIKey = cfg.OpenAIAPIKey
+		newCfg.Host = cfg.OpenAIBaseURL
+	case "openrouter":
+		newCfg.APIKey = cfg.OpenRouterAPIKey
+		if newCfg.Model == "" || newCfg.Model == "minimax-m2.5:cloud" {
+			newCfg.Model = cfg.OpenRouterModel
+		}
+	case "anthropic":
+		newCfg.APIKey = cfg.AnthropicAPIKey
+		if newCfg.Model == "" || newCfg.Model == "minimax-m2.5:cloud" {
+			newCfg.Model = cfg.AnthropicModel
+		}
+	case "custom":
+		newCfg.APIKey = cfg.CustomAPIKey
+		newCfg.Host = cfg.CustomBaseURL
+	case "ollama":
+		newCfg.Host = cfg.OllamaHost
+	}
+	if newCfg.ReasoningEffort == "" && cfg.ReasoningEffort != "" {
+		newCfg.ReasoningEffort = cfg.ReasoningEffort
+	}
+
+	newProvider, err := llm.NewProvider(newCfg)
 	if err != nil {
 		return fmt.Errorf("gagal switch model: %w", err)
 	}
 
 	s.provider = newProvider
-	s.providerConfig = cfg
+	s.providerConfig = newCfg
 	// We don't wipe history here anymore to maintain session context across model switches
 	return nil
 }
@@ -514,17 +540,23 @@ func (s *Supervisor) ConvertMCPToolsToToolFunctions() []llm.ToolFunction {
 		tools = filtered
 	}
 
-	// 3. Add MCP tools
+	// 3. Add MCP tools, skipping any that conflict with builtin tool names
+	builtinNames := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		builtinNames[t.Name] = true
+	}
 	for serverName, info := range s.mcpInfo {
 		if !info.Connected {
 			continue
 		}
 		for _, t := range info.Tools {
+			if builtinNames[t.Name] {
+				// Skip MCP tools that duplicate builtin tool names
+				continue
+			}
 			if s.mode == ModePlan && s.safetyEngine != nil && !safety.IsReadOnlyTool(t.Name) {
 				continue
 			}
-			// Prefix MCP tools with their server name if there's a conflict
-			// but for now we just append them directly
 			tf := llm.ToolFunction{
 				Name:        t.Name,
 				Description: t.Description,
@@ -875,6 +907,17 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 
 	if client == nil {
 		return "", fmt.Errorf("MCP server '%s' tidak terhubung", route.MCPServer)
+	}
+
+	// Auto-fill required parameters for smara MCP tools if missing
+	if route.MCPServer == "smara" || strings.Contains(strings.ToLower(route.MCPServer), "smara") {
+		if tc.Args == nil {
+			tc.Args = make(map[string]interface{})
+		}
+		// get_user_context, store_memory, search_memories, etc. need user_id
+		if _, hasUserID := tc.Args["user_id"]; !hasUserID {
+			tc.Args["user_id"] = "cahya" // default user
+		}
 	}
 
 	result, err := client.CallTool(route.ToolName, tc.Args)
@@ -1331,6 +1374,50 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		)
 	}
 
+	// In plan mode, auto-invoke the planning skill to bootstrap the planning
+	// template before the LLM fills in the details. This ensures consistent
+	// planning structure regardless of which model is used.
+	if s.mode == ModePlan && !strings.Contains(userPrompt, autoSkillResultMarker) {
+		planningSkillName := selectPlanningSkill(userPrompt)
+		if planningSkill, err := skill.Load(planningSkillName); err == nil {
+			args := map[string]interface{}{
+				"skill_name": planningSkillName,
+				"automatic":  true,
+				"mode":       "plan",
+			}
+			cb := s.snapshotCallback()
+			if cb.OnToolCall != nil {
+				cb.OnToolCall("", "skill_run", args)
+			}
+
+			started := time.Now()
+			skillArgs := map[string]interface{}{
+				"goal":    userPrompt,
+				"context": "Mode plan aktif, user ingin membuat rencana.",
+			}
+			res, err := planningSkill.WithArgs(skillArgs).Run(s.SkillExecutor())
+			output := ""
+			if err != nil {
+				output = fmt.Sprintf("Planning skill '%s' gagal: %v", planningSkillName, err)
+			} else if res == nil {
+				output = fmt.Sprintf("Planning skill '%s' hasil kosong", planningSkillName)
+			} else {
+				s.logSkillRunAndMaybeRefine(planningSkillName, res, started)
+				output = res.Summary
+			}
+			if cb.OnToolResult != nil {
+				cb.OnToolResult(output)
+			}
+			autoToolsExecuted = append(autoToolsExecuted, "skill_run")
+			userPrompt += fmt.Sprintf(
+				"\n\n%s\nPlanning skill '%s' sudah dijalankan otomatis untuk membuat template rencana.\nHasil template:\n%s\nGunakan template ini sebagai kerangka rencana. Isi bagian yang kosong berdasarkan analisismu terhadap permintaan user. Jangan panggil skill_run untuk planning skill yang sama lagi.",
+				autoSkillResultMarker,
+				planningSkillName,
+				truncateToolResultForContext(output),
+			)
+		}
+	}
+
 	modeInfo := GetModeInfo(s.mode)
 
 	// 1. Search memory for relevant context
@@ -1355,6 +1442,12 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 			sysPrompt += "\n\n" + profile.ToContext()
 		}
 	}
+
+	// Add DSML instructions for models that don't support native function calling
+	if s.providerConfig.Name == "custom" && !llm.ModelSupportsNativeToolCall(s.providerConfig.Model) {
+		sysPrompt += buildDSMLInstructions()
+	}
+
 
 	messages := []llm.Message{
 		{
@@ -1510,15 +1603,14 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 			}
 		}
 
-		if err != nil {
+			if err != nil {
 			return nil, fmt.Errorf("gagal mendapatkan response dari LLM: %w", err)
 		}
-		finalResp = resp.Content
+		// Strip DSML tool-call markup from non-agentic responses. Some models
+		// emit DSML even without tools available, causing raw tags to leak.
+		// Hardened to use SanitizeForUser for aggressive residual cleaning.
+		finalResp = llm.SanitizeForUser(resp.Content)
 		finalThinking = resp.Thinking
-	}
-
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
 	}
 
 	// 4. Update conversation history (both local and session)
@@ -1621,6 +1713,12 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			sysPrompt2 += "\n\n" + profile.ToContext()
 		}
 	}
+
+	// Add DSML instructions for models that don't support native function calling
+	if s.providerConfig.Name == "custom" && !llm.ModelSupportsNativeToolCall(s.providerConfig.Model) {
+		sysPrompt2 += buildDSMLInstructions()
+	}
+
 	messages := []llm.Message{
 		{
 			Role:    llm.RoleSystem,
@@ -1827,6 +1925,8 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		// merge any extracted tool calls with native ones.
 		if resp != nil {
 			extracted, cleaned := llm.ExtractToolCallsFromContent(resp.Content)
+			// Hardening: second pass aggressive sanitization for partial/truncated tags
+			cleaned = llm.SanitizeForUser(cleaned)
 			// Strip inline <think>...</think> reasoning tags. Only the Ollama
 			// provider does this itself; the custom/OpenAI-compatible providers
 			// leave them in content. Without this, an empty "<think></think>"
@@ -1850,7 +1950,7 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 			// extractor already converted those into real tool_calls) the
 			// cleaned content is empty. Fall back to thoughts+tools so the
 			// user sees something actionable instead of a blank bubble.
-			content := strings.TrimSpace(resp.Content)
+			content := llm.SanitizeForUser(strings.TrimSpace(resp.Content))
 			// An empty answer here means the model returned no usable prose
 			// (e.g. it emitted only "<think></think>" reasoning that got
 			// stripped). This is NOT an iteration-budget exhaustion — so we
@@ -2313,6 +2413,78 @@ func compactToolOutputs(toolOutputs []string) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// buildDSMLInstructions returns system prompt instructions for models that
+// don't support native function calling. These models emit tool calls as
+// DSML text tags which are parsed by ExtractToolCallsFromContent.
+func buildDSMLInstructions() string {
+	return `
+
+CARA MEMANGGIL TOOL (format DSML — WAJIB dipakai karena model ini tidak support native function calling):
+Untuk memanggil tool, gunakan format XML khusus di dalam jawabanmu:
+
+<|DSML|invoke name="nama_tool">
+<|DSML|parameter name="parameter1">nilai1</|DSML|parameter>
+<|DSML|parameter name="parameter2">nilai2</|DSML|parameter>
+</|DSML|invoke>
+
+Contoh memanggil skill_run:
+<|DSML|invoke name="skill_run">
+<|DSML|parameter name="skill_name">planning-agile-minsky</|DSML|parameter>
+<|DSML|parameter name="args">{"goal":"buat bot telegram"}</|DSML|parameter>
+</|DSML|invoke>
+
+Contoh memanggil run_command:
+<|DSML|invoke name="run_command">
+<|DSML|parameter name="command">ls -la</|DSML|parameter>
+</|DSML|invoke>
+
+Contoh memanggil remember:
+<|DSML|invoke name="remember">
+<|DSML|parameter name="content">User suka bahasa Indonesia</|DSML|parameter>
+<|DSML|parameter name="tag">preferensi</|DSML|parameter>
+</|DSML|invoke>
+
+ATURAN PENTING:
+- Satu invoke per blok tool, jangan gabung beberapa tool dalam satu invoke.
+- Bisa memanggil beberapa tool sekaligus dengan menuliskan beberapa blok invoke berurutan.
+- Setelah tool dieksekusi, hasilnya akan diberikan sebagai pesan sistem. Gunakan hasil tersebut untuk melanjutkan.
+- Tetap tulis teks jawaban normal SEBELUM atau SETELAH blok DSML jika perlu menjelaskan sesuatu ke user.
+- JANGAN gunakan format function calling JSON — model ini tidak mendukungnya. Gunakan DSML di atas.`
+}
+
+// selectPlanningSkill picks the most appropriate planning skill based on the
+// user prompt. Returns the skill name to invoke in plan mode.
+func selectPlanningSkill(prompt string) string {
+	lower := strings.ToLower(prompt)
+
+	// If the prompt looks like it needs requirement clarification first
+	questionWords := []string{"?", "bagaimana", "apa saja", "siapa", "kapan", "mengapa", "how", "what", "which"}
+	for _, w := range questionWords {
+		if strings.Contains(lower, w) {
+			return "planning-clarify-requirements"
+		}
+	}
+
+	// If the prompt mentions testing or QA
+	testWords := []string{"test", "testing", "qa", "verifikasi", "quality"}
+	for _, w := range testWords {
+		if strings.Contains(lower, w) {
+			return "planning-test-plan"
+		}
+	}
+
+	// If the prompt mentions risk or security
+	riskWords := []string{"risk", "risiko", "security", "keamanan", "audit"}
+	for _, w := range riskWords {
+		if strings.Contains(lower, w) {
+			return "planning-risk-review"
+		}
+	}
+
+	// Default: use agile-minsky for comprehensive planning
+	return "planning-agile-minsky"
+}
+
 func buildTaskBreakdownPolicy(mode Mode) string {
 	if mode == ModePlan || mode == ModeWorkflow {
 		return ""
@@ -2346,9 +2518,8 @@ func synthesizeFallbackSummary(thoughts, toolsExecuted []string) string {
 			continue
 		}
 		// Strip any leftover DSML shards that didn't make it through the
-		// per-iteration strip (defense in depth).
-		_, cleaned := llm.ExtractToolCallsFromContent(t)
-		cleaned = strings.TrimSpace(cleaned)
+		// per-iteration strip (defense in depth). Use aggressive SanitizeForUser
+		cleaned := llm.SanitizeForUser(t)
 		if cleaned == "" {
 			continue
 		}
@@ -2391,7 +2562,8 @@ func synthesizeToolOutputSummary(thoughts, toolsExecuted, toolOutputs []string, 
 	sb.WriteString("Saya sudah menjalankan tool yang dibutuhkan, tapi jawaban final otomatis belum sempat tersusun. Berikut hasil terakhir yang tersedia.\n")
 
 	if finalErr != nil {
-		sb.WriteString(fmt.Sprintf("\nError finalisasi: %s\n", finalErr.Error()))
+		errStr := llm.SanitizeForUser(finalErr.Error())
+		sb.WriteString(fmt.Sprintf("\nError finalisasi: %s\n", errStr))
 	}
 
 	if len(toolsExecuted) > 0 {
@@ -2405,6 +2577,9 @@ func synthesizeToolOutputSummary(thoughts, toolsExecuted, toolOutputs []string, 
 			if trimmed == "" {
 				continue
 			}
+			// Tool outputs may contain DSML-ish text? Keep as-is but avoid raw tags leaking as executable
+			// Don't sanitize tool output aggressively here, but ensure no DSML tags remain
+			trimmed = llm.SanitizeForUser(trimmed)
 			if len(trimmed) > 1200 {
 				trimmed = trimmed[:1200] + "..."
 			}

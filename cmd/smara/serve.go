@@ -327,6 +327,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 	collector.Start(ctx, 2*time.Second)
 	ui.PrintSuccess("Metrics collector aktif → %s", metricsPath)
 
+	// Hot-reload model/provider when config.yaml changes on disk.
+	config.OnReload(func(newCfg *config.SmaraConfig) {
+		model := newCfg.Model
+		provName := newCfg.Provider
+		if provName == "custom" && newCfg.CustomModel != "" {
+			model = newCfg.CustomModel
+		}
+		if model == "" {
+			return
+		}
+		_ = supervisor.SetModel(provName, model)
+	})
+
 	elapsed := time.Since(startTime)
 	ui.PrintInfo("Startup: %s", elapsed.Round(time.Millisecond))
 

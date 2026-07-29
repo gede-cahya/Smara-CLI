@@ -32,6 +32,14 @@ export async function fetchJSON<T = unknown>(path: string, options?: RequestInit
   if (!text) return undefined as T
   return JSON.parse(text) as T
 }
+export interface Router9Info {
+  base_url: string
+  provider_name: string
+  model: string
+  native_tool: boolean
+  stream_disabled: boolean
+}
+
 export interface Status {
   status: string
   mode: string
@@ -39,11 +47,13 @@ export interface Status {
   mode_desc: string
   mode_emoji: string
   provider: string
+  model?: string
   provider_online?: boolean
   provider_endpoint?: string
   provider_error?: string
   workspace: string
   version: string
+  router9?: Router9Info | null
 }
 
 export interface MemoryItem {
@@ -596,4 +606,28 @@ export interface FSEntry {
 
 export function listDir(path: string): Promise<{ path: string; entries: FSEntry[] }> {
   return fetchJSON(`/api/fs/list?path=${encodeURIComponent(path)}`)
+}
+
+// --- Models ---
+
+export interface ProviderModels {
+  [provider: string]: {
+    name: string
+    description: string
+    models: string[]
+    needs_api_key: boolean
+  }
+}
+
+export function getStaticModels(): Promise<ProviderModels> {
+  return fetchJSON<ProviderModels>('/api/models')
+}
+
+export interface Router9ModelResponse {
+  object: string
+  data: Array<{ id: string; object: string; owned_by: string }>
+}
+
+export function get9RouterModels(): Promise<Router9ModelResponse> {
+  return fetchJSON<Router9ModelResponse>('/api/9router/models')
 }

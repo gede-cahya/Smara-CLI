@@ -162,3 +162,64 @@ func TestProviderInfo_Struct(t *testing.T) {
 	assert.Equal(t, []string{"model1", "model2"}, pi.Models)
 	assert.True(t, pi.NeedsAPIKey)
 }
+
+func TestConvertMessagesToOpenAI_ToolCallPairing(t *testing.T) {
+	// Normal flow: assistant tool_call then tool response with same ID must stay paired, not renamed to _dup1.
+	msgs := []Message{
+		{Role: RoleUser, Content: "cek vps"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_897e1173a376ea9e", Function: "skill_run", Args: map[string]interface{}{"skill_name": "vps-health-check"}}}},
+		{Role: RoleTool, ToolCallID: "call_897e1173a376ea9e", Content: "ok"},
+	}
+	out := convertMessagesToOpenAI(msgs)
+	require.Len(t, out, 3)
+	assert.Equal(t, "call_897e1173a376ea9e", out[1].ToolCalls[0].ID)
+	assert.Equal(t, "call_897e1173a376ea9e", out[2].ToolCallID)
+	// Ensure no _dup suffix in happy path
+	for _, m := range out {
+		assert.NotContains(t, m.ToolCallID, "_dup", "tool_call_id must not be rewritten in normal flow")
+		for _, tc := range m.ToolCalls {
+			assert.NotContains(t, tc.ID, "_dup")
+		}
+	}
+}
+
+func TestConvertMessagesToOpenAI_DupIDRewritten(t *testing.T) {
+	// Same assistant ID reused twice (old DSML bug) must be rewritten and each tool response must match its rewritten ID.
+	msgs := []Message{
+		{Role: RoleUser, Content: "cek vps"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_dup", Function: "skill_run"}}},
+		{Role: RoleTool, ToolCallID: "call_dup", Content: "first"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_dup", Function: "skill_run"}}},
+		{Role: RoleTool, ToolCallID: "call_dup", Content: "second"},
+	}
+	out := convertMessagesToOpenAI(msgs)
+	// Collect assistant IDs and tool IDs
+	var assistantIDs []string
+	var toolIDs []string
+	for _, m := range out {
+		for _, tc := range m.ToolCalls {
+			assistantIDs = append(assistantIDs, tc.ID)
+		}
+		if m.Role == "tool" {
+			toolIDs = append(toolIDs, m.ToolCallID)
+		}
+	}
+	require.Len(t, assistantIDs, 2)
+	require.Len(t, toolIDs, 2)
+	assert.Equal(t, "call_dup", assistantIDs[0])
+	assert.NotEqual(t, "call_dup", assistantIDs[1], "second dup must be rewritten")
+	assert.Equal(t, assistantIDs[0], toolIDs[0])
+	assert.Equal(t, assistantIDs[1], toolIDs[1], "tool response must match its (possibly rewritten) assistant ID")
+}
+
+func TestConvertMessagesToOpenAI_OrphanToolDropped(t *testing.T) {
+	// Tool response without preceding assistant must be dropped to avoid 400 "'id' does not match any tool_calls[].id"
+	msgs := []Message{
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleTool, ToolCallID: "call_orphan_dup1", Content: "stale"},
+	}
+	out := convertMessagesToOpenAI(msgs)
+	for _, m := range out {
+		assert.NotEqual(t, "call_orphan_dup1", m.ToolCallID, "orphan tool response must be dropped")
+	}
+}

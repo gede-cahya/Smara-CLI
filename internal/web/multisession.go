@@ -95,6 +95,51 @@ type WebSessionManager struct {
 	mcpInfo     map[string]agent.MCPServerInfo
 }
 
+// UpdateProviderConfig updates the cached provider config and provider instance
+// so new web sessions pick up model/provider changes made at runtime.
+// It also patches existing session supervisors so active sessions switch model
+// immediately instead of keeping the old one.
+func (m *WebSessionManager) UpdateProviderConfig(cfg llm.ProviderConfig) {
+	m.mu.Lock()
+	m.providerCfg = cfg
+	if p, err := llm.NewProvider(cfg); err == nil {
+		m.provider = p
+	}
+	for _, s := range m.sessions {
+		s.mu.Lock()
+		if s.supervisor != nil {
+			_ = s.supervisor.SetModel(cfg.Name, cfg.Model)
+		}
+		s.mu.Unlock()
+	}
+	m.mu.Unlock()
+}
+
+// ProviderConfig returns the current cached provider config (thread-safe).
+func (m *WebSessionManager) ProviderConfig() llm.ProviderConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.providerCfg
+}
+
+// SessionModelInfo returns the provider and model from a specific session's
+// supervisor. Returns ok=false if the session or its supervisor doesn't exist.
+func (m *WebSessionManager) SessionModelInfo(id string) (provider, model string, ok bool) {
+	m.mu.RLock()
+	s, exists := m.sessions[id]
+	m.mu.RUnlock()
+	if !exists || s == nil {
+		return "", "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.supervisor == nil {
+		return "", "", false
+	}
+	p, mdl := s.supervisor.GetModelInfo()
+	return p, mdl, true
+}
+
 func NewWebSessionManager(provider llm.Provider, providerCfg llm.ProviderConfig, memStore memory.MemoryStore, workspace string, workspaceID int64, maxIter int, storePath string) *WebSessionManager {
 	if storePath == "" {
 		home, _ := os.UserHomeDir()

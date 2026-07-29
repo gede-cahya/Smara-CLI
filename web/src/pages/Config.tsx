@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AlertCircle, CheckCircle2, Cloud, Cpu, Database, Eye, EyeOff, Globe, Image, KeyRound, Mic, Plus, RefreshCw, Save, Settings, SlidersHorizontal, Trash2, Wrench } from 'lucide-react'
-import { fetchJSON } from '../api'
+import { fetchJSON, get9RouterModels } from '../api'
 import { getCachedSmaraConfig, loadSmaraConfig, SMARA_CONFIG_LOADED_EVENT } from '../configStore'
 
 type MCPServer = {
@@ -138,10 +138,40 @@ function valuesEqual(a: any, b: any) {
   return JSON.stringify(a ?? '') === JSON.stringify(b ?? '')
 }
 
-function FieldInput({ field, config, onChange }: { field: Field; config: ConfigData; onChange: (key: string, value: any) => void }) {
+function ModelDropdown({ value, onChange, models, placeholder }: { value: string; onChange: (v: string) => void; models: string[]; placeholder?: string }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const filtered = query ? models.filter(m => m.toLowerCase().includes(query.toLowerCase())) : models
+  return <div className="relative">
+    <input
+      type="text"
+      value={open ? query : value}
+      onChange={e => { setQuery(e.target.value); if (!open) setOpen(true); onChange(e.target.value) }}
+      onFocus={() => { setQuery(''); setOpen(true) }}
+      onBlur={() => setTimeout(() => setOpen(false), 200)}
+      placeholder={placeholder || 'Ketik atau pilih model...'}
+      className="w-full bg-[#26321f] shadow-inner shadow-black/10 rounded-lg px-3 py-2 pr-9 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"
+    />
+    {open && filtered.length > 0 && (
+      <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg bg-[#1a2515] border border-smara-700/30 shadow-xl">
+        {filtered.slice(0, 50).map(m => (
+          <button key={m} type="button" onMouseDown={() => { onChange(m); setQuery(m); setOpen(false) }}
+            className={`w-full text-left px-3 py-1.5 text-sm hover:bg-smara-600/30 ${m === value ? 'text-smara-300 bg-smara-700/20' : 'text-gray-200'}`}>
+            {m}
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+}
+
+function FieldInput({ field, config, onChange, router9Models }: { field: Field; config: ConfigData; onChange: (key: string, value: any) => void; router9Models?: string[] }) {
   const value = normalizeValue(field, getValue(config, field.key))
   const [show, setShow] = useState(false)
   const inputClass = "w-full bg-[#26321f] shadow-inner shadow-black/10 rounded-lg px-3 py-2 pr-9 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-smara-300/20"
+
+  // Use model dropdown for custom_model and model fields when 9Router models are available
+  const isModelField = (field.key === 'custom_model' || field.key === 'model') && router9Models && router9Models.length > 0
 
   return <div className="bg-[#2a3522]/78 rounded-xl p-3 shadow-sm shadow-black/10">
     <label className="block text-xs font-medium text-gray-300 mb-1">{field.label}</label>
@@ -151,6 +181,8 @@ function FieldInput({ field, config, onChange }: { field: Field; config: ConfigD
       <select value={value} onChange={e => onChange(field.key, e.target.value)} className="w-full bg-[#26321f] rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-smara-300/20">
         {(field.options || []).map(o => <option key={o || 'default'} value={o}>{o || field.placeholder || 'default'}</option>)}
       </select>
+    ) : isModelField ? (
+      <ModelDropdown value={value || ''} onChange={v => onChange(field.key, v)} models={router9Models!} placeholder={field.placeholder} />
     ) : (
       <div className="relative">
         <input type={field.type === 'password' && !show ? 'password' : field.type === 'number' ? 'number' : 'text'} value={value} onChange={e => onChange(field.key, field.type === 'number' ? Number(e.target.value) : e.target.value)} placeholder={field.placeholder} className={inputClass} />
@@ -176,6 +208,7 @@ export default function Config() {
   const [mcpDraft, setMcpDraft] = useState<MCPServer>({ name: '', type: 'local', command: '', args: [], url: '', enabled: true })
   const [rawKey, setRawKey] = useState('')
   const [rawValue, setRawValue] = useState('')
+  const [router9Models, setRouter9Models] = useState<string[]>([])
 
   const load = async () => {
     setLoading(true)
@@ -188,7 +221,18 @@ export default function Config() {
     catch (e) { setNotice({ type: 'err', text: 'Gagal load config: ' + e }) }
     finally { setLoading(false) }
   }
-  useEffect(() => { load() }, [])
+
+  const load9RouterModels = async () => {
+    try {
+      const res = await get9RouterModels()
+      if (res?.data) {
+        const models = res.data.map(m => m.id).sort()
+        setRouter9Models(models)
+      }
+    } catch { /* silently fail — 9router might not be running */ }
+  }
+
+  useEffect(() => { load(); load9RouterModels() }, [])
 
   const updateDraft = (key: string, value: any) => setDraftConfig(prev => setValueAtPath(prev, key, value))
   const changedFields = allFields.filter(f => !valuesEqual(normalizeValue(f, getValue(draftConfig, f.key)), normalizeValue(f, getValue(config, f.key))))
@@ -242,7 +286,7 @@ export default function Config() {
       {notice && <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm shadow-sm ${notice.type === 'ok' ? 'bg-smara-700/35 text-smara-200' : 'bg-red-950/35 text-red-200'}`}>{notice.type === 'ok' ? <CheckCircle2 className="w-4 h-4"/> : <AlertCircle className="w-4 h-4"/>}{notice.text}</div>}
 
       <Section icon={Cpu} title="Model Provider" desc="Pilih provider utama, model default, API key, base URL, OpenRouter, OpenAI, Anthropic, Ollama, atau custom provider.">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{providerFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft}/>)}</div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{providerFields.map(f => <FieldInput key={f.key} field={f} config={draftConfig} onChange={updateDraft} router9Models={router9Models}/>)}</div>
       </Section>
 
       <Section icon={Image} title="Image Generation" desc="Provider, model, API key, base URL, dan direktori output untuk image flow.">

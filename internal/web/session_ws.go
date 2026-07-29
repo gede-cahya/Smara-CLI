@@ -12,6 +12,7 @@ import (
 	"github.com/gede-cahya/Smara-CLI/internal/agent"
 	"github.com/gede-cahya/Smara-CLI/internal/agent/workflow"
 	"github.com/gede-cahya/Smara-CLI/internal/browser"
+	"github.com/gede-cahya/Smara-CLI/internal/llm"
 	"github.com/gede-cahya/Smara-CLI/internal/orchestration"
 	"github.com/gorilla/websocket"
 )
@@ -108,12 +109,13 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 			},
 		})
 	}
+	cfg := s.WebSessions.ProviderConfig()
 	emitLog("info", "run_start", "Request diterima dan proses dimulai.", "", map[string]interface{}{
 		"prompt_chars":          len(msg.Payload),
 		"timeout_sec":           timeoutSecFromServer(s),
-		"provider":              s.WebSessions.providerCfg.Name,
-		"model":                 s.WebSessions.providerCfg.Model,
-		"reasoning_effort":      s.WebSessions.providerCfg.ReasoningEffort,
+		"provider":              cfg.Name,
+		"model":                 cfg.Model,
+		"reasoning_effort":      cfg.ReasoningEffort,
 		"custom_disable_stream": s.Cfg != nil && s.Cfg.CustomDisableStream,
 	})
 	recordDirectResult := func(response string, status WebSessionStatus, errText string) {
@@ -179,6 +181,8 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 			thinking := isThinking
 			b.Reset()
 			hasBuffered = false
+			// Hardening: stream chunks must never leak DSML tags
+			payload = llm.SanitizeForUser(payload)
 			write(wsMessage{Type: "stream", SessionID: msg.SessionID, Payload: s.rewriteGeneratedImageLinks(payload), Args: map[string]interface{}{"is_thinking": thinking}})
 		}
 		appendChunk := func(ev pendingStreamChunk) {
@@ -287,6 +291,10 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		},
 		OnStream: func(chunk string, isThinking bool) {
 			touch("stream")
+			// Hardening: filter DSML in stream at source
+			if !isThinking {
+				chunk = llm.SanitizeForUser(chunk)
+			}
 			select {
 			case streamCh <- pendingStreamChunk{chunk: chunk, isThinking: isThinking}:
 			default:
@@ -509,7 +517,9 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		"input_tokens":  result.InputTokens,
 		"output_tokens": result.OutputTokens,
 	})
-	write(s.chatWSMessage(msg.SessionID, s.rewriteGeneratedImageLinks(result.Response), msg.Payload, result))
+	// Hardening: sanitize final response before WS emit
+	finalPayload := llm.SanitizeForUser(result.Response)
+	write(s.chatWSMessage(msg.SessionID, s.rewriteGeneratedImageLinks(finalPayload), msg.Payload, result))
 	write(wsMessage{Type: "session_status", SessionID: msg.SessionID, Payload: "completed"})
 }
 

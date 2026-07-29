@@ -1,0 +1,179 @@
+---
+interface Props { title: string; active?: string; }
+const { title, active = 'dashboard' } = Astro.props;
+---
+<!doctype html>
+<html lang="id" class="h-full bg-dark-950">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} — AI Seller Admin</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body class="h-full text-dark-100">
+  <div class="flex h-full">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-dark-900 border-r border-dark-800 flex flex-col">
+      <div class="p-6 border-b border-dark-800">
+        <h1 class="text-xl font-bold text-primary-400">🤖 AI Seller</h1>
+        <p class="text-xs text-dark-400 mt-1">Dashboard Admin</p>
+      </div>
+      <nav class="flex-1 p-4 space-y-1">
+        <a href="/" class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${active==='dashboard'?'bg-primary-600/20 text-primary-400':'text-dark-400 hover:bg-dark-800 hover:text-dark-200'}`}>
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          Dashboard
+        </a>
+        <a href="/users" class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${active==='users'?'bg-primary-600/20 text-primary-400':'text-dark-400 hover:bg-dark-800 hover:text-dark-200'}`}>
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>
+          Users
+        </a>
+        <a href="/transactions" class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${active==='transactions'?'bg-primary-600/20 text-primary-400':'text-dark-400 hover:bg-dark-800 hover:text-dark-200'}`}>
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+          Transactions
+        </a>
+        <a href="/apikeys" class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${active==='apikeys'?'bg-primary-600/20 text-primary-400':'text-dark-400 hover:bg-dark-800 hover:text-dark-200'}`}>
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+          API Keys
+        </a>
+        <a href="/settings" class={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${active==='settings'?'bg-primary-600/20 text-primary-400':'text-dark-400 hover:bg-dark-800 hover:text-dark-200'}`}>
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          Settings
+        </a>
+      </nav>
+      <div class="p-4 border-t border-dark-800">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-white text-sm font-bold">A</div>
+          <div>
+            <p class="text-sm font-medium text-dark-200">Admin</p>
+            <p class="text-xs text-dark-500">Enterprise</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto">
+      <header class="sticky top-0 z-10 bg-dark-900/80 backdrop-blur-sm border-b border-dark-800 px-8 py-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-dark-100">{title}</h2>
+          <div class="flex items-center gap-4">
+            <span id="clock" class="text-sm text-dark-400"></span>
+            <button onclick="location.reload()" class="p-2 rounded-lg hover:bg-dark-800 text-dark-400 hover:text-dark-200 transition">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </button>
+          </div>
+        </div>
+      </header>
+      <div class="p-8">
+        <slot />
+      </div>
+    </main>
+  </div>
+
+  <script is:inline>
+    function updateClock() {
+      const el = document.getElementById('clock');
+      if (el) el.textContent = new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+    }
+    updateClock();
+    setInterval(updateClock, 60000);
+
+    // Global API helpers
+    const API_BASE = '/api';
+    let authToken = localStorage.getItem('admin_token');
+
+    async function apiLogin(username, password) {
+      const res = await fetch(`${API_BASE}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (data.token) {
+        authToken = data.token;
+        localStorage.setItem('admin_token', authToken);
+      }
+      return data;
+    }
+
+    async function apiGet(path) {
+      const res = await fetch(`${API_BASE}${path}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('admin_token');
+        authToken = null;
+        showLoginModal();
+        return null;
+      }
+      return res.json();
+    }
+
+    async function apiPost(path, body = {}) {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify(body)
+      });
+      return res.json();
+    }
+
+    function showLoginModal() {
+      const modal = document.getElementById('login-modal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function hideLoginModal() {
+      const modal = document.getElementById('login-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('login-user').value;
+      const password = document.getElementById('login-pass').value;
+      const err = document.getElementById('login-error');
+      try {
+        const data = await apiLogin(username, password);
+        if (data.token) {
+          hideLoginModal();
+          location.reload();
+        } else {
+          err.textContent = data.error || 'Login failed';
+          err.classList.remove('hidden');
+        }
+      } catch (e) {
+        err.textContent = 'Connection failed';
+        err.classList.remove('hidden');
+      }
+    }
+
+    // Check auth on load
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!authToken) showLoginModal();
+    });
+  </script>
+
+  <!-- Login Modal -->
+  <div id="login-modal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
+    <div class="bg-dark-900 rounded-2xl p-8 w-96 border border-dark-700 shadow-2xl">
+      <h2 class="text-xl font-bold text-dark-100 mb-2">🔐 Admin Login</h2>
+      <p class="text-sm text-dark-400 mb-6">Masukkan credentials admin</p>
+      <form onsubmit="handleLogin(event)">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm text-dark-300 mb-1">Username</label>
+            <input id="login-user" type="text" value="admin" class="w-full px-4 py-2.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+          </div>
+          <div>
+            <label class="block text-sm text-dark-300 mb-1">Password</label>
+            <input id="login-pass" type="password" placeholder="Password" class="w-full px-4 py-2.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+          </div>
+          <p id="login-error" class="hidden text-sm text-red-400"></p>
+          <button type="submit" class="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition">Login</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
