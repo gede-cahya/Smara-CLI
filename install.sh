@@ -85,8 +85,14 @@ install() {
     
     check_deps
 
+    # Get latest version tag from GitHub API
+    LATEST_TAG=$(curl -fsSL https://api.github.com/repos/${REPO}/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+    if [ -n "${LATEST_TAG}" ]; then
+        VERSION="${LATEST_TAG#v}"
+    fi
+
     # Construct download URL
-    FILENAME="${BINARY_NAME}-${VERSION}-${OS}-${ARCH}"
+    FILENAME="Smara-v${VERSION}-${OS}-${ARCH}"
     if [ "${OS}" = "windows" ]; then
         FILENAME="${FILENAME}.zip"
     else
