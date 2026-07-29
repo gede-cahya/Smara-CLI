@@ -65,7 +65,7 @@ func TestEveryModeHasExpectedRoutingPrompt(t *testing.T) {
 	}{
 		{ModeAsk, "Ask", []string{"MENJAWAB PERTANYAAN", "tools"}},
 		{ModeRush, "Rush", []string{"LANGSUNG EKSEKUSI", "maksimal aksi"}},
-		{ModePlan, "Plan", []string{"Recommended approach", "SMARA_PLAN_QUEST"}},
+		{ModePlan, "Plan", []string{"Recommended Approach", "SMARA_PLAN_QUEST"}},
 		{ModeTest, "Test", []string{"TESTING", "Jangan menyatakan tugas selesai"}},
 		{ModeImage, "Image", []string{"generate_image", "edit_image"}},
 		{ModeWorkflow, "Workflow", []string{"WORKFLOW biasa", "Jangan memulai generic parallel task orchestration otomatis"}},
@@ -95,11 +95,11 @@ func TestParallelPolicyPromptsOnlyAllowGenericParallelInParallelMode(t *testing.
 
 func TestModePlan_SystemPromptStructure(t *testing.T) {
 	info := GetModeInfo(ModePlan)
-	assert.Contains(t, info.SystemPrompt, "Recommended approach")
+	assert.Contains(t, info.SystemPrompt, "Recommended Approach")
 	assert.Contains(t, info.SystemPrompt, "Verification")
-	assert.Contains(t, info.SystemPrompt, "Risks / rollback")
+	assert.Contains(t, info.SystemPrompt, "Risks & Rollback")
 	assert.Contains(t, info.SystemPrompt, "planning-agile-minsky")
-	assert.Contains(t, info.SystemPrompt, "Lanjutkan eksekusi? (ya/tidak)")
+	assert.Contains(t, info.SystemPrompt, "Lanjutkan eksekusi rencana ini?")
 	assert.Contains(t, info.SystemPrompt, "SMARA_PLAN_QUEST")
 	assert.Contains(t, info.SystemPrompt, "allow_custom")
 }

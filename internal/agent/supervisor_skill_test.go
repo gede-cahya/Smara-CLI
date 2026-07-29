@@ -26,10 +26,9 @@ func TestSupervisor_SkillExecutor(t *testing.T) {
 func TestSupervisor_SkillExecutor_ModeFiltering(t *testing.T) {
 	// Test in Plan mode — write tools should be blocked
 	s := NewSupervisor(nil, nil)
-	s.mode = ModePlan
-
 	se := safety.NewEngine()
 	s.SetSafetyEngine(se)
+	s.SetMode(ModePlan)
 
 	executor := s.SkillExecutor()
 	require.NotNil(t, executor)
@@ -45,7 +44,7 @@ func TestSupervisor_SkillExecutor_ModeFiltering(t *testing.T) {
 		"content": "test",
 	})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "safety")
+	assert.Contains(t, err.Error(), "safety block")
 }
 
 func TestSkill_Run_WithSupervisorExecutor(t *testing.T) {
