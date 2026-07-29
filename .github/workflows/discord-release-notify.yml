@@ -20,10 +20,7 @@ jobs:
           AUTHOR: ${{ github.event.release.author.login }}
           AUTHOR_AVATAR: ${{ github.event.release.author.avatar_url }}
         run: |
-          if [ -z "$DISCORD_WEBHOOK" ]; then
-            echo "⚠ Secret DISCORD_WEBHOOK_URL tidak ditemukan. Notification skipped."
-            exit 0
-          fi
+          WEBHOOK_URL="${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1531906488673501258/yWGWphOOQloBD4UtxnEWsGXAkuSQQIDSbIHw5a2SEg6254klUH0VJyCUiOkvPsxAntuT}"
 
           # Format body (escape quotes/newlines for json)
           TITLE="${RELEASE_TITLE:-$RELEASE_TAG}"
@@ -64,5 +61,5 @@ jobs:
           EOF
           )
 
-          curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_WEBHOOK"
+          curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL"
           echo "✅ Notifikasi GitHub Release terkirim ke Discord!"
