@@ -9,7 +9,7 @@ import (
 )
 
 // Version is set during release builds.
-var version = "1.20.68"
+var version = "1.20.69"
 
 func init() {
 	// Inject version into agent system prompts so the LLM knows which version it runs.

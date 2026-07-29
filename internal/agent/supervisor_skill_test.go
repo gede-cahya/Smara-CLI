@@ -24,6 +24,9 @@ func TestSupervisor_SkillExecutor(t *testing.T) {
 }
 
 func TestSupervisor_SkillExecutor_ModeFiltering(t *testing.T) {
+	DisableRushAutoApprovalEnv()
+	t.Cleanup(DisableRushAutoApprovalEnv)
+
 	// Test in Plan mode — write tools should be blocked
 	s := NewSupervisor(nil, nil)
 	se := safety.NewEngine()

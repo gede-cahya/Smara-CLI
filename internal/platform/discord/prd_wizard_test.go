@@ -11,8 +11,10 @@ func TestPRDWizardTransitions(t *testing.T) {
 	}{
 		{"webapp", prdStepTargetUser},
 		{"consumer", prdStepPlatform},
-		{"web", prdStepScope},
-		{"mvp", prdStepWorkflowPlan},
+		{"web", prdStepTechStack},
+		{"fullstack", prdStepScope},
+		{"mvp", prdStepPriority},
+		{"speed", prdStepWorkflowPlan},
 		{"agile", prdStepDiagramFlow},
 		{"flowchart_seq", prdStepDetail},
 		{"full", prdStepDone},
@@ -26,7 +28,7 @@ func TestPRDWizardTransitions(t *testing.T) {
 			t.Fatalf("after %s step=%d want=%d", step.value, updated.Step, step.want)
 		}
 	}
-	if sess.Answers.ProductType != "Web App" || sess.Answers.DetailLevel != "Lengkap" || sess.Answers.WorkflowPlan != "Agile Sprints" || sess.Answers.DiagramFlow != "Flowchart & Sequence" {
+	if sess.Answers.ProductType != "Web App" || sess.Answers.TechStack != "Fullstack JS/TS" || sess.Answers.Priority != "Speed-to-Market" || sess.Answers.DetailLevel != "Lengkap" {
 		t.Fatalf("answers not mapped: %+v", sess.Answers)
 	}
 }

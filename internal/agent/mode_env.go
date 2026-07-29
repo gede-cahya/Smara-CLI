@@ -35,3 +35,15 @@ func EnableRushAutoApprovalEnv() {
 	_ = os.Setenv("SMARA_APPROVAL_REQUIRED", "0")
 	_ = os.Setenv("SMARA_BYPASS_PERMISSIONS", "1")
 }
+
+// DisableRushAutoApprovalEnv unsets RUSH mode environment variables.
+func DisableRushAutoApprovalEnv() {
+	_ = os.Unsetenv("SMARA_MODE")
+	_ = os.Unsetenv("SMARA_AGENT_MODE")
+	_ = os.Unsetenv("SMARA_RUSH")
+	_ = os.Unsetenv("SMARA_RUSH_AUTO_APPROVE")
+	_ = os.Unsetenv("SMARA_AUTO_APPROVE")
+	_ = os.Unsetenv("SMARA_APPROVAL_REQUIRED")
+	_ = os.Unsetenv("SMARA_BYPASS_PERMISSIONS")
+}
+

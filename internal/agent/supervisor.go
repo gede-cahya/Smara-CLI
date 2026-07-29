@@ -203,6 +203,8 @@ func (s *Supervisor) SetMode(mode Mode) {
 		// Make Rush sticky for child processes/subcommands and for confirmation
 		// gates that check environment variables instead of Supervisor state.
 		EnableRushAutoApprovalEnv()
+	} else {
+		DisableRushAutoApprovalEnv()
 	}
 
 	s.mode = mode

@@ -19,7 +19,9 @@ const (
 	prdStepProductType prdStep = iota
 	prdStepTargetUser
 	prdStepPlatform
+	prdStepTechStack
 	prdStepScope
+	prdStepPriority
 	prdStepWorkflowPlan
 	prdStepDiagramFlow
 	prdStepDetail
@@ -133,9 +135,15 @@ func (s *prdWizardStore) apply(sessionID, userID, value string) (*prdWizardSessi
 		sess.Step = prdStepPlatform
 	case prdStepPlatform:
 		sess.Answers.Platform = label
+		sess.Step = prdStepTechStack
+	case prdStepTechStack:
+		sess.Answers.TechStack = label
 		sess.Step = prdStepScope
 	case prdStepScope:
 		sess.Answers.Scope = label
+		sess.Step = prdStepPriority
+	case prdStepPriority:
+		sess.Answers.Priority = label
 		sess.Step = prdStepWorkflowPlan
 	case prdStepWorkflowPlan:
 		sess.Answers.WorkflowPlan = label
@@ -156,19 +164,23 @@ func (s *prdWizardStore) apply(sessionID, userID, value string) (*prdWizardSessi
 func prdQuestions(step prdStep) prdQuestion {
 	switch step {
 	case prdStepProductType:
-		return prdQuestion{Title: "Quest 1/7 — Pilih tipe produk", Options: []prdOption{{"SaaS", "saas", "☁️"}, {"Mobile App", "mobile", "📱"}, {"Web App", "webapp", "🌐"}, {"Bot/Automation", "bot", "🤖"}, {"Internal Tool", "internal", "🛠️"}}}
+		return prdQuestion{Title: "Quest 1/9 — Pilih tipe produk", Options: []prdOption{{"SaaS", "saas", "☁️"}, {"Mobile App", "mobile", "📱"}, {"Web App", "webapp", "🌐"}, {"Bot/Automation", "bot", "🤖"}, {"Internal Tool", "internal", "🛠️"}}}
 	case prdStepTargetUser:
-		return prdQuestion{Title: "Quest 2/7 — Target user utama", Options: []prdOption{{"Consumer", "consumer", "👤"}, {"Business", "business", "🏢"}, {"Developer", "developer", "💻"}, {"Internal Team", "team", "👥"}, {"Community", "community", "🌍"}}}
+		return prdQuestion{Title: "Quest 2/9 — Target user utama", Options: []prdOption{{"Consumer", "consumer", "👤"}, {"Business", "business", "🏢"}, {"Developer", "developer", "💻"}, {"Internal Team", "team", "👥"}, {"Community", "community", "🌍"}}}
 	case prdStepPlatform:
-		return prdQuestion{Title: "Quest 3/7 — Platform utama", Options: []prdOption{{"Web", "web", "🌐"}, {"Mobile", "mobile", "📱"}, {"Desktop", "desktop", "🖥️"}, {"Discord Bot", "discord", "💬"}, {"Multi-platform", "multi", "🔀"}}}
+		return prdQuestion{Title: "Quest 3/9 — Platform utama", Options: []prdOption{{"Web", "web", "🌐"}, {"Mobile", "mobile", "📱"}, {"Desktop", "desktop", "🖥️"}, {"Discord Bot", "discord", "💬"}, {"Multi-platform", "multi", "🔀"}}}
+	case prdStepTechStack:
+		return prdQuestion{Title: "Quest 4/9 — Preferensi Tech Stack", Options: []prdOption{{"Fullstack JS/TS", "fullstack", "⚡"}, {"Go REST API", "gorest", "🚀"}, {"Python / AI", "python", "🤖"}, {"Mobile Native", "native", "📱"}, {"Auto-Recommend", "auto", "🪄"}}}
 	case prdStepScope:
-		return prdQuestion{Title: "Quest 4/7 — Scope awal", Options: []prdOption{{"Prototype", "prototype", "🧪"}, {"MVP", "mvp", "🚀"}, {"V1", "v1", "📦"}, {"Enterprise", "enterprise", "🏛️"}}}
+		return prdQuestion{Title: "Quest 5/9 — Scope awal", Options: []prdOption{{"Prototype", "prototype", "🧪"}, {"MVP", "mvp", "🚀"}, {"V1", "v1", "📦"}, {"Enterprise", "enterprise", "🏛️"}}}
+	case prdStepPriority:
+		return prdQuestion{Title: "Quest 6/9 — Prioritas Utama MVP", Options: []prdOption{{"Speed-to-Market", "speed", "⚡"}, {"Security & Data", "security", "🛡️"}, {"High Scalability", "scale", "📈"}, {"Premium UX & Design", "ux", "✨"}}}
 	case prdStepWorkflowPlan:
-		return prdQuestion{Title: "Quest 5/7 — Tipe Rencana Kerja (Workflow Plan)", Options: []prdOption{{"Agile Sprints", "agile", "🏃"}, {"Phase-based", "phased", "🗺️"}, {"Simple Checklist", "checklist", "📋"}}}
+		return prdQuestion{Title: "Quest 7/9 — Tipe Rencana Kerja (Workflow Plan)", Options: []prdOption{{"Agile Sprints", "agile", "🏃"}, {"Phase-based", "phased", "🗺️"}, {"Simple Checklist", "checklist", "📋"}}}
 	case prdStepDiagramFlow:
-		return prdQuestion{Title: "Quest 6/7 — Model Diagram Visual (Diagram Flow)", Options: []prdOption{{"Flowchart & Sequence", "flowchart_seq", "🔀"}, {"Flowchart Only", "flowchart", "📊"}, {"State Machine", "state", "⚙️"}, {"Semua Diagram", "all", "🎨"}}}
+		return prdQuestion{Title: "Quest 8/9 — Model Diagram Visual (Diagram Flow)", Options: []prdOption{{"Flowchart & Sequence", "flowchart_seq", "🔀"}, {"Flowchart Only", "flowchart", "📊"}, {"State Machine", "state", "⚙️"}, {"Semua Diagram", "all", "🎨"}}}
 	case prdStepDetail:
-		return prdQuestion{Title: "Quest 7/7 — Detail output PRD", Options: []prdOption{{"Ringkas", "brief", "⚡"}, {"Standard", "standard", "📝"}, {"Lengkap", "full", "📚"}}}
+		return prdQuestion{Title: "Quest 9/9 — Detail output PRD", Options: []prdOption{{"Ringkas", "brief", "⚡"}, {"Standard", "standard", "📝"}, {"Lengkap", "full", "📚"}}}
 	default:
 		return prdQuestion{}
 	}
@@ -189,7 +201,7 @@ func renderPRDWizardMessage(sess *prdWizardSession) string {
 	if idea == "" {
 		idea = "Belum diisi — PRD akan memakai placeholder ide produk."
 	}
-	return fmt.Sprintf("🧩 **Smara PRD Wizard**\n\n%s\n\nIde: `%s`\n\n**Flow chat plain yang akan masuk ke PRD:**\n```text\nUser -> Bot: kirim ide produk\nBot -> User: tanya tipe produk\nUser -> Bot: pilih tipe produk\nBot -> User: tanya target user\nUser -> Bot: pilih target user\nBot -> User: tanya platform\nUser -> Bot: pilih platform\nBot -> User: tanya scope\nUser -> Bot: pilih scope\nBot -> User: tanya rencana kerja (workflow plan)\nUser -> Bot: pilih rencana kerja\nBot -> User: tanya diagram flow\nUser -> Bot: pilih diagram flow\nBot -> User: tanya detail PRD\nUser -> Bot: pilih detail\nBot -> User: generate Markdown + file .md\n```\n\nKlik salah satu pilihan di bawah. Setelah semua quest selesai, Smara akan mengirim PRD Markdown + file `.md` untuk download/copy-paste.", q.Title, truncateDiscord(idea, 160))
+	return fmt.Sprintf("🧩 **Smara PRD Wizard**\n\n%s\n\nIde: `%s`\n\n**Flow chat plain yang akan masuk ke PRD:**\n```text\nUser -> Bot: kirim ide produk\nBot -> User: tanya tipe produk\nUser -> Bot: pilih tipe produk\nBot -> User: tanya target user\nUser -> Bot: pilih target user\nBot -> User: tanya platform\nUser -> Bot: pilih platform\nBot -> User: tanya tech stack\nUser -> Bot: pilih tech stack\nBot -> User: tanya scope\nUser -> Bot: pilih scope\nBot -> User: tanya prioritas MVP\nUser -> Bot: pilih prioritas MVP\nBot -> User: tanya rencana kerja (workflow plan)\nUser -> Bot: pilih rencana kerja\nBot -> User: tanya diagram flow\nUser -> Bot: pilih diagram flow\nBot -> User: tanya detail PRD\nUser -> Bot: pilih detail\nBot -> User: generate Markdown + file .md\n```\n\nKlik salah satu pilihan di bawah. Setelah semua quest selesai, Smara akan mengirim PRD Markdown + file `.md` untuk download/copy-paste.", q.Title, truncateDiscord(idea, 160))
 }
 
 func renderPRDComponents(sess *prdWizardSession) []discordgo.MessageComponent {
