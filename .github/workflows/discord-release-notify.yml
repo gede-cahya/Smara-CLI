@@ -24,64 +24,58 @@ jobs:
           AUTHOR_AVATAR: ${{ github.event.release.author.avatar_url || format('https://github.com/{0}.png', github.actor) }}
           ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
         run: |
-          WEBHOOK_URL="${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1531906488673501258/yWGWphOOQloBD4UtxnEWsGXAkuSQQIDSbIHw5a2SEg6254klUH0VJyCUiOkvPsxAntuT}"
-          TITLE="${RELEASE_TITLE:-$RELEASE_TAG}"
-          FULL_BODY="# 🌀 ${TITLE} Released!\n\n${RELEASE_BODY}"
+          python3 -c '
+          import os, json, urllib.request
 
-          # Construct JSON payload via node
-          PAYLOAD=$(node -e '
-            const title = process.env.TITLE;
-            const releaseUrl = process.env.RELEASE_URL;
-            const repoName = process.env.REPO_NAME;
-            const tag = process.env.RELEASE_TAG;
-            const author = process.env.AUTHOR || "cahya";
-            const avatar = process.env.AUTHOR_AVATAR || "https://github.com/gede-cahya.png";
-            const body = process.env.FULL_BODY || "";
-            let assets = [];
-            try {
-              assets = JSON.parse(process.env.ASSETS_JSON || "[]");
-            } catch (e) {}
+          webhook_url = os.getenv("DISCORD_WEBHOOK") or "https://discord.com/api/webhooks/1531906488673501258/yWGWphOOQloBD4UtxnEWsGXAkuSQQIDSbIHw5a2SEg6254klUH0VJyCUiOkvPsxAntuT"
+          title = os.getenv("RELEASE_TITLE") or os.getenv("RELEASE_TAG") or "Release"
+          tag = os.getenv("RELEASE_TAG") or "v1.0"
+          repo = os.getenv("REPO_NAME") or "Gede-Cahya/Smara-CLI"
+          url = os.getenv("RELEASE_URL") or f"https://github.com/{repo}"
+          body = os.getenv("RELEASE_BODY") or "New release update available."
+          author = os.getenv("AUTHOR") or "cahya"
+          avatar = os.getenv("AUTHOR_AVATAR") or f"https://github.com/{author}.png"
+          assets_raw = os.getenv("ASSETS_JSON") or "[]"
 
-            let desc = body.trim();
-            if (desc.length > 1900) {
-              desc = desc.substring(0, 1897) + "...";
-            }
+          try:
+              assets = json.loads(assets_raw)
+          except:
+              assets = []
 
-            const fields = [
-              { name: "📌 Version Tag", value: "`" + tag + "`", inline: true },
-              { name: "📦 Repository", value: "[" + repoName + "](https://github.com/" + repoName + ")", inline: true }
-            ];
+          desc = f"# 🌀 {title} Released!\n\n{body}"
+          if len(desc) > 1900:
+              desc = desc[:1897] + "..."
 
-            if (assets && assets.length > 0) {
-              const assetLines = assets.slice(0, 6).map(a => {
-                const sizeMB = (a.size / (1024 * 1024)).toFixed(1);
-                return "• [" + a.name + "](" + a.browser_download_url + ") (" + sizeMB + " MB)";
-              }).join("\n");
-              fields.push({ name: "💾 Downloads / Assets", value: assetLines, inline: false });
-            }
+          fields = [
+              {"name": "📌 Version Tag", "value": f"`{tag}`", "inline": True},
+              {"name": "📦 Repository", "value": f"[{repo}](https://github.com/{repo})", "inline": True}
+          ]
 
-            const payload = {
-              username: "Smara Release Bot",
-              avatar_url: "https://raw.githubusercontent.com/" + repoName + "/main/web/public/favicon.ico",
-              embeds: [
-                {
-                  title: "🚀 New Release: " + title,
-                  url: releaseUrl,
-                  description: desc,
-                  color: 8214260,
-                  author: {
-                    name: author,
-                    icon_url: avatar
-                  },
-                  fields: fields,
-                  footer: {
-                    text: "🌀 Smara Discord Integration • GitHub Release Notification"
-                  }
-                }
-              ]
-            };
-            console.log(JSON.stringify(payload));
-          ')
+          if assets and isinstance(assets, list):
+              asset_lines = []
+              for a in assets[:6]:
+                  name = a.get("name", "asset")
+                  dl_url = a.get("browser_download_url", url)
+                  size_mb = round(a.get("size", 0) / (1024 * 1024), 1)
+                  asset_lines.append(f"• [{name}]({dl_url}) ({size_mb} MB)")
+              if asset_lines:
+                  fields.append({"name": "💾 Downloads / Assets", "value": "\n".join(asset_lines), "inline": False})
 
-          curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL"
-          echo "✅ Notifikasi GitHub Release terkirim ke Discord!"
+          payload = {
+              "username": "Smara Release Bot",
+              "avatar_url": f"https://raw.githubusercontent.com/{repo}/main/web/public/favicon.ico",
+              "embeds": [{
+                  "title": f"🚀 New Release: {title}",
+                  "url": url,
+                  "description": desc,
+                  "color": 8214260,
+                  "author": {"name": author, "icon_url": avatar},
+                  "fields": fields,
+                  "footer": {"text": "🌀 Smara Discord Integration • GitHub Release Notification"}
+              }]
+          }
+
+          req = urllib.request.Request(webhook_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+          urllib.request.urlopen(req)
+          print("✅ Notifikasi GitHub Release terkirim ke Discord!")
+          '
