@@ -1,0 +1,24 @@
+name: NodeLoc AI Discord Notifier
+
+on:
+  schedule:
+    - cron: '0 */3 * * *' # Jalan setiap 3 jam
+  workflow_dispatch: # Bisa dijalankan manual dari GitHub Actions tab
+
+jobs:
+  notify-nodeloc-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run NodeLoc AI Fetcher & Send to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL_NODELOC || 'https://discord.com/api/webhooks/1532388648706904195/cxmPEmPph7sWSZlkjz1MzYgJrD-5QsF0e8brQoQ2X1BLhX_LvMQ7p-6n8Mi0VuzhGQjk' }}
+        run: |
+          python scripts/nodeloc_ai_notifier.py
