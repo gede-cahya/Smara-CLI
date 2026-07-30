@@ -2,7 +2,7 @@ name: NodeLoc AI Discord Notifier
 
 on:
   schedule:
-    - cron: '0 */3 * * *' # Jalan setiap 3 jam
+    - cron: '0 * * * *' # Jalan setiap 1 jam
   workflow_dispatch: # Bisa dijalankan manual dari GitHub Actions tab
 
 jobs:
