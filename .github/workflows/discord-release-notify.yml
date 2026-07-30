@@ -1,6 +1,7 @@
 name: Discord Release Notifier
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
   push:
