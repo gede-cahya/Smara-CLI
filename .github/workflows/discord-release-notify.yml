@@ -15,13 +15,13 @@ jobs:
       - name: Send Release Notification to Discord
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          RELEASE_TITLE: ${{ github.event.release.name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_URL: ${{ github.event.release.html_url }}
-          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_TITLE: ${{ github.event.release.name || github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+          RELEASE_URL: ${{ github.event.release.html_url || format('https://github.com/{0}/releases/tag/{1}', github.repository, github.ref_name) }}
+          RELEASE_BODY: ${{ github.event.release.body || 'New release update available.' }}
           REPO_NAME: ${{ github.repository }}
-          AUTHOR: ${{ github.event.release.author.login }}
-          AUTHOR_AVATAR: ${{ github.event.release.author.avatar_url }}
+          AUTHOR: ${{ github.event.release.author.login || github.actor }}
+          AUTHOR_AVATAR: ${{ github.event.release.author.avatar_url || format('https://github.com/{0}.png', github.actor) }}
           ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
         run: |
           WEBHOOK_URL="${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1531906488673501258/yWGWphOOQloBD4UtxnEWsGXAkuSQQIDSbIHw5a2SEg6254klUH0VJyCUiOkvPsxAntuT}"
