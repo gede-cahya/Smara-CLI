@@ -1,4 +1,4 @@
-name: NodeLoc AI Discord Notifier
+name: Bansos Dev Notifier
 
 on:
   schedule:
@@ -6,10 +6,10 @@ on:
   workflow_dispatch: # Bisa dijalankan manual dari GitHub Actions tab
 
 jobs:
-  notify-nodeloc-ai:
+  notify-bansos:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Diperlukan untuk commit posted_topics.json
+      contents: write # Diperlukan untuk commit posted_bansos.json
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,15 +19,15 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Run NodeLoc AI Fetcher & Send to Discord
+      - name: Run Bansos Fetcher & Send to Discord
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL_NODELOC || 'https://discord.com/api/webhooks/1532388648706904195/cxmPEmPph7sWSZlkjz1MzYgJrD-5QsF0e8brQoQ2X1BLhX_LvMQ7p-6n8Mi0VuzhGQjk' }}
+          DISCORD_WEBHOOK_URL_BANSOS: ${{ secrets.DISCORD_WEBHOOK_URL_BANSOS || 'https://discord.com/api/webhooks/1532392433000775770/wXZOzkXMf3zxF3oSaoUwceAJJbF3dP0yNbLzV4iGVIOz7DXyUXpvRC8q2axv9yKjvaXO' }}
         run: |
-          python scripts/nodeloc_ai_notifier.py
+          python scripts/bansos_notifier.py
 
       - name: Commit & Push state tracking
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add posted_topics.json || true
-          git diff --staged --quiet || (git commit -m "update: posted_topics state" && git push)
+          git add posted_bansos.json || true
+          git diff --staged --quiet || (git commit -m "update: posted_bansos state" && git push)
