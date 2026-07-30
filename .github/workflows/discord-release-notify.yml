@@ -76,7 +76,7 @@ jobs:
               }]
           }
 
-          req = urllib.request.Request(webhook_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+          req = urllib.request.Request(webhook_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
           urllib.request.urlopen(req)
           print("✅ Notifikasi GitHub Release terkirim ke Discord!")
           '
