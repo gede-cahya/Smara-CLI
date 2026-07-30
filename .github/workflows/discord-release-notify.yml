@@ -25,12 +25,8 @@ jobs:
           ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
         run: |
           WEBHOOK_URL="${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1531906488673501258/yWGWphOOQloBD4UtxnEWsGXAkuSQQIDSbIHw5a2SEg6254klUH0VJyCUiOkvPsxAntuT}"
-
           TITLE="${RELEASE_TITLE:-$RELEASE_TAG}"
-          HEADER="# 🌀 $TITLE Released!
-
-"
-          FULL_BODY="${HEADER}${RELEASE_BODY}"
+          FULL_BODY="# 🌀 ${TITLE} Released!\n\n${RELEASE_BODY}"
 
           # Construct JSON payload via node
           PAYLOAD=$(node -e '
