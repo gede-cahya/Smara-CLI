@@ -64,8 +64,9 @@ def send_topic_to_discord(topic):
         return False
 
 def fetch_and_notify():
-    posted_ids = load_posted_ids()
-    is_initial_run = len(posted_ids) == 0
+    posted = load_posted_ids()
+    posted_str = {str(x) for x in posted}
+    is_initial = not posted
 
     req = urllib.request.Request(NODE_LOC_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req) as resp:
@@ -76,23 +77,30 @@ def fetch_and_notify():
         print("Tidak ada topik ditemukan.")
         return
 
-    new_topics = [t for t in topics if t.get("id") not in posted_ids]
+    seen = set()
+    new_topics = []
+    for t in topics:
+        tid, title = str(t.get("id")), t.get("title", "")
+        if tid not in posted_str and title not in posted_str and tid not in seen:
+            seen.add(tid)
+            new_topics.append(t)
+
     if not new_topics:
         print("Tidak ada topik NodeLoc baru.")
         return
 
-    items_to_send = new_topics[:5] if is_initial_run else new_topics
+    items_to_send = new_topics[:5] if is_initial else new_topics
 
     for topic in items_to_send:
         if send_topic_to_discord(topic):
-            posted_ids.add(topic.get("id"))
+            posted.update({str(topic.get("id")), topic.get("title")})
             time.sleep(1)
 
-    if is_initial_run:
+    if is_initial:
         for t in topics:
-            posted_ids.add(t.get("id"))
+            posted.update({str(t.get("id")), t.get("title")})
 
-    save_posted_ids(posted_ids)
+    save_posted_ids(posted)
 
 if __name__ == "__main__":
     fetch_and_notify()
