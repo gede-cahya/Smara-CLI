@@ -327,3 +327,17 @@ func SanitizeForUser(text string) string {
 	}
 	return strings.TrimSpace(cleaned)
 }
+
+// SanitizeStreamChunk sanitizes a streaming chunk without trimming leading/trailing whitespace.
+func SanitizeStreamChunk(text string) string {
+	if text == "" {
+		return text
+	}
+	cleaned := text
+	if strings.Contains(cleaned, "<|DSML|") || (strings.Contains(cleaned, "DSML") && strings.Contains(cleaned, "<")) {
+		cleaned = dsmlResidualRe.ReplaceAllString(cleaned, "")
+		cleaned = dsmlOpenTagRe.ReplaceAllString(cleaned, "")
+	}
+	return cleaned
+}
+

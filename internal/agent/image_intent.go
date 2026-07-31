@@ -219,6 +219,12 @@ func filterToolsForPromptIntent(tools []llm.ToolFunction, prompt string, mode Mo
 		}
 	}
 
+	// Self-contained explanation prompts or continuation prompts (pasted code, image text, "lanjutkan", etc.)
+	// do not require tool declarations on turn 0 and execute much faster without tools.
+	if isCodeExplanationPrompt(prompt) || isImageExplanationPrompt(prompt) || isContinuationPrompt(prompt) {
+		return nil
+	}
+
 	// If prompt is empty or very short, include all tools
 	if len(p) < 5 {
 		return tools
@@ -289,17 +295,53 @@ func isImageEditRequest(prompt string) bool {
 }
 
 func firstImageAttachmentPath(prompt string) string {
+	paths := allImageAttachmentPaths(prompt)
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
+}
+
+func allImageAttachmentPaths(prompt string) []string {
+	var paths []string
 	lower := strings.ToLower(prompt)
-	start := strings.Index(lower, "[image:")
-	if start < 0 {
-		return ""
+	searchFrom := 0
+	for {
+		idx := strings.Index(lower[searchFrom:], "[image:")
+		if idx < 0 {
+			break
+		}
+		start := searchFrom + idx + len("[image:")
+		end := strings.Index(prompt[start:], "]")
+		if end < 0 {
+			break
+		}
+		path := strings.TrimSpace(prompt[start : start+end])
+		if path != "" {
+			paths = append(paths, path)
+		}
+		searchFrom = start + end + 1
+		if len(paths) >= 3 {
+			break
+		}
 	}
-	start += len("[image:")
-	end := strings.Index(prompt[start:], "]")
-	if end < 0 {
-		return ""
+	return paths
+}
+
+func stripImageAttachmentTags(prompt string) string {
+	res := prompt
+	for {
+		start := strings.Index(strings.ToLower(res), "[image:")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(res[start:], "]")
+		if end < 0 {
+			break
+		}
+		res = res[:start] + res[start+end+1:]
 	}
-	return strings.TrimSpace(prompt[start : start+end])
+	return strings.TrimSpace(res)
 }
 
 func imageEditUnsupportedResponse() string {
@@ -316,4 +358,68 @@ func enhanceImagePrompt(prompt string) string {
 		return p + ". Buat sebagai logo brand profesional: modern, elegan, minimalis, rapi, mudah dikenali, komposisi seimbang, vektor-style, high quality, clean typography jika ada teks, warna harmonis, latar belakang sederhana. Hindari watermark, mockup, foto realistis, dan elemen berantakan."
 	}
 	return p
+}
+
+func isCodeExplanationPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	if strings.Contains(p, "if __name__ ==") ||
+		(strings.Contains(p, "def ") && (strings.Contains(p, "import ") || strings.Contains(p, "return"))) ||
+		(strings.Contains(p, "package ") && strings.Contains(p, "func ")) ||
+		(strings.Contains(p, "const ") && strings.Contains(p, "function")) ||
+		(strings.Contains(p, "import ") && strings.Contains(p, "from ")) {
+		return true
+	}
+	if len(p) > 300 && (strings.Contains(p, "def ") || strings.Contains(p, "import ") || strings.Contains(p, "class ") || strings.Contains(p, "function")) {
+		return true
+	}
+	explanationKeywords := []string{
+		"ini script apa", "script apa ini", "kode apa ini", "ini kode apa",
+		"jelaskan script", "jelaskan kode", "jelaskan code", "maksud script",
+		"maksud kode", "maksud code", "apa fungsi script", "apa fungsi kode",
+		"apa fungsi code", "apa kegunaan script", "apa kegunaan kode",
+		"review script", "review kode", "review code", "analisis script",
+		"analisis kode", "analisis code", "apakah script ini", "apakah kode ini",
+	}
+	for _, kw := range explanationKeywords {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func isImageExplanationPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	if hasImageAttachment(p) || strings.Contains(p, "gambar terlampir") || strings.Contains(p, "lampiran:") {
+		if !isImageEditRequest(prompt) && !isSoftwareImageFeaturePrompt(p) {
+			return true
+		}
+	}
+	keywords := []string{
+		"ini gambar apa", "gambar apa ini", "jelaskan gambar", "maksud gambar",
+		"apa isi gambar", "apa kegunaan gambar", "deskripsikan gambar",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func isContinuationPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	if p == "" {
+		return false
+	}
+	keywords := []string{
+		"lanjutkan", "lanjut", "teruskan", "terusskan", "sambung", "lanjutkan...", "teruskan...",
+		"continue", "next", "keep going", "lanjutkan lagi", "teruskan lagi", "lanjutkan jawaban",
+	}
+	for _, kw := range keywords {
+		if p == kw || strings.HasPrefix(p, kw+" ") || strings.HasSuffix(p, " "+kw) {
+			return true
+		}
+	}
+	return false
 }

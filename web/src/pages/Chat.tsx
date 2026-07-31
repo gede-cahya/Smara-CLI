@@ -2333,7 +2333,7 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
               estimatedCostUSD: msg.stats?.estimated_cost_usd ?? msg.stats?.cost,
             }
             setMessages(prev => {
-              if (streamingAssistantRef.current) {
+              if (streamingAssistantRef.current || streamBufferRef.current.trim()) {
                 const idx = prev.map(m => m.role).lastIndexOf('assistant')
                 if (idx >= 0) {
                   const next = [...prev]
@@ -2341,15 +2341,26 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
                   return capRuntimeMessages(next)
                 }
               }
+              const lastUserIdx = prev.map(m => m.role).lastIndexOf('user')
+              const lastAssistantIdx = prev.map(m => m.role).lastIndexOf('assistant')
+              if (lastAssistantIdx >= 0 && lastAssistantIdx > lastUserIdx) {
+                const next = [...prev]
+                next[lastAssistantIdx] = finalMessage
+                return capRuntimeMessages(next)
+              }
               const normalizedFinal = content.trim().replace(/\s+/g, ' ')
+              const strippedFinal = content.replace(/\s+/g, '')
               for (let i = prev.length - 1; i >= 0; i--) {
                 const candidate = prev[i]
                 if (candidate.role !== 'assistant') continue
                 const normalizedCandidate = candidate.content.trim().replace(/\s+/g, ' ')
+                const strippedCandidate = candidate.content.replace(/\s+/g, '')
                 if (
                   normalizedCandidate === normalizedFinal ||
                   normalizedFinal.startsWith(normalizedCandidate) ||
-                  normalizedCandidate.startsWith(normalizedFinal)
+                  normalizedCandidate.startsWith(normalizedFinal) ||
+                  (strippedCandidate && strippedFinal.startsWith(strippedCandidate)) ||
+                  (strippedCandidate && strippedCandidate.startsWith(strippedFinal))
                 ) {
                   const next = [...prev]
                   next[i] = finalMessage
@@ -2794,6 +2805,7 @@ function Chat({ health }: { health: BackendHealth }, ref: React.Ref<ChatHandle>)
     void speakVoice(text)
   }, [messages, mode, speakVoice, thinking])
   const send = useCallback(() => {
+    if (uploading) return
     const messageText = input.trim()
     if (!messageText && attachments.length === 0) return
     const activeRun = runStatusRef.current

@@ -97,12 +97,12 @@ func runTesseract(imgPath, lang string) (string, error) {
 		lang = "eng"
 	}
 	// `tesseract input stdout -l <lang>` writes text to stdout.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "tesseract", imgPath, "stdout", "-l", lang)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("tesseract timeout setelah 20 detik")
+		return "", fmt.Errorf("tesseract timeout (melebihi 6s)")
 	}
 	if err != nil {
 		// Tesseract may complain about missing language packs; surface that.

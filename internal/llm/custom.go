@@ -72,6 +72,9 @@ func NewCustomProvider(name, apiKey, model, baseURL string, reasoningEffort ...s
 	if len(reasoningEffort) > 0 {
 		effort = normalizeReasoningEffort(reasoningEffort[0])
 	}
+	if effort == "" && (strings.Contains(model, "flash") || strings.Contains(model, "gemini-3.6")) {
+		effort = "low"
+	}
 	return &CustomProvider{
 		name:            name,
 		apiKey:          apiKey,
@@ -226,6 +229,13 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 		return nil, nil
 	}
 
+	// Fast path for 9Router/Omniroute antigravity models:
+	// Omniroute antigravity endpoints do not support embeddings. Skip HTTP call immediately.
+	if strings.Contains(c.model, "ag/") || strings.Contains(c.model, "antigravity") {
+		c.embDisabled.Store(1)
+		return nil, nil
+	}
+
 	// Determine base embedding model name.
 	embModel := "text-embedding-3-small"
 	if strings.HasSuffix(c.model, "minimax-auto") {
@@ -249,7 +259,12 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 		return nil, fmt.Errorf("gagal marshal embed request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.baseURL+"/embeddings", bytes.NewBuffer(jsonData))
+	// Use a strict 2-second timeout context for embedding requests
+	// so unsupported/slow embedding endpoints never delay the chat completion.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/embeddings", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}
@@ -258,15 +273,15 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		// Network error — don't permanently disable, might be transient.
+		// Network/timeout error — disable for this session to avoid stalling
+		c.embDisabled.Store(1)
 		return nil, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Provider doesn't support embeddings (e.g. codex returns 400).
-		// Permanently disable for this session to avoid hammering the
-		// router with requests that will always fail.
+		// Provider doesn't support embeddings (e.g. 400 Bad Request from Omniroute).
+		// Permanently disable for this session to avoid hammering the router.
 		c.embDisabled.Store(1)
 		return nil, nil
 	}
@@ -276,11 +291,11 @@ func (c *CustomProvider) GenerateEmbedding(text string) ([]float32, error) {
 		return nil, nil // Graceful fallback
 	}
 
-	if len(embedResp.Data) == 0 {
-		return nil, nil
+	if len(embedResp.Data) > 0 {
+		return embedResp.Data[0].Embedding, nil
 	}
 
-	return embedResp.Data[0].Embedding, nil
+	return nil, nil
 }
 
 func (c *CustomProvider) doChat(req openAIChatRequest) ([]byte, error) {

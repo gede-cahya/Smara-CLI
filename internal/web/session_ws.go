@@ -182,7 +182,7 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 			b.Reset()
 			hasBuffered = false
 			// Hardening: stream chunks must never leak DSML tags
-			payload = llm.SanitizeForUser(payload)
+			payload = llm.SanitizeStreamChunk(payload)
 			write(wsMessage{Type: "stream", SessionID: msg.SessionID, Payload: s.rewriteGeneratedImageLinks(payload), Args: map[string]interface{}{"is_thinking": thinking}})
 		}
 		appendChunk := func(ev pendingStreamChunk) {
@@ -291,9 +291,9 @@ func (s *Server) handleWSWebSessionChat(conn *websocket.Conn, msg wsMessage) {
 		},
 		OnStream: func(chunk string, isThinking bool) {
 			touch("stream")
-			// Hardening: filter DSML in stream at source
+			// Hardening: filter DSML in stream at source without stripping spaces
 			if !isThinking {
-				chunk = llm.SanitizeForUser(chunk)
+				chunk = llm.SanitizeStreamChunk(chunk)
 			}
 			select {
 			case streamCh <- pendingStreamChunk{chunk: chunk, isThinking: isThinking}:

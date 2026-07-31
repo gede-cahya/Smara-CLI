@@ -147,4 +147,25 @@ func TestFilterToolsDynamicFiltering(t *testing.T) {
 			t.Fatalf("expected custom tool 'custom_db_query' to be kept via generic keyword matching")
 		}
 	}
+
+	// Case 5: Code & Image Explanation prompts bypass tools completely for maximum speed
+	{
+		codePrompt := "if __name__ == \"__main__\":\n    main() ini script apa"
+		filtered := filterToolsForPromptIntent(tools, codePrompt, ModeAsk)
+		if len(filtered) != 0 {
+			t.Fatalf("expected 0 tools for code explanation prompt %q, got: %#v", codePrompt, filtered)
+		}
+
+		imgPrompt := "[image:/tmp/clip.png] ini gambar apa"
+		filteredImg := filterToolsForPromptIntent(tools, imgPrompt, ModeAsk)
+		if len(filteredImg) != 0 {
+			t.Fatalf("expected 0 tools for image explanation prompt %q, got: %#v", imgPrompt, filteredImg)
+		}
+
+		contPrompt := "lanjutkan"
+		filteredCont := filterToolsForPromptIntent(tools, contPrompt, ModeAsk)
+		if len(filteredCont) != 0 {
+			t.Fatalf("expected 0 tools for continuation prompt %q, got: %#v", contPrompt, filteredCont)
+		}
+	}
 }

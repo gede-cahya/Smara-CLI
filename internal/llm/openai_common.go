@@ -296,6 +296,16 @@ func streamOpenAIWithContext(ctx context.Context, client *http.Client, host, api
 		return nil, nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
+	stopMonitor := make(chan struct{})
+	defer close(stopMonitor)
+	go func() {
+		select {
+		case <-httpReq.Context().Done():
+			_ = resp.Body.Close()
+		case <-stopMonitor:
+		}
+	}()
+
 	var fullContent strings.Builder
 	var fullThinking strings.Builder
 	var finalModel string
@@ -326,6 +336,12 @@ func streamOpenAIWithContext(ctx context.Context, client *http.Client, host, api
 
 		if chunk.Model != "" {
 			finalModel = chunk.Model
+		}
+
+		if chunk.ID == "omniroute-keepalive" || (len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content == "" && chunk.Choices[0].Delta.Reasoning == "" && len(chunk.Choices[0].Delta.ToolCalls) == 0) {
+			if callback != nil {
+				callback("", false, PhaseGenerating)
+			}
 		}
 
 		if len(chunk.Choices) > 0 {

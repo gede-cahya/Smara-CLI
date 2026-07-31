@@ -285,6 +285,12 @@ func filterToolsForPromptIntent(tools []llm.ToolFunction, prompt string, mode Mo
 		}
 	}
 
+	// Self-contained explanation prompts (pasted code or image text + "ini script apa", "ini gambar apa", etc.)
+	// do not require tool declarations on turn 0 and execute much faster without tools.
+	if isCodeExplanationPrompt(prompt) || isImageExplanationPrompt(prompt) {
+		return nil
+	}
+
 	// If prompt is empty or very short, include all tools
 	if len(p) < 5 {
 		return tools
@@ -382,4 +388,36 @@ func enhanceImagePrompt(prompt string) string {
 		return p + ". Buat sebagai logo brand profesional: modern, elegan, minimalis, rapi, mudah dikenali, komposisi seimbang, vektor-style, high quality, clean typography jika ada teks, warna harmonis, latar belakang sederhana. Hindari watermark, mockup, foto realistis, dan elemen berantakan."
 	}
 	return p
+}
+
+func isCodeExplanationPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	explanationKeywords := []string{
+		"ini script apa", "script apa ini", "kode apa ini", "ini kode apa",
+		"jelaskan script", "jelaskan kode", "jelaskan code", "maksud script",
+		"maksud kode", "maksud code", "apa fungsi script", "apa fungsi kode",
+		"apa fungsi code", "apa kegunaan script", "apa kegunaan kode",
+		"review script", "review kode", "review code", "analisis script",
+		"analisis kode", "analisis code", "apakah script ini", "apakah kode ini",
+	}
+	for _, kw := range explanationKeywords {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func isImageExplanationPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	keywords := []string{
+		"ini gambar apa", "gambar apa ini", "jelaskan gambar", "maksud gambar",
+		"apa isi gambar", "apa kegunaan gambar", "deskripsikan gambar",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
 }

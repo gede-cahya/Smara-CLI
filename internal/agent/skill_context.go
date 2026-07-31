@@ -115,49 +115,11 @@ func buildSkillRecommendationContext(query string, mode Mode) string {
 	return sb.String()
 }
 
-// selectAutoRunnableSkill returns a single unambiguous recommendation that is
-// safe to execute before the model responds. Risky, parameterized, and closely
-// competing recommendations remain prompt-driven so the model can clarify.
+// selectAutoRunnableSkill is disabled to prevent pre-LLM speculative skill
+// executions from misfiring on pasted code or skill management prompts.
+// Skills remain 100% available via native LLM tool calls (skill_run).
 func selectAutoRunnableSkill(query string, mode Mode) *autoSkillSelection {
-	if !autoSkillModeAllowed(mode) || strings.TrimSpace(query) == "" || isSkillManagementPrompt(query) {
-		return nil
-	}
-
-	names, err := skill.List()
-	if err != nil || len(names) == 0 {
-		return nil
-	}
-	skills := make([]*skill.Skill, 0, len(names))
-	byName := make(map[string]*skill.Skill, len(names))
-	for _, name := range names {
-		sk, err := skill.Load(name)
-		if err != nil || sk == nil {
-			continue
-		}
-		skills = append(skills, sk)
-		byName[sk.Name] = sk
-	}
-
-	recs := skill.RecommendSkills(query, skills, skill.RecommendationOptions{Limit: 2, LowConfidence: 25})
-	if len(recs) == 0 || recs[0].Confidence != "high" || recs[0].Clarify {
-		return nil
-	}
-	if len(recs) > 1 && recs[0].Score-recs[1].Score < 15 {
-		return nil
-	}
-
-	sk := byName[recs[0].SkillName]
-	if sk == nil || hasUnresolvedRequiredParams(sk) || hasNestedSkillSteps(sk) {
-		return nil
-	}
-	// In RUSH mode, the user explicitly opts into autonomous execution.
-	// Do not block auto-runnable skills solely because their heuristic risk
-	// would normally require approval; per-tool confirmation is also bypassed
-	// by Supervisor.isCriticalCall for ModeRush.
-	if mode != ModeRush && skill.AssessRisk(sk).RequiresApproval {
-		return nil
-	}
-	return &autoSkillSelection{Skill: sk, Recommendation: recs[0]}
+	return nil
 }
 
 func autoSkillModeAllowed(mode Mode) bool {
@@ -189,12 +151,18 @@ func hasNestedSkillSteps(sk *skill.Skill) bool {
 
 func isSkillManagementPrompt(query string) bool {
 	q := strings.ToLower(query)
-	for _, phrase := range []string{
-		"list skill", "skill list", "daftar skill", "ngelist skill", "lihat skill",
-		"skill yang tersedia", "skill apa", "buat skill", "bikin skill", "hapus skill",
-		"delete skill", "install skill", "import skill", "recommend skill", "rekomendasi skill",
-	} {
-		if strings.Contains(q, phrase) {
+	if !strings.Contains(q, "skill") {
+		return false
+	}
+	mgmtWords := []string{
+		"hapus", "delete", "remove", "buang", "hilangkan", "bersihkan",
+		"buat", "bikin", "create", "tambah", "add", "new",
+		"list", "daftar", "lihat", "tampil", "show", "apa", "mana",
+		"edit", "ubah", "update", "modify", "ganti",
+		"install", "import", "recommend", "rekomendasi", "kelola", "manage",
+	}
+	for _, word := range mgmtWords {
+		if strings.Contains(q, word) {
 			return true
 		}
 	}
