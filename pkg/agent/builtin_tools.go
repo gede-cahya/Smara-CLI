@@ -675,12 +675,28 @@ func ExecuteBuiltinTool(toolName string, args map[string]interface{}, logCallbac
 	case "grep_search":
 		query, _ := args["query"].(string)
 		searchPathStr := "."
-		if p, ok := args["path"].(string); ok {
+		if p, ok := args["path"].(string); ok && p != "" {
 			searchPathStr = p
 		}
 
-		// Gunakan grep -r -n untuk hasil rekursif dengan nomor baris
-		cmd := exec.Command("grep", "-r", "-n", "--exclude-dir=.git", "--exclude-dir=node_modules", query, searchPathStr)
+		cmd := exec.Command("grep", "-r", "-n",
+			"--exclude-dir=.git",
+			"--exclude-dir=node_modules",
+			"--exclude-dir=.smara",
+			"--exclude-dir=dist",
+			"--exclude-dir=build",
+			"--exclude-dir=graphify-out",
+			"--exclude-dir=.agents",
+			"--exclude-dir=smara-backup*",
+			"--exclude=*.test",
+			"--exclude=*.png",
+			"--exclude=*.jpg",
+			"--exclude=*.zip",
+			"--exclude=*.tar.gz",
+			"--exclude=*.db",
+			"--exclude=*.log",
+			"--binary-files=without-match",
+			query, searchPathStr)
 		output, _ := cmd.CombinedOutput() // Grep returns exit code 1 if no matches
 
 		res := string(output)

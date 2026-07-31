@@ -114,8 +114,8 @@ func TestSelectAutoRunnableSkillChoosesClearSafeRecommendation(t *testing.T) {
 	}, nil))
 
 	selected := selectAutoRunnableSkill("buat planning test quality aplikasi", ModeAsk)
-	if selected == nil || selected.Skill.Name != "planning-test-plan" {
-		t.Fatalf("expected planning-test-plan auto selection, got: %#v", selected)
+	if selected != nil {
+		t.Fatalf("expected nil as pre-LLM auto skill execution is disabled, got: %#v", selected)
 	}
 }
 
@@ -149,8 +149,34 @@ func TestSelectAutoRunnableSkillRejectsSkillManagementPrompt(t *testing.T) {
 		Steps:       []skill.Step{{Tool: "skill_list", Args: map[string]interface{}{}}},
 	}, nil))
 
-	if selected := selectAutoRunnableSkill("tolong ngelist skill yang tersedia", ModeAsk); selected != nil {
-		t.Fatalf("skill management prompt must not auto-run a recommended skill: %#v", selected)
+	for _, prompt := range []string{
+		"tolong ngelist skill yang tersedia",
+		"klo gitu tolong di hapus dan jangan buat lagi skill itu",
+		"tolong buang skill auto-lanjutkan",
+		"tolong delete skill ini",
+	} {
+		if selected := selectAutoRunnableSkill(prompt, ModeAsk); selected != nil {
+			t.Fatalf("skill management prompt %q must not auto-run a recommended skill: %#v", prompt, selected)
+		}
+	}
+}
+
+func TestSelectAutoRunnableSkillRejectsLargePastedText(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	requireNoError(t, os.MkdirAll(filepath.Join(home, ".smara", "skills"), 0755))
+	requireNoError(t, skill.Save(&skill.Skill{
+		Name:        "python-runner",
+		Description: "Run python code and scripts",
+		Version:     1,
+		Tags:        []string{"python", "script"},
+		Steps:       []skill.Step{{Tool: "run_command", Args: map[string]interface{}{"command": "python3"}}},
+	}, nil))
+
+	// 12 lines of code
+	largePastedCode := "def main():\n" + strings.Repeat("    print('hello world')\n", 12)
+	if selected := selectAutoRunnableSkill(largePastedCode, ModeAsk); selected != nil {
+		t.Fatalf("large pasted code snippet must not trigger automatic skill execution: %#v", selected)
 	}
 }
 
@@ -171,27 +197,20 @@ func TestSupervisorAutomaticallyRunsAndReportsSelectedSkill(t *testing.T) {
 	supervisor.SetMode(ModeAsk)
 	var calledTool string
 	var calledArgs map[string]interface{}
-	var toolResult string
 	supervisor.SetCallback(AgenticCallback{
 		OnToolCall: func(_ string, tool string, args map[string]interface{}) {
 			calledTool = tool
 			calledArgs = args
 		},
-		OnToolResult: func(output string) {
-			toolResult = output
-		},
 	})
 
 	result, err := supervisor.ProcessPrompt(context.Background(), "buat planning test quality aplikasi")
 	requireNoError(t, err)
-	if calledTool != "skill_run" || calledArgs["skill_name"] != "planning-test-plan" || calledArgs["automatic"] != true {
-		t.Fatalf("automatic skill callback missing or incorrect: tool=%q args=%v", calledTool, calledArgs)
+	if calledTool != "" {
+		t.Fatalf("expected no pre-LLM automatic tool execution, got tool=%q args=%v", calledTool, calledArgs)
 	}
-	if !strings.Contains(toolResult, "planning-test-plan") || !strings.Contains(toolResult, "dijalankan otomatis") {
-		t.Fatalf("automatic skill result was not reported: %q", toolResult)
-	}
-	if len(result.ToolsExecuted) == 0 || result.ToolsExecuted[0] != "skill_run" {
-		t.Fatalf("skill_run missing from prompt result tools: %v", result.ToolsExecuted)
+	if result.Response != "Test plan selesai." {
+		t.Fatalf("unexpected prompt result: %q", result.Response)
 	}
 }
 

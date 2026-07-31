@@ -11,7 +11,7 @@ import (
 // context7PerLibraryTimeout is the max time allowed for resolving + fetching
 // docs for a single library via Context7 MCP. Prevents slow/dead MCP servers
 // from blocking the entire prompt processing pipeline.
-const context7PerLibraryTimeout = 5 * time.Second
+const context7PerLibraryTimeout = 1500 * time.Millisecond
 
 // Context7Injector handles auto-detection and injection of Context7 docs into prompts.
 type Context7Injector struct {
@@ -42,6 +42,10 @@ func (ci *Context7Injector) DetectAndInject(prompt string, executor skill.StepEx
 
 	if len(entries) == 0 {
 		return prompt, nil, nil
+	}
+
+	if len(entries) > 2 {
+		entries = entries[:2]
 	}
 
 	var results []Context7DocResult

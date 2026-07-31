@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-cmd = "go build -trimpath -o ./tmp/smara-dev ./cmd/smara/"
+cmd = "CGO_ENABLED=1 go build -trimpath -o ./tmp/smara-dev ./cmd/smara/"
 entrypoint = ["./tmp/smara-dev", "web", "--no-open", "--host", "127.0.0.1", "--port", "8080"]
 include_ext = ["go"]
 exclude_dir = [".git", "bin", "build", "custom-workflows", "dist", "docs", "docs-site", "docs-site-react-backup-20260521-113010", "graphify-out", "images", "internal/web/dist", "node_modules", "prd", "roadmap", "scratch", "scripts", "skills", "smara-desktop", "smara-desktop-rust", "tmp", "ui_mockup", "versions", "web"]

@@ -30,9 +30,8 @@ const (
 )
 
 // postToolLLMTimeout controls how long we wait for the LLM to compose its
-// final response after tool calls. 0 = no post-tool shortcut; rely on the
-// request/session context so Smara can keep working until the task completes.
-var postToolLLMTimeout time.Duration
+// final response after tool calls.
+var postToolLLMTimeout = 180 * time.Second
 var postToolQuickFinishTimeout = 4 * time.Second
 var postToolFinalMaxAttempts = 4
 
@@ -1293,25 +1292,44 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 	// runs so short prompts such as "ini kenapa?" do not depend on the model
 	// deciding to call analyze_image itself.
 	if hasImageAttachment(userPrompt) {
-		imagePath := firstImageAttachmentPath(userPrompt)
-		args := map[string]interface{}{
-			"path":             imagePath,
-			"ocr_lang":         "eng+ind",
-			"include_metadata": true,
-		}
+		imgPaths := allImageAttachmentPaths(userPrompt)
+		var analyses []string
 		cb := s.snapshotCallback()
-		if cb.OnToolCall != nil {
-			cb.OnToolCall("", "analyze_image", args)
+		if cb.OnPhaseChange != nil {
+			cb.OnPhaseChange("Analyzing Image", "Mengekstrak teks OCR & metadata gambar...")
 		}
-		analysis, err := ExecuteBuiltinToolWithContext(ctx, "analyze_image", args, cb.OnLog)
-		if err != nil {
-			analysis = fmt.Sprintf("Analyze image gagal: %v", err)
+		for i, imagePath := range imgPaths {
+			args := map[string]interface{}{
+				"path":             imagePath,
+				"ocr_lang":         "eng+ind",
+				"include_metadata": true,
+			}
+			if cb.OnToolCall != nil {
+				cb.OnToolCall("", "analyze_image", args)
+			}
+			imgCtx, cancelImg := context.WithTimeout(ctx, 6*time.Second)
+			analysis, err := ExecuteBuiltinToolWithContext(imgCtx, "analyze_image", args, cb.OnLog)
+			cancelImg()
+			if err != nil {
+				analysis = fmt.Sprintf("Analyze image (%s) gagal: %v", filepath.Base(imagePath), err)
+			}
+			if cb.OnToolResult != nil {
+				cb.OnToolResult(analysis)
+			}
+			// Cap each image analysis text so giant OCR dumps don't inflate context
+			if len(analysis) > 1500 {
+				analysis = analysis[:1500] + "\n... (hasil OCR/metadata dipotong agar respon instan)"
+			}
+			analyses = append(analyses, fmt.Sprintf("Gambar #%d (%s):\n%s", i+1, filepath.Base(imagePath), analysis))
 		}
-		if cb.OnToolResult != nil {
-			cb.OnToolResult(analysis)
+		if len(analyses) > 0 {
+			cleanPrompt := stripImageAttachmentTags(userPrompt)
+			userPrompt = cleanPrompt + "\n\n[Sistem: analyze_image sudah dijalankan otomatis untuk gambar terlampir. Jangan panggil analyze_image ulang. Gunakan hasil berikut sebagai konteks utama jawaban:\n" +
+				strings.Join(analyses, "\n\n") + "\n]"
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange("Generating", "Menganalisis hasil OCR & menyusun jawaban...")
+			}
 		}
-		userPrompt += "\n\n[Sistem: analyze_image sudah dijalankan otomatis untuk gambar terlampir. Jangan panggil analyze_image ulang. Gunakan hasil berikut sebagai konteks utama jawaban:\n" +
-			truncateToolResultForContext(analysis) + "\n]"
 	}
 
 	// Direct fast-path for image/logo requests. Some chat models fail to emit a
@@ -1498,15 +1516,7 @@ func (s *Supervisor) ProcessPrompt(ctx context.Context, userPrompt string) (*Pro
 		}
 	}
 
-	// Auto-resolve Context7 documentation for libraries mentioned in the prompt
-	if s.mcpClients != nil && len(s.mcpClients) > 0 {
-		injector := NewContext7Injector()
-		enrichedPrompt, _, err := injector.DetectAndInject(userPrompt, s.SkillExecutor())
-		if err == nil && enrichedPrompt != userPrompt {
-			// Replace the user prompt with enriched version that includes Context7 docs
-			userPrompt = enrichedPrompt
-		}
-	}
+
 
 	// Add conversation history (keep last 10 exchanges for context)
 	maxHistory := 20 // 10 pairs of user+assistant
@@ -1728,24 +1738,29 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		},
 	}
 
-	// Add MCP tools context
-	mcpInfo := s.GetMCPInfo()
-	if len(mcpInfo) > 0 {
-		var toolDescs []string
-		for serverName, info := range mcpInfo {
-			if !info.Connected {
-				continue
+	// Get available tools early
+	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
+
+	// Add MCP tools context — only when tools are actually active
+	if len(tools) > 0 {
+		mcpInfo := s.GetMCPInfo()
+		if len(mcpInfo) > 0 {
+			var toolDescs []string
+			for serverName, info := range mcpInfo {
+				if !info.Connected {
+					continue
+				}
+				for _, tool := range info.Tools {
+					toolDescs = append(toolDescs, fmt.Sprintf("- [%s] %s: %s", serverName, tool.Name, tool.Description))
+				}
 			}
-			for _, tool := range info.Tools {
-				toolDescs = append(toolDescs, fmt.Sprintf("- [%s] %s: %s", serverName, tool.Name, tool.Description))
+			if len(toolDescs) > 0 {
+				toolsDesc := "Tools yang tersedia (gunakan via function calling):\n" + strings.Join(toolDescs, "\n")
+				messages = append(messages, llm.Message{
+					Role:    llm.RoleSystem,
+					Content: toolsDesc,
+				})
 			}
-		}
-		if len(toolDescs) > 0 {
-			toolsDesc := "Tools yang tersedia (gunakan via function calling):\n" + strings.Join(toolDescs, "\n")
-			messages = append(messages, llm.Message{
-				Role:    llm.RoleSystem,
-				Content: toolsDesc,
-			})
 		}
 	}
 
@@ -1757,21 +1772,31 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		})
 	}
 
-	// Add conversation history
+	// Add conversation history — capping large historic messages so long scripts don't explode context
 	maxHistory := 20
 	if len(s.history) > maxHistory {
 		s.history = s.history[len(s.history)-maxHistory:]
 	}
-	messages = append(messages, s.history...)
+	for i, msg := range s.history {
+		if i < len(s.history)-1 && len(msg.Content) > 12000 {
+			msg.Content = msg.Content[:12000] + "\n... (bagian riwayat terdahulu dipotong untuk menghemat konteks)"
+		}
+		messages = append(messages, msg)
+	}
+
+	// Add continuation steering instruction if user asks "lanjutkan" / "continue"
+	if isContinuationPrompt(userPrompt) {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleSystem,
+			Content: "User meminta melanjutkan jawaban sebelumnya yang terpotong. Lanjutkan secara langsung dari titik/kalimat/baris kode terakhir tanpa mengulangi penjelasan, salam, atau kode yang sudah lengkap.",
+		})
+	}
 
 	// Add user prompt
 	messages = append(messages, llm.Message{
 		Role:    llm.RoleUser,
 		Content: userPrompt,
 	})
-
-	// 3. Get available tools
-	tools := filterToolsForPromptIntent(s.ConvertMCPToolsToToolFunctions(), userPrompt, s.mode)
 
 	var allThinking []string
 	var toolsExecuted []string
@@ -1844,13 +1869,18 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 		for attempt := 1; attempt <= attempts; attempt++ {
 			callCtx := ctx
 			cancelCall := func() {}
+			turnTimeout := 300 * time.Second
 			if postToolCall && postToolLLMTimeout > 0 {
-				callCtx, cancelCall = context.WithTimeout(ctx, postToolLLMTimeout)
+				turnTimeout = postToolLLMTimeout
 			}
+			callCtx, cancelCall = context.WithTimeout(ctx, turnTimeout)
 			streamCb := buildStreamCallback(callCtx, onPhase, onStream)
 			done := make(chan llmTurnResult, 1)
 			attemptMessages := append([]llm.Message(nil), messages...)
 			attemptTools := toolsForTurn(tools, postToolCall)
+			if !postToolCall && attempt > 1 {
+				attemptTools = nil
+			}
 			if onPhase != nil {
 				desc := "Waiting for provider response..."
 				if attempt > 1 {
@@ -1892,11 +1922,11 @@ func (s *Supervisor) RunAgenticLoop(ctx context.Context, userPrompt string) (str
 				if ctx.Err() != nil {
 					err = ctx.Err()
 				} else {
-					err = fmt.Errorf("final response timeout after %s", postToolLLMTimeout.Round(time.Second))
+					err = fmt.Errorf("provider response timeout after %s", turnTimeout.Round(time.Second))
 				}
 			}
 			cancelCall()
-			if err == nil || !postToolCall || attempt == attempts || !shouldRetryPlainChatWithStream(err) {
+			if err == nil || attempt == attempts || !shouldRetryPlainChatWithStream(err) {
 				break
 			}
 			messages = append(messages, llm.Message{
@@ -2195,6 +2225,7 @@ func shouldRetryPlainChatWithStream(err error) bool {
 	return strings.Contains(msg, "status 504") ||
 		strings.Contains(msg, "initial response timeout") ||
 		strings.Contains(msg, "final response timeout") ||
+		strings.Contains(msg, "provider response timeout") ||
 		strings.Contains(msg, "context deadline exceeded") ||
 		strings.Contains(msg, "gateway timeout")
 }

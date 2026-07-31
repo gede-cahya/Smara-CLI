@@ -197,6 +197,16 @@ func (a *AnthropicProvider) doStream(req anthropicChatRequest, callback StreamCa
 		return nil, nil, fmt.Errorf("Anthropic error (status %d): %s", resp.StatusCode, string(body))
 	}
 
+	stopMonitor := make(chan struct{})
+	defer close(stopMonitor)
+	go func() {
+		select {
+		case <-httpReq.Context().Done():
+			_ = resp.Body.Close()
+		case <-stopMonitor:
+		}
+	}()
+
 	var fullContent strings.Builder
 	var toolCallsMap = make(map[int]*ToolCall)
 	var toolCallsRawArgs = make(map[int]*strings.Builder)
