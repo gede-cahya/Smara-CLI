@@ -1,12 +1,13 @@
 import { useState, useEffect, lazy, Suspense, Component, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon, Zap, Server, Loader2, WifiOff } from 'lucide-react'
+import { Atom, MessageSquare, Database, Layers, Settings, BarChart3, Terminal, GitBranch, TreePine, LineChart, Network, AlertTriangle, MousePointer2, Mic, Bot, Monitor, Sparkles, Image as ImageIcon, Zap, Server, Loader2, WifiOff, Clock } from 'lucide-react'
 import { loadSmaraConfig } from './configStore'
 import Chat, { type ChatHandle } from './pages/Chat'
 import Memory from './pages/Memory'
 import Workspace from './pages/Workspace'
 import Config from './pages/Config'
 import Dashboard from './pages/Dashboard'
+const SchedulerDashboard = lazy(() => import('./pages/SchedulerDashboard'))
 
 import Workflow from './pages/Workflow'
 import MagicPointer from './pages/MagicPointer'
@@ -74,6 +75,7 @@ const navItems = [
   { id: 'chat', label: 'Chat', icon: MessageSquare, group: 'Core' },
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3, group: 'Core' },
   { id: 'config', label: 'Config', icon: Settings, group: 'Core' },
+  { id: 'scheduler', label: 'Scheduler', icon: Clock, group: 'Build' },
   { id: 'workflow', label: 'Workflow', icon: GitBranch, group: 'Build' },
   { id: 'custom-workflow', label: 'Custom Workflow', icon: GitBranch, group: 'Build' },
   { id: 'parallel-tasks', label: 'Parallel Agent', icon: Zap, group: 'Build' },
@@ -268,6 +270,7 @@ export default function App() {
   const activePage = (() => {
     switch (active) {
       case 'chat': return null
+      case 'scheduler': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><SchedulerDashboard /></Suspense>
       case 'image-flow': return <Suspense fallback={<div className="p-4 text-gray-500 text-sm">Loading...</div>}><ImageFlow /></Suspense>
       case 'workflow': return <Workflow />
       case 'magic-pointer': return <MagicPointer />

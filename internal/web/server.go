@@ -123,6 +123,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/orchestration/approve", s.handleOrchestrationApprove)
 	mux.HandleFunc("/api/mcp", s.handleMCPStatus)
 	mux.HandleFunc("/api/metrics", s.handleMetrics)
+	mux.HandleFunc("/api/scheduler/jobs", s.handleSchedulerJobs)
 	mux.HandleFunc("/api/skills", s.handleSkills)
 	mux.HandleFunc("/api/skills/run", s.handleSkillRun)
 	mux.HandleFunc("/api/skills/recommend", s.handleSkillRecommend)
