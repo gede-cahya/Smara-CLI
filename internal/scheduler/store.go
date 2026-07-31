@@ -12,20 +12,25 @@ import (
 	"time"
 
 	"github.com/gede-cahya/Smara-CLI/internal/config"
+	"github.com/robfig/cron/v3"
 )
 
 type Job struct {
-	ID          string     `json:"id"`
-	Spec        string     `json:"spec"`
-	Workflow    string     `json:"workflow"`
-	Enabled     bool       `json:"enabled"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	NextRunAt   time.Time  `json:"next_run_at"`
-	LastRunAt   *time.Time `json:"last_run_at,omitempty"`
-	LastStatus  string     `json:"last_status,omitempty"`
-	IntervalSec int64      `json:"interval_sec,omitempty"`
-	DailyAt     string     `json:"daily_at,omitempty"`
+	ID               string     `json:"id"`
+	Spec             string     `json:"spec"`
+	Workflow         string     `json:"workflow"`
+	Enabled          bool       `json:"enabled"`
+	MaxRetries       int        `json:"max_retries,omitempty"`
+	RetryCount       int        `json:"retry_count,omitempty"`
+	RetryIntervalSec int        `json:"retry_interval_sec,omitempty"`
+	DependsOn        string     `json:"depends_on,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	NextRunAt        time.Time  `json:"next_run_at"`
+	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
+	LastStatus       string     `json:"last_status,omitempty"`
+	IntervalSec      int64      `json:"interval_sec,omitempty"`
+	DailyAt          string     `json:"daily_at,omitempty"`
 }
 
 func Add(spec, workflow string) (*Job, error) {
@@ -137,6 +142,24 @@ func MarkRun(id, status string, ranAt time.Time) error {
 			continue
 		}
 		job.LastRunAt = &ranAt
+
+		// Handle auto-retry with exponential backoff on failure
+		if status == "failed" && job.MaxRetries > 0 && job.RetryCount < job.MaxRetries {
+			job.RetryCount++
+			job.LastStatus = fmt.Sprintf("retrying (%d/%d)", job.RetryCount, job.MaxRetries)
+
+			baseInterval := job.RetryIntervalSec
+			if baseInterval <= 0 {
+				baseInterval = 10
+			}
+			// Exponential backoff: base * 2^(retryCount-1)
+			backoffSec := baseInterval * (1 << (job.RetryCount - 1))
+			job.NextRunAt = ranAt.Add(time.Duration(backoffSec) * time.Second)
+			return SaveAll(jobs)
+		}
+
+		// Reset retry count on success or when max retries exceeded
+		job.RetryCount = 0
 		job.LastStatus = status
 		if err := applySpec(job, ranAt); err != nil {
 			return err
@@ -147,7 +170,9 @@ func MarkRun(id, status string, ranAt time.Time) error {
 }
 
 func applySpec(job *Job, from time.Time) error {
-	spec := strings.TrimSpace(strings.ToLower(job.Spec))
+	rawSpec := strings.TrimSpace(job.Spec)
+	spec := strings.ToLower(rawSpec)
+
 	if strings.HasPrefix(spec, "every ") {
 		d, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(spec, "every ")))
 		if err != nil {
@@ -176,7 +201,19 @@ func applySpec(job *Job, from time.Time) error {
 		job.NextRunAt = next
 		return nil
 	}
-	return fmt.Errorf("spec harus berbentuk 'every 15m' atau 'daily 09:00'")
+
+	// Try standard cron parser (robfig/cron/v3) for 5-field/6-field cron & descriptors (@hourly, @daily, etc.)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	sched, err := parser.Parse(rawSpec)
+	if err == nil {
+		next := sched.Next(from)
+		if !next.IsZero() {
+			job.NextRunAt = next
+			return nil
+		}
+	}
+
+	return fmt.Errorf("spec tidak valid (gunakan 'every 15m', 'daily 09:00', atau cron standar '*/5 * * * *')")
 }
 
 func dir() string {
