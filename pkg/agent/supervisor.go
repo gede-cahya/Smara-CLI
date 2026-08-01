@@ -324,9 +324,15 @@ func (s *Supervisor) rebuildToolRoute(serverName string, tools []mcp.Tool) {
 	// Add new routes
 	for _, tool := range tools {
 		routeKey := tool.Name
-		s.toolRoute[routeKey] = toolRouteInfo{
+		info := toolRouteInfo{
 			MCPServer: serverName,
 			ToolName:  tool.Name,
+		}
+		s.toolRoute[routeKey] = info
+		if serverName != "" {
+			s.toolRoute[serverName+":"+tool.Name] = info
+			s.toolRoute[serverName+"/"+tool.Name] = info
+			s.toolRoute[serverName+"__"+tool.Name] = info
 		}
 	}
 }
@@ -433,6 +439,32 @@ func (s *Supervisor) executeToolCall(tc llm.ToolCall) (string, error) {
 
 	s.mu.RLock()
 	route, ok := s.toolRoute[tc.Function]
+	if !ok {
+		for _, sep := range []string{":", "/", "__"} {
+			if idx := strings.Index(tc.Function, sep); idx > 0 {
+				prefix := tc.Function[:idx]
+				shortName := tc.Function[idx+len(sep):]
+				if r, exists := s.toolRoute[shortName]; exists && (r.MCPServer == prefix || strings.EqualFold(r.MCPServer, prefix)) {
+					route = r
+					ok = true
+					break
+				}
+				if r, exists := s.toolRoute[tc.Function]; exists {
+					route = r
+					ok = true
+					break
+				}
+				if client, exists := s.mcpClients[prefix]; exists && client != nil {
+					route = toolRouteInfo{
+						MCPServer: prefix,
+						ToolName:  shortName,
+					}
+					ok = true
+					break
+				}
+			}
+		}
+	}
 	client := s.mcpClients[route.MCPServer]
 	s.mu.RUnlock()
 

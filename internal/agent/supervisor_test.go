@@ -1142,3 +1142,31 @@ func TestSupervisor_EmptyThinkAnswerDoesNotTriggerIterationFallback(t *testing.T
 	// Confirms we reached the 3rd ChatWithTools turn (tool, empty, answer).
 	assert.Equal(t, 3, provider.calls)
 }
+
+func TestSupervisor_PrefixedMCPToolRouting(t *testing.T) {
+	s := NewSupervisor(nil, nil)
+	s.UpdateMCPInfo("codebase-memory-mcp", []mcp.Tool{
+		{Name: "index_repository", Description: "Index repo"},
+	})
+
+	s.mu.RLock()
+	route1, ok1 := s.toolRoute["index_repository"]
+	route2, ok2 := s.toolRoute["codebase-memory-mcp:index_repository"]
+	route3, ok3 := s.toolRoute["codebase-memory-mcp/index_repository"]
+	route4, ok4 := s.toolRoute["codebase-memory-mcp__index_repository"]
+	s.mu.RUnlock()
+
+	assert.True(t, ok1)
+	assert.Equal(t, "codebase-memory-mcp", route1.MCPServer)
+	assert.Equal(t, "index_repository", route1.ToolName)
+
+	assert.True(t, ok2)
+	assert.Equal(t, "codebase-memory-mcp", route2.MCPServer)
+	assert.Equal(t, "index_repository", route2.ToolName)
+
+	assert.True(t, ok3)
+	assert.Equal(t, "codebase-memory-mcp", route3.MCPServer)
+
+	assert.True(t, ok4)
+	assert.Equal(t, "codebase-memory-mcp", route4.MCPServer)
+}

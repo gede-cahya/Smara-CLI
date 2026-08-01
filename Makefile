@@ -50,9 +50,9 @@ release: clean sync-dist
 		echo "Building $$os/$$arch..."; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$$target_name$$ext ./cmd/smara/; \
 		if [ "$$os" = "windows" ]; then \
-			cd dist && zip $$target_name.zip $$target_name.exe && rm $$target_name.exe && cd ..; \
+			(cd dist && zip $$target_name.zip $$target_name.exe && rm $$target_name.exe); \
 		else \
-			cd dist && tar -czf $$target_name.tar.gz $$target_name && rm $$target_name && cd ..; \
+			(cd dist && tar -czf $$target_name.tar.gz $$target_name && rm $$target_name); \
 		fi; \
 	done
 	@echo "✓ Release archives in dist/"
